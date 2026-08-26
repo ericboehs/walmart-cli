@@ -53,6 +53,7 @@ so it has not yet been seen. Nothing here will guess at it.
 ```sh
 rake            # rubocop, ruff, minitest, pytest, smoke
 rake smoke      # the built CLI end to end against a stub worker
+rake mutants    # break each guard on purpose, require some suite to fail
 ```
 
 `script/smoke` runs the real binary with `WALMART_PYTHON` pointed at a stub that
@@ -63,9 +64,17 @@ result is empty, that text mode says something useful, and that exit codes match
 the four documented meanings. Several defects reached review because the unit
 suite asserts what the code should do and nothing asserted what it printed.
 
+`rake mutants` answers the other question: not "do the tests pass" but "would
+anything notice if a guard stopped working". It breaks each entry in
+`script/mutants.json` — the redaction denylist, the first-party check, the page
+ceiling, the list deciding whether a truncated sync reports success — and fails
+if the suite stays green. It refuses to run at all unless the edit actually
+changed the file, because an edit that silently matched nothing looks exactly
+like a guard that is working.
+
 [docs/TESTING.md](docs/TESTING.md) explains why the suite is shaped this way:
-nine defects, seven of them found sitting inside checks that were passing, and
-the two habits that caught them. Worth reading before adding a test here.
+thirteen defects, eleven of them found sitting inside checks that were passing,
+and the habits that caught them. Worth reading before adding a test here.
 
 ## Safety invariants
 

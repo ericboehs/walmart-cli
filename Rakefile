@@ -43,6 +43,16 @@ task :smoke do
   sh "ruby #{File.expand_path("script/smoke", __dir__)}"
 end
 
+# Not in ci: it runs the suite once per mutant, and it edits tracked files while
+# it works. It is the check you run when you have changed a guard, and the one
+# that answers "would anything have noticed?".
+desc "Break each guard on purpose and check some suite fails"
+task :mutants do
+  script = File.expand_path("script/mutate", __dir__)
+  plan = File.expand_path("script/mutants.json", __dir__)
+  sh "ruby #{script} --plan #{plan} -- rake test"
+end
+
 desc "Everything CI runs"
 task ci: %i[rubocop ruff test pytest smoke]
 

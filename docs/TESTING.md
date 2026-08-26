@@ -60,6 +60,27 @@ code, and from there the return value of a print, the exit status of a process,
 and the difference between two error codes are all invisible. They are the first
 things the user meets.
 
+## The one to read first
+
+The last defect found was the first draft of a test whose entire purpose was
+catching this failure mode. It asserted that a request for 10,000 pages came
+back clamped to 200, and it passed. But "asked for 10,000, got 200" is equally
+satisfied by *ignoring the parameter*, and that is what the code did, because
+the test handed the function the wrong argument shape. Green, for the wrong
+reason, in a test written specifically to catch things that are green for the
+wrong reason, an hour after this file was updated to say the defect is carried
+by the situation rather than by the author's attention.
+
+Nothing was going to fix that by being careful. What caught it was writing the
+other half — "may still ask for fewer pages" — because a clamp has two sides and
+asserting only one cannot distinguish a clamp from a constant. That is the
+generalisation worth taking:
+
+**A property with an inverse must be asserted from both sides.** One direction
+alone cannot tell a clamp from a constant, a sort from a coincidence, or an exit
+status of 3 from an exit status that is always 3. This needs no adversary and no
+imagination, which is why it works when mutation testing is not on your mind.
+
 ## The two habits that actually found them
 
 **1. Run the real command and read all three channels.** Not the tests — the
@@ -80,6 +101,14 @@ practices make it survive: record the mutants and their failures in the commit
 message, and prefer assertions that name the specific thing — an error code, not
 "some JSON came out"; an exit status, not "it printed something".
 
+**A mutation run must prove the mutation happened before it proves anything
+else.** Twice in one night an edit matched nothing, changed nothing, reported
+nothing, and the suite passed — which is indistinguishable from a mutant that
+survived, and means the opposite. `script/mutate` refuses to run the suite
+unless the file actually changed, and refuses an ambiguous pattern rather than
+guessing which occurrence was meant. `script/mutants.json` holds the standing
+set; `rake mutants` runs it.
+
 ## Rules with a reason
 
 - **A guard and the test that hunts what the guard catches must not share a code
@@ -95,6 +124,13 @@ message, and prefer assertions that name the specific thing — an error code, n
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A name is a claim; the mechanism under it is a separate fact.** `MAX_PAGES`
+  said ceiling and the code said default — `_bounded(request_value, MAX_PAGES)`
+  honoured any number the caller named. Both read as agreeing until you ask who
+  supplies the value. Nothing was wrong in practice only because our own CLI
+  never sends the field, which is a fact about today's caller and not about the
+  worker; the worker is a separate process precisely so it need not trust its
+  caller. A limit the caller can raise is not a limit.
 - **A constant is a list of one, and the question is the same.** `MAX_PAGES`
   lowered stops the walk early with a resumable archive; raised, it is an
   unbounded loop against someone else's site, unattended. Pinned. Applying the
@@ -143,5 +179,10 @@ message, and prefer assertions that name the specific thing — an error code, n
 - `pyworker/test_*.py` — pytest. `addopts = "-q"` hides the summary line; run
   `uv run pytest <file>` without `--quiet` to see counts.
 - `script/smoke` — the built CLI end to end against a stub worker, in a temp XDG
-  root. `--verbose` prints each command's output.
+  root. `--verbose` prints each command's stdout *and stderr*; it printed only
+  stdout at first, which is how a wrong string in a smoke case stayed hidden.
+- `rake mutants` — breaks each guard in `script/mutants.json` on purpose and
+  requires some suite to fail. Not part of `rake ci`: it runs the suite once per
+  mutant and edits tracked files while it works, restoring them in an `ensure`.
+  Run it after changing a guard.
 - `rake gitleaks` — secret scan, also a pre-commit hook. Never bypass it.

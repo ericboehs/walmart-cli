@@ -1,0 +1,150 @@
+[
+  {
+    "label": "denylist: a payment field stops being dropped",
+    "file": "pyworker/orders_parse.py",
+    "from": "\"paymentmethods\",",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders_parse.py"
+    ]
+  },
+  {
+    "label": "denylist: an address field stops being dropped",
+    "file": "pyworker/orders_parse.py",
+    "from": "\"deliveryaddress\",",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders_parse.py"
+    ]
+  },
+  {
+    "label": "first-party: a marketplace storefront is admitted by name",
+    "file": "pyworker/item_parse.py",
+    "from": "WALMART_SELLERS = {\"walmart.com\", \"walmart\", \"walmart inc\"}",
+    "to": "WALMART_SELLERS = {\"walmart.com\", \"walmart\", \"walmart inc\", \"walmart restored\"}",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_item.py"
+    ]
+  },
+  {
+    "label": "first-party: the seller name is no longer checked",
+    "file": "pyworker/item_parse.py",
+    "from": "return seller_type in FIRST_PARTY_SELLER_TYPES and name in WALMART_SELLERS",
+    "to": "return seller_type in FIRST_PARTY_SELLER_TYPES",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_item.py"
+    ]
+  },
+  {
+    "label": "page ceiling raised to an unattended crawl",
+    "file": "pyworker/orders.py",
+    "from": "MAX_PAGES = 200",
+    "to": "MAX_PAGES = 100000",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "page ceiling becomes a default the caller can raise",
+    "file": "pyworker/orders.py",
+    "from": "maximum=MAX_PAGES),",
+    "to": "),",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "no-next-page is reported as a complete walk",
+    "file": "pyworker/orders.py",
+    "from": "raise Stop(NO_NEXT_PAGE, \"no next-page control on this page\")",
+    "to": "raise Stop(COMPLETE, \"no next-page control on this page\")",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "order id accepts any shape on its way into a URL",
+    "file": "pyworker/orders.py",
+    "from": "\\A[A-Za-z0-9._-]{1,64}\\Z",
+    "to": "\\A.*\\Z",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "a truncated sync at the page ceiling reports success",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "SETTLED = %w[complete cutoff].freeze",
+    "to": "SETTLED = %w[complete cutoff page_limit].freeze"
+  },
+  {
+    "label": "a sync that lost the next-page control reports success",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "SETTLED = %w[complete cutoff].freeze",
+    "to": "SETTLED = %w[complete cutoff no_next_page].freeze"
+  },
+  {
+    "label": "every stop reports success",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "SETTLED.include?(reason) ? ExitCodes::OK : ExitCodes::UNVERIFIED",
+    "to": "ExitCodes::OK"
+  },
+  {
+    "label": "ruby forgets a stop reason the worker can raise",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "complete cutoff page_limit no_next_page history_unreadable",
+    "to": "complete cutoff page_limit history_unreadable"
+  },
+  {
+    "label": "the archive stops noticing an unredacted field",
+    "file": "lib/walmart/archive.rb",
+    "from": "\n      refuse_unredacted!(order_id, order)\n      record =",
+    "to": "\n      record ="
+  },
+  {
+    "label": "an order-submission term leaves the safety list",
+    "file": "lib/walmart/safety.rb",
+    "from": "      placeorder\n",
+    "to": ""
+  }
+]

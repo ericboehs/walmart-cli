@@ -61,3 +61,4 @@ Style/SpecialGlobalVars:
 Style/OneClassPerFile:
   Exclude:
     - "script/smoke"
+    - "script/mutate"

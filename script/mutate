@@ -1,0 +1,187 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Break the code on purpose, run a command, put it back.
+#
+# Why this exists rather than a one-off search-and-replace: twice tonight an
+# edit silently changed nothing -- the pattern did not match, nothing said so,
+# and the suite passed. A passing suite after a no-op edit is indistinguishable
+# from a passing suite after a real one, which turns every mutation result into
+# a coin flip and quietly reports the opposite of the truth. So the first thing
+# this does is prove the mutation happened. If the file did not change, it
+# aborts before running anything.
+#
+# Usage:
+#   script/mutate --file lib/walmart/commands/order.rb \
+#                 --from 'SETTLED = %w[complete cutoff]' \
+#                 --to   'SETTLED = %w[complete cutoff page_limit]' \
+#                 -- rake test
+#
+#   script/mutate --plan mutants.json -- rake test
+#
+# A plan is a JSON array of {label, file, from, to}. Each is applied alone,
+# the command is run, and the file is restored before the next one -- including
+# when the command fails, when it raises, and when you interrupt it.
+#
+# Exit status is 0 when every mutant was caught (the command failed for each
+# one), 1 when any mutant survived. That inversion is the point: a surviving
+# mutant is the bad news, and it should be the failing exit code.
+
+require "json"
+require "open3"
+
+class Mutation
+  attr_reader :label, :file, :from, :to, :command
+
+  def initialize(label:, file:, from:, to:, command: nil)
+    @label = label
+    @file = file
+    @from = from
+    @to = to
+    @command = command
+  end
+
+  def self.from_json(entry, index)
+    missing = %w[file from to] - entry.keys
+    raise "mutant #{index}: missing #{missing.join(", ")}" unless missing.empty?
+
+    new(label: entry["label"] || "#{entry["file"]}: #{entry["from"][0, 40]}",
+        file: entry["file"], from: entry["from"], to: entry["to"],
+        # A plan spans both languages, so a mutant may name the suite that
+        # should notice it. Running the whole of CI for each one is slower and,
+        # worse, blurs which suite is doing the catching.
+        command: entry["command"])
+  end
+
+  # Returns the original text, or raises. The raise is the whole point: an
+  # absent pattern is a broken mutant, not a surviving one, and the two mean
+  # opposite things about the code under test.
+  def apply
+    original = File.read(file)
+    occurrences = original.scan(from).length
+    raise "MUTATION DID NOT APPLY: #{from.inspect} not found in #{file}" if occurrences.zero?
+
+    raise "MUTATION IS AMBIGUOUS: #{from.inspect} appears #{occurrences} times" if occurrences > 1
+
+    mutated = original.sub(from, to)
+    raise "MUTATION CHANGED NOTHING: --from and --to are the same text" if mutated == original
+
+    File.write(file, mutated)
+    original
+  end
+
+  def restore(original)
+    File.write(file, original)
+  end
+end
+
+class Runner
+  def initialize(command, verbose:)
+    @command = command
+    @verbose = verbose
+  end
+
+  # A mutant is "caught" when the command fails. Anything that makes the command
+  # fail counts, which is why the tail of its output is printed -- a mutant
+  # caught by a syntax error is not evidence of a test doing its job.
+  def caught?(mutation)
+    original = mutation.apply
+    begin
+      out, status = run(mutation.command)
+      report(mutation, out, status)
+      !status.success?
+    ensure
+      # Not conditional on success, on the exception, or on anything else. The
+      # one thing this script must never do is leave the tree broken.
+      mutation.restore(original)
+    end
+  end
+
+  # Not a predicate: it reports as it goes, and the caller stops on false.
+  def baseline(commands) # rubocop:disable Naming/PredicateMethod
+    commands.each do |command|
+      out, status = run(command)
+      next if status.success?
+
+      warn "the suite does not pass before any mutation is applied; fix that first"
+      warn "  #{(command || @command).join(" ")}"
+      warn indent(tail(out))
+      return false
+    end
+    true
+  end
+
+  private
+
+  def run(command = nil)
+    out, err, status = Open3.capture3(*(command || @command))
+    [out + err, status]
+  end
+
+  def report(mutation, out, status)
+    verdict = status.success? ? "SURVIVED" : "caught"
+    puts format("%<verdict>-9s %<label>s", verdict: verdict, label: mutation.label)
+    puts indent(tail(out)) if @verbose || status.success?
+  end
+
+  def tail(out, lines: 6)
+    out.strip.split("\n").last(lines).join("\n")
+  end
+
+  def indent(text)
+    text.split("\n").map { |line| "          #{line}" }.join("\n")
+  end
+end
+
+def parse_argv(argv)
+  split = argv.index("--")
+  raise "no command given; put it after --" if split.nil?
+
+  flags = {}
+  args = argv[0...split]
+  until args.empty?
+    key = args.shift
+    raise "unknown flag: #{key}" unless key.start_with?("--")
+
+    flags[key.delete_prefix("--").to_sym] = key == "--verbose" ? true : args.shift
+  end
+  [flags, argv[(split + 1)..]]
+end
+
+def mutations_from(flags)
+  if flags[:plan]
+    JSON.parse(File.read(flags[:plan])).each_with_index.map { |entry, i| Mutation.from_json(entry, i) }
+  else
+    missing = %i[file from to] - flags.keys
+    raise "need --file, --from and --to (or --plan); missing #{missing.join(", ")}" unless missing.empty?
+
+    [Mutation.from_json({ "file" => flags[:file], "from" => flags[:from], "to" => flags[:to] }, 0)]
+  end
+end
+
+def main(argv)
+  flags, command = parse_argv(argv)
+  mutations = mutations_from(flags)
+  runner = Runner.new(command, verbose: flags[:verbose])
+
+  puts "checking the suite passes untouched first"
+  return 1 unless runner.baseline(mutations.map(&:command).uniq)
+
+  survivors = mutations.reject { |mutation| runner.caught?(mutation) }
+
+  if survivors.empty?
+    puts "#{mutations.length} mutants, #{mutations.length} caught"
+    0
+  else
+    puts "#{survivors.length} of #{mutations.length} mutants SURVIVED:"
+    survivors.each { |mutation| puts "  #{mutation.label}" }
+    1
+  end
+rescue StandardError => e
+  # A broken mutant and a surviving mutant are opposite findings, so this must
+  # not read like a test failure. No backtrace: the message is the whole point.
+  warn "mutate: #{e.message}"
+  2
+end
+
+exit(main(ARGV)) if $PROGRAM_NAME == __FILE__

@@ -45,6 +45,13 @@ PAGE_SIZE = 5
 # A ceiling on pages, not a target. Two years at five orders a page is a lot of
 # navigation, and an unbounded loop against someone else's site is how a bug
 # becomes abuse.
+#
+# This comment was true and the code was not: the value reached normalize_params
+# as _bounded(request_value, MAX_PAGES), a default, so any number the request
+# named was honoured. "MAX" in a name is a claim; the mechanism underneath it is
+# a separate fact, and the two read as agreeing until you ask who supplies the
+# value. A limit the caller can raise is not a limit -- and the worker is a
+# separate process precisely so it does not have to trust its caller. It clamps.
 MAX_PAGES = 200
 
 SLICE_MS = 250
