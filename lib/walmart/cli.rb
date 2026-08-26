@@ -7,6 +7,7 @@ require_relative "version"
 require_relative "commands/doctor"
 require_relative "commands/config_cmd"
 require_relative "commands/login"
+require_relative "commands/search"
 
 module Walmart
   # Argument parsing and dispatch.
@@ -35,7 +36,8 @@ module Walmart
       %w[logout] => [Commands::Login, "forget the stored browser session"],
       %w[config show] => [Commands::ConfigCmd, "print current settings"],
       %w[config path] => [Commands::ConfigCmd, "print the config file path"],
-      %w[config init] => [Commands::ConfigCmd, "write a default config file"]
+      %w[config init] => [Commands::ConfigCmd, "write a default config file"],
+      %w[search] => [Commands::Search, "search Walmart's catalog"]
     }.freeze
 
     # Declared now so `--help` tells the truth about where the project is,
@@ -43,7 +45,6 @@ module Walmart
     PLANNED = {
       %w[store show] => "compare the pinned store with Walmart's active store",
       %w[store pin] => "pin the active grocery store",
-      %w[search] => "search Walmart's catalog",
       %w[item] => "show one item by id or URL",
       %w[cart show] => "read the live shared cart",
       %w[cart add] => "add an exact item to the cart",

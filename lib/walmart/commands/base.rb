@@ -74,8 +74,10 @@ module Walmart
         value
       end
 
+      # +allowed+ of nil means "as many as you like": `walmart search whole milk`
+      # should work without quotes, because that is how people type.
       def assert_positional!(positional, allowed)
-        return if positional.length <= allowed
+        return if allowed.nil? || positional.length <= allowed
 
         extra = positional.drop(allowed)
         raise UsageError, "unexpected argument#{"s" if extra.length > 1}: #{extra.join(" ")}"

@@ -18,6 +18,7 @@ import browser
 import login as login_module
 import protocol
 import safety
+import search as search_module
 
 
 def action_probe(request: dict[str, Any]) -> dict[str, Any]:
@@ -54,7 +55,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "login": login_module.login,
     "session.status": login_module.session_status,
     "store.show": action_not_implemented("store.show"),
-    "search": action_not_implemented("search"),
+    "search": search_module.action_search,
     "item": action_not_implemented("item"),
     "cart.show": action_not_implemented("cart.show"),
     "cart.add": action_not_implemented("cart.add"),

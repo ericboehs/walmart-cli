@@ -203,3 +203,32 @@ def test_probe_reports_browser_lookup_errors(monkeypatch, capsys):
 
     assert code == 0
     assert events[-1]["data"]["browser_errors"]["playwright-chromium"] == "Executable doesn't exist"
+
+
+# --- search ------------------------------------------------------------------
+
+
+def test_search_is_registered_as_a_real_action():
+    # It fails for a specific, reported reason rather than being a placeholder.
+    assert fetch.ACTIONS["search"] is not None
+    assert fetch.ACTIONS["search"].__name__ == "action_search"
+
+
+def test_search_reports_the_missing_evidence_not_a_generic_stub():
+    with pytest.raises(NotImplementedError) as raised:
+        fetch.dispatch({"action": "search", "params": {"query": "whole milk"}})
+
+    message = str(raised.value)
+    assert "variables" in message
+    assert "recon.py" in message
+
+
+def test_a_bad_page_is_reported_before_the_bigger_blocker():
+    # A usage mistake hidden behind "not implemented yet" is a mistake the user
+    # discovers twice.
+    with pytest.raises(ValueError):
+        fetch.dispatch({"action": "search", "params": {"query": "milk", "page": "zero"}})
+
+
+def test_search_is_not_a_mutating_action():
+    assert "search" not in fetch.MUTATING_ACTIONS

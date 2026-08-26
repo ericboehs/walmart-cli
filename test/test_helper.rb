@@ -11,6 +11,7 @@ require "walmart/commands/base"
 require "walmart/commands/doctor"
 require "walmart/commands/config_cmd"
 require "walmart/commands/login"
+require "walmart/commands/search"
 
 module Walmart
   # Base class for every test: hermetic XDG directories, no Keychain, no
