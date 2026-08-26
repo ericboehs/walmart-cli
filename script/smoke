@@ -1,0 +1,290 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Runs the real CLI end to end and looks at the bytes.
+#
+# Every defect this script checks for was invisible to the unit suite and
+# visible in under a minute of running the command and reading stdout: an empty
+# document, prose where JSON was promised, a wrong exit code. The tests assert
+# what the code should do; this asserts what it actually emitted.
+#
+# No network and no browser. WALMART_PYTHON points the worker at a stub that
+# speaks the real protocol over the real pipes, so the CLI, the worker
+# transport, the parsers and the formatters are all genuine -- only Walmart is
+# not. XDG paths are redirected into a temp directory, so a run cannot see or
+# touch a real archive, profile, or config.
+#
+# Usage: script/smoke [--verbose]
+
+require "json"
+require "fileutils"
+require "tmpdir"
+require "open3"
+
+ROOT = File.expand_path("..", __dir__)
+VERBOSE = ARGV.include?("--verbose")
+
+# A credential-shaped string. If this ever appears on stdout, something in the
+# chain is printing what it was handed instead of a redaction.
+CANARY = "smoke-canary-secret-value"
+
+# Canned worker replies, keyed by action. Shapes copied from the parsers'
+# tests, which were written against observed payloads.
+WORKER_REPLIES = {
+  "probe" => {
+    "python" => "3.10.17", "playwright" => "1.47.0", "browser" => "chromium",
+    "profile_exists" => true
+  },
+  "session.status" => { "signed_in" => true, "checked_at" => "2026-08-26T03:00:00Z" },
+  "search" => {
+    "items" => [
+      { "item_id" => "10450114", "name" => "Great Value Whole Milk, 1 Gallon",
+        "price" => 3.12, "price_display" => "$3.12", "first_party" => true,
+        "seller_name" => "Walmart.com", "availability" => "IN_STOCK", "can_add" => true }
+    ],
+    "pagination" => { "page" => 1, "has_more" => false }
+  },
+  "item" => {
+    "item_id" => "10450114", "name" => "Great Value Whole Milk, 1 Gallon",
+    "brand" => "Great Value", "price" => 3.12, "price_display" => "$3.12",
+    "seller_name" => "Walmart.com", "seller_type" => "INTERNAL", "first_party" => true,
+    "availability" => "IN_STOCK", "min_quantity" => 1, "max_quantity" => 12,
+    "snap_eligible" => true,
+    "fulfillment_options" => [{ "type" => "DELIVERY", "available" => true, "label" => "Delivery" }],
+    "variants" => { "has_variants" => false, "count" => 0, "shape_unobserved" => false }
+  },
+  "cart.show" => {
+    "lines" => [
+      { "item_id" => "10450114", "name" => "Great Value Whole Milk, 1 Gallon",
+        "quantity" => 1, "quantity_display" => "1", "price" => 3.12 }
+    ],
+    "totals" => { "subtotal" => 3.12 }, "problems" => []
+  },
+  "order.sync" => {
+    "orders" => [
+      { "order_id" => "200012345678901", "display_id" => "2000123-45678",
+        "date" => "2026-08-20T14:02:00.000Z", "type" => "delivery", "item_count" => 1,
+        "totals" => { "grand_total" => 3.12 },
+        "items" => [{ "item_id" => "10450114", "name" => "Great Value Whole Milk, 1 Gallon",
+                      "quantity_display" => "1", "price" => 3.12 }] }
+    ],
+    "seen" => [{ "order_id" => "200012345678901" }],
+    "stopped" => { "reason" => "complete" }
+  }
+}.freeze
+
+# Actions the stub should fail, to exercise the error paths that only ever run
+# when something has gone wrong -- the half of the code the unit tests reach
+# least and reviewers reach never.
+WORKER_FAILURES = {
+  "challenge" => { "code" => "challenge_detected", "message" => "Walmart asked for a human" },
+  "login_required" => { "code" => "login_required", "message" => "not signed in" }
+}.freeze
+
+def stub_worker_source
+  <<~RUBY
+    require "json"
+    request = JSON.parse($stdin.read)
+    action = request["action"]
+    replies = JSON.parse(#{WORKER_REPLIES.to_json.dump})
+    failures = JSON.parse(#{WORKER_FAILURES.to_json.dump})
+
+    force = ENV["SMOKE_FORCE_FAILURE"]
+    if force && !force.empty?
+      failure = failures.fetch(force)
+      puts({ "type" => "result", "ok" => false, "error" => failure }.to_json)
+      exit 0
+    end
+
+    if replies.key?(action)
+      puts({ "type" => "result", "ok" => true, "data" => replies[action] }.to_json)
+    else
+      puts({ "type" => "result", "ok" => false,
+             "error" => { "code" => "not_implemented",
+                          "message" => action + " is not implemented" } }.to_json)
+    end
+  RUBY
+end
+
+class Smoke
+  Case = Struct.new(:label, :argv, :exit_code, :expect, :fresh, keyword_init: true)
+
+  def initialize
+    @failures = []
+    @checked = 0
+  end
+
+  attr_reader :failures, :checked
+
+  def run
+    Dir.mktmpdir("walmart-smoke") do |dir|
+      @dir = dir
+      write_stub
+      cases.each { |kase| check(kase) }
+    end
+    report
+  end
+
+  private
+
+  def write_stub
+    @stub = File.join(@dir, "stub-worker.rb")
+    File.write(@stub, stub_worker_source)
+    File.chmod(0o700, @stub)
+  end
+
+  # `ruby stub.rb` stands in for `python fetch.py`: the CLI appends the real
+  # script path, which the stub ignores.
+  # Cases share one XDG root by default, deliberately: it means `order list`
+  # reads what `order sync` actually wrote to disk, rather than a fixture that
+  # agrees with the writer by construction. A case marked fresh gets its own
+  # root, for the states that only exist before anything has happened.
+  def env(extra = {}, fresh: nil)
+    root = fresh ? File.join(@dir, "fresh-#{fresh}") : File.join(@dir, "main")
+    {
+      "HOME" => root,
+      "XDG_CONFIG_HOME" => File.join(root, "config"),
+      "XDG_DATA_HOME" => File.join(root, "data"),
+      "XDG_STATE_HOME" => File.join(root, "state"),
+      "XDG_CACHE_HOME" => File.join(root, "cache"),
+      "WALMART_PYTHON" => "#{RbConfig.ruby} #{@stub}",
+      "NO_COLOR" => "1",
+      "SMOKE_FORCE_FAILURE" => ""
+    }.merge(extra)
+  end
+
+  def cases
+    read_cases + json_cases + failure_cases
+  end
+
+  # The ordinary surface, in text mode.
+  def read_cases
+    [
+      Case.new(label: "version", argv: %w[version], exit_code: 0, expect: /walmart-cli \d/),
+      Case.new(label: "help", argv: %w[help], exit_code: 0, expect: /Available now/),
+      # doctor's exit code is a fact about this machine, not about the code:
+      # 1 when a check fails, and a machine without Chrome is a legitimate 1.
+      Case.new(label: "doctor", argv: %w[doctor], exit_code: nil, expect: /python/),
+      Case.new(label: "search", argv: %w[search milk], exit_code: 0, expect: /Great Value/),
+      Case.new(label: "item", argv: %w[item 10450114], exit_code: 0, expect: /Walmart\.com \(Walmart\)/),
+      Case.new(label: "cart show", argv: %w[cart show], exit_code: 0, expect: /Great Value/),
+      Case.new(label: "order sync", argv: %w[order sync], exit_code: 0, expect: /archived 1 order/),
+      # Ordering matters here: this runs after `order sync` against the same
+      # XDG root, so it proves the record survived a write and a read of a
+      # real file rather than agreeing with the writer in memory.
+      Case.new(label: "order list (after sync)", argv: %w[order list], exit_code: 0,
+               expect: /200012345678901/),
+      Case.new(label: "order show (after sync)", argv: %w[order show 200012345678901],
+               exit_code: 0, expect: /Great Value/),
+      Case.new(label: "order search (after sync)", argv: %w[order search milk],
+               exit_code: 0, expect: /Great Value/),
+      Case.new(label: "order list (never synced)", argv: %w[order list], exit_code: 0,
+               expect: /No matches/, fresh: "empty"),
+      Case.new(label: "unknown command", argv: %w[teleport], exit_code: 2, expect: nil)
+    ]
+  end
+
+  # Every one of these must print exactly one JSON document to stdout. The
+  # empty and error paths are the ones that were broken, so they are listed
+  # first-class rather than assumed.
+  def json_cases
+    [
+      %w[version], %w[help], %w[doctor], %w[search milk], %w[item 10450114],
+      %w[cart show], %w[order sync], %w[order list], %w[order search milk],
+      %w[order show nope], %w[order show 200012345678901], %w[search], %w[teleport], []
+    ].map do |argv|
+      Case.new(label: "json: #{argv.join(" ").inspect}", argv: argv + ["--json"],
+               exit_code: nil, expect: :json)
+    end + empty_json_cases
+  end
+
+  # The empty path needs its own root or it is not empty. Without these the
+  # suite ran every JSON case against an archive that `order sync` had already
+  # filled, so the one bug this section exists to catch -- a document that is
+  # zero bytes when there is nothing to report -- could not fail it.
+  def empty_json_cases
+    [
+      %w[order list], %w[order search saffron], %w[order show nope]
+    ].each_with_index.map do |argv, index|
+      Case.new(label: "json (never synced): #{argv.join(" ").inspect}",
+               argv: argv + ["--json"], exit_code: nil, expect: :json,
+               fresh: "json-empty-#{index}")
+    end
+  end
+
+  # A worker that fails is the normal case, not the exceptional one: Walmart
+  # can challenge or sign us out at any moment.
+  def failure_cases
+    [
+      Case.new(label: "challenge (text)", argv: %w[search milk], exit_code: 1,
+               expect: { failure: "challenge" }),
+      Case.new(label: "challenge (json)", argv: %w[search milk --json], exit_code: nil,
+               expect: { failure: "challenge", json: true }),
+      Case.new(label: "login required (json)", argv: ["cart", "show", "--json"], exit_code: nil,
+               expect: { failure: "login_required", json: true })
+    ]
+  end
+
+  def check(kase)
+    extra = {}
+    expect = kase.expect
+    if expect.is_a?(Hash)
+      extra["SMOKE_FORCE_FAILURE"] = expect[:failure]
+      expect = expect[:json] ? :json : nil
+    end
+
+    out, err, status = Open3.capture3(env(extra, fresh: kase.fresh), RbConfig.ruby, "-I#{ROOT}/lib",
+                                      "#{ROOT}/bin/walmart", *kase.argv)
+    @checked += 1
+    puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}" if VERBOSE
+
+    assert_exit(kase, status)
+    assert_no_canary(kase, out, err)
+    expect == :json ? assert_one_document(kase, out) : assert_matches(kase, out, err, expect)
+  end
+
+  def assert_exit(kase, status)
+    return if kase.exit_code.nil? || status.exitstatus == kase.exit_code
+
+    fail!(kase, "expected exit #{kase.exit_code}, got #{status.exitstatus}")
+  end
+
+  # The whole point of --json. Zero bytes is the failure that looks like
+  # success right up until a parser sees it.
+  def assert_one_document(kase, out)
+    return fail!(kase, "stdout was empty; --json promises a document") if out.strip.empty?
+
+    JSON.parse(out)
+  rescue JSON::ParserError => e
+    fail!(kase, "stdout was not one JSON document (#{e.message.lines.first.strip})")
+  end
+
+  def assert_matches(kase, out, err, expect)
+    return if expect.nil? || out.match?(expect) || err.match?(expect)
+
+    fail!(kase, "output did not match #{expect.inspect}")
+  end
+
+  def assert_no_canary(kase, out, err)
+    return unless "#{out}#{err}".include?(CANARY)
+
+    fail!(kase, "a credential-shaped value reached the output")
+  end
+
+  def fail!(kase, reason)
+    @failures << "#{kase.label}: #{reason}"
+  end
+
+  def report
+    if failures.empty?
+      puts "smoke: #{checked} checks passed"
+      return 0
+    end
+
+    warn "smoke: #{failures.length} of #{checked} checks failed"
+    failures.each { |line| warn "  #{line}" }
+    1
+  end
+end
+
+exit Smoke.new.run

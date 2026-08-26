@@ -43,15 +43,20 @@ module Walmart
 
     # Safety invariant 10: an empty result must say what was searched, and a
     # blocked read must not look like a healthy zero.
-    def test_empty_result_distinguishes_healthy_from_blocked
+    # An empty result is a successful command, so it must not arrive wearing
+    # the word "error" or on the error stream. A caller redirecting stdout gets
+    # the sentence either way, and a caller reading the exit code is not told
+    # two different things.
+    def test_an_empty_result_is_reported_as_a_result_not_an_error
       fmt = formatter
       fmt.empty_result(what: '"whole milk"', where: "My Items")
 
       assert_includes out.string, 'No matches for "whole milk" in My Items.'
 
-      fmt.empty_result(what: '"whole milk"', reason: "signed out")
+      fmt.empty_result(what: '"whole milk"', reason: "3 results are marketplace sellers")
 
-      assert_includes err.string, 'no results for "whole milk": signed out'
+      assert_includes out.string, "3 results are marketplace sellers"
+      refute_includes err.string, "error"
     end
 
     def test_color_is_off_when_asked

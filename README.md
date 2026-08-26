@@ -48,6 +48,21 @@ pretends to do something it cannot yet do.
 Cart mutation waits on an observed contract: the update runs in a Web Worker,
 so it has not yet been seen. Nothing here will guess at it.
 
+## Testing
+
+```sh
+rake            # rubocop, ruff, minitest, pytest, smoke
+rake smoke      # the built CLI end to end against a stub worker
+```
+
+`script/smoke` runs the real binary with `WALMART_PYTHON` pointed at a stub that
+speaks the worker protocol, so the CLI, the transport, the parsers and the
+formatters are genuine and only Walmart is not. It reads the bytes that reach
+stdout: that every `--json` path emits exactly one document including when the
+result is empty, that text mode says something useful, and that exit codes match
+the four documented meanings. Several defects reached review because the unit
+suite asserts what the code should do and nothing asserted what it printed.
+
 ## Safety invariants
 
 These outrank convenience, and they are enforced by tests rather than by good

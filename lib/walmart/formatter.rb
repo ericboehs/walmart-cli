@@ -107,15 +107,22 @@ module Walmart
       end
     end
 
-    # Describes an empty result honestly: what was searched, and whether the
-    # emptiness is healthy.
+    # Describes an empty result honestly: what was searched, and why it might
+    # have come back empty.
+    #
+    # Always stdout, and never the word "error". Every caller of this exits 0,
+    # because an empty catalog is a successful search rather than a failed one,
+    # and printing "error:" on a success is a mixed signal: a script cannot act
+    # on it and a person should not have to decide which half to believe. A
+    # read that genuinely failed -- signed out, challenged, throttled -- raises
+    # long before it reaches here.
+    #
+    # The distinction between a healthy and a suspicious emptiness is kept in
+    # the words, where it is useful, rather than in the stream and the prefix,
+    # where it contradicted the exit code.
     def empty_result(what:, where: nil, reason: nil)
       target = where ? "#{what} in #{where}" : what
-      if reason
-        error("no results for #{target}: #{reason}")
-      else
-        say("No matches for #{target}.")
-      end
+      say(reason ? "No matches for #{target}: #{reason}." : "No matches for #{target}.")
     end
 
     private

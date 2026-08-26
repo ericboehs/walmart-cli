@@ -38,7 +38,12 @@ task :gitleaks do
   end
 end
 
+desc "Run the CLI end to end against a stub worker and check the bytes"
+task :smoke do
+  sh "ruby #{File.expand_path("script/smoke", __dir__)}"
+end
+
 desc "Everything CI runs"
-task ci: %i[rubocop ruff test pytest]
+task ci: %i[rubocop ruff test pytest smoke]
 
 task default: :ci

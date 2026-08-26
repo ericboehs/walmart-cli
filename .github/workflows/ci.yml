@@ -27,6 +27,11 @@ jobs:
         run: rubocop
       - name: Test
         run: rake test
+      # Runs the built CLI against a stub worker and reads the bytes it
+      # printed. The unit suite asserts what the code should do; this asserts
+      # what a user's terminal and a script's pipe actually receive.
+      - name: Smoke
+        run: rake smoke
 
   python:
     name: python (${{ matrix.os }})
