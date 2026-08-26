@@ -617,7 +617,7 @@ class CaptureRequest:
 
 
 def _recorder(tmp_path):
-    return _capture_module().Recorder(tmp_path, [])
+    return _capture_module().Recorder(tmp_path)
 
 
 ORCHESTRA = "https://www.walmart.com/orchestra/cartxo/graphql"
@@ -1255,8 +1255,9 @@ def test_the_prompt_does_not_promise_to_abort(monkeypatch, capsys, tmp_path):
 
 def test_the_prompt_says_the_response_body_is_not_kept(monkeypatch, capsys, tmp_path):
     text = _prompt_text(monkeypatch, capsys, tmp_path)
-    assert "SHAPE of the response" in text
-    assert "not written down" in text
+    assert "SHAPE of the" in text
+    assert "Neither body is written down" in text
+    assert "no headers are kept" in text
 
 
 def test_the_prompt_asks_for_one_change_to_an_existing_line(monkeypatch, capsys, tmp_path):
@@ -1294,3 +1295,128 @@ def test_the_prompt_describes_the_gate_as_recognition_not_syntax(monkeypatch, ca
     text = _prompt_text(monkeypatch, capsys, tmp_path)
     assert "unrecognised key" in text
     assert "non-schema" not in text
+
+
+# --- the request side, minimised for this run -----------------------------------------
+#
+# The request contract was captured before and has not changed. Keeping the
+# body again would add the product chosen, its identifiers and its quantity,
+# and would add no evidence. Headers go too: the drop list covers the ones we
+# know about, and an unknown one is exactly what a drop list cannot cover.
+
+
+REVEALING_REQUEST = json.dumps(
+    {
+        "variables": {
+            "input": {
+                "cartId": "cart-id-canary-0000-not-a-real-cart",
+                "items": [
+                    {
+                        "offerId": "OFFER-CANARY-77",
+                        "usItemId": "999888777",
+                        "name": "A Product Nobody Should See",
+                        "quantity": 4,
+                    }
+                ],
+            }
+        }
+    }
+)
+
+
+def _revealing(url=None):
+    request = CaptureRequest(url or f"{ORCHESTRA}/updateItems/h", REVEALING_REQUEST)
+    request.headers = {
+        "authorization": "Bearer canary-token",
+        "x-unknown-tracer": "TRACER-CANARY-42",
+    }
+    return request
+
+
+def test_no_request_value_or_header_reaches_the_file(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(_revealing())
+    recorder.write([])
+    written = (tmp_path / "capture.json").read_text()
+    for secret in (
+        "cart-id-canary-0000-not-a-real-cart",
+        "OFFER-CANARY-77",
+        "999888777",
+        "A Product Nobody Should See",
+        "Bearer canary-token",
+        "TRACER-CANARY-42",
+        "x-unknown-tracer",
+    ):
+        assert secret not in written, secret
+
+
+def test_the_request_record_keeps_metadata_and_shape(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(_revealing())
+    record = recorder.events[0]
+    assert "headers" not in record
+    assert "body" not in record
+    assert record["operation"] == "updateItems"
+    assert record["method"] == "POST"
+    assert record["from_worker"] is True
+    # The structure that made it recognisable survives; the values do not.
+    assert record["body_shape"]["variables"]["input"]["items"]["of"]["quantity"] == "int"
+
+
+def test_the_body_is_still_checked_before_it_is_discarded(tmp_path):
+    """Minimising what is kept must not weaken what is verified."""
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", '{"variables":{"x":1}}'))
+    assert recorder.mutations == 0
+    assert recorder.unclassified == 1
+
+
+def test_a_correlated_request_is_released_after_it_is_answered(tmp_path):
+    """Nothing later in the session needs it, and a response arrives once."""
+    recorder = _recorder(tmp_path)
+    request = _revealing()
+    recorder.on_request(request)
+    assert len(recorder._cleared) == 1
+    recorder.on_response(CaptureResponse(request.url, request))
+    assert recorder._cleared == {}
+    # A repeat of the same response is no longer correlated, so it is not read.
+    repeat = CaptureResponse(request.url, request)
+    recorder.on_response(repeat)
+    assert repeat.read == 0
+    assert len(recorder.responses) == 1
+
+
+# --- a body that will not parse is named, not copied ----------------------------------
+
+
+def test_an_unparseable_response_is_a_sentinel_not_its_text(tmp_path):
+    module = _capture_module()
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request, text="<html>SECRET-CANARY-IN-HTML</html>"))
+    recorder.write([])
+    written = (tmp_path / "capture.json").read_text()
+    assert "SECRET-CANARY-IN-HTML" not in written
+    assert recorder.responses[0]["body_shape"] == module.UNPARSEABLE
+
+
+def test_an_unparseable_request_is_refused_and_leaves_nothing(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", "SECRET-CANARY-NOT-JSON"))
+    recorder.write([])
+    assert recorder.mutations == 0
+    assert "SECRET-CANARY-NOT-JSON" not in (tmp_path / "capture.json").read_text()
+
+
+def test_the_sentinel_is_not_described_as_a_string():
+    """shape_of would call it "str", which is true of the sentinel and says nothing."""
+    module = _capture_module()
+    assert module._shape(module.UNPARSEABLE) == module.UNPARSEABLE
+    assert module.shape_of("some text") == "str"
+
+
+def test_the_capture_offers_no_flag_it_no_longer_honours(tmp_path):
+    """--scrub-literal removed with the last text path; a dead flag is a false promise."""
+    module = _capture_module()
+    with pytest.raises(SystemExit):
+        module.main(["--scrub-literal", "anything", "--yes", "--out", str(tmp_path)])

@@ -186,6 +186,20 @@ def _collapse(shapes: list[Any], count: int, label: str) -> dict[str, Any]:
     return described
 
 
+# A body that would not parse. Named rather than kept: the text itself is not
+# retained anywhere, on either side.
+UNPARSEABLE = "<unparseable>"
+
+
+def _shape(payload: Any) -> Any:
+    """shape_of, except that the unparseable sentinel stays itself.
+
+    Passing it through shape_of would describe it as "str", which is true of
+    the sentinel and says nothing about the body.
+    """
+    return UNPARSEABLE if payload is UNPARSEABLE else shape_of(payload)
+
+
 def shape_of(value: Any, depth: int = 0) -> Any:
     """The structure of a payload with every value -- and every dynamic key -- removed.
 
@@ -275,9 +289,8 @@ def is_walmart(url: str) -> bool:
 class Recorder:
     """Everything we saw, with the bodies of anything that changed state."""
 
-    def __init__(self, out_dir: Path, literals: list[str]):
+    def __init__(self, out_dir: Path):
         self.out_dir = out_dir
-        self.literals = literals
         self.events: list[dict[str, Any]] = []
         self.workers: list[str] = []
         self.mutations = 0
@@ -342,13 +355,19 @@ class Recorder:
             return
 
         self.mutations += 1
+        # Metadata and shape. Not the headers, and not the body.
+        #
+        # This run exists for the response. The request contract was captured
+        # before and has not changed, so keeping the body again would add the
+        # product Eric chose, its identifiers and its quantity, and would add
+        # no evidence. Headers go for the same reason: the drop list covers the
+        # ones we know, and this is a request nobody has re-read since.
         record = {
             "url": scrub.scrub_url(url),
             "method": method,
             "resource_type": getattr(request, "resource_type", None),
             # The point of the whole exercise: which target issued it.
             "from_worker": self._from_worker(request),
-            "headers": scrub.scrub_headers(dict(getattr(request, "headers", {}) or {})),
             # The name the guard cleared, not a second opinion. This field
             # used to be computed by a separate helper that fell back to the
             # last path segment -- which, for a persisted query, is the hash
@@ -357,7 +376,7 @@ class Recorder:
             # and the evidence file was wrong, which is the more dangerous way
             # round: nobody rereads a document they believe was validated.
             "operation": operation,
-            "body": scrub.scrub_json(self._decode(body), self.literals),
+            "body_shape": _shape(decoded),
         }
         self.events.append(record)
         self._cleared[id(request)] = request
@@ -408,6 +427,10 @@ class Recorder:
         else:
             print(f"  response {status}: {self._summarise(payload)}")
 
+        # The request has been answered, so stop holding it. Nothing later in
+        # the session needs it, and a correlated response arrives once.
+        self._cleared.pop(id(request), None)
+
         # The shape only. The body exists in this process for as long as it
         # takes to derive that, and is not written down.
         #
@@ -424,13 +447,15 @@ class Recorder:
                 "operation": operation,
                 "status": status,
                 "ok": getattr(response, "ok", None),
-                "body_shape": shape_of(payload),
+                "body_shape": _shape(payload),
             }
         )
         del payload
 
     @staticmethod
     def _summarise(payload: Any) -> str:
+        if payload is UNPARSEABLE:
+            return "body did not parse"
         if not isinstance(payload, dict):
             return "not an object"
         parts = []
@@ -462,13 +487,22 @@ class Recorder:
             return True
         return False
 
-    def _decode(self, body: str | None) -> Any:
+    @staticmethod
+    def _decode(body: str | None) -> Any:
+        """Parsed JSON, or a sentinel. Never a copy of the text.
+
+        This used to fall back to scrubbing the raw text, which made a second
+        sensitive-derived string out of a body we could not even read -- only
+        for the shape walk to reduce it to "str". A body that will not parse
+        is refused on the request side and described as unparseable on the
+        response side, and neither needs the text kept.
+        """
         if not body:
             return None
         try:
             return json.loads(body)
         except (TypeError, ValueError):
-            return scrub.scrub_text(body, self.literals)
+            return UNPARSEABLE
 
     def write(self, notes: list[str]) -> Path:
         document = {
@@ -504,9 +538,9 @@ def confirm(out_dir: Path) -> bool:
     print("new variant, or a second mutation to explain. Which line, and how you")
     print("restore it, are yours to choose.")
     print()
-    print("Recorded: the request, as before, and the SHAPE of the response --")
-    print("its structure with every value and every unrecognised key removed. The")
-    print("response body itself is not written down.")
+    print("Recorded: the request's metadata and shape, and the SHAPE of the")
+    print("response -- structure with every value and every unrecognised key")
+    print("removed. Neither body is written down, and no headers are kept.")
     print()
     return input("start recording? [y/N] ").strip().lower() in ("y", "yes")
 
@@ -542,8 +576,7 @@ def run(args: argparse.Namespace) -> int:
         print("aborted", file=sys.stderr)
         return 2
 
-    literals = [line.strip() for line in (args.scrub_literal or []) if line.strip()]
-    recorder = Recorder(out_dir, literals)
+    recorder = Recorder(out_dir)
     options = browser.BrowserOptions(
         profile_dir=args.profile,
         profile_lock=args.profile + ".lock",
@@ -601,7 +634,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cdp-url", default="http://127.0.0.1:9222")
     parser.add_argument("--profile", default=str(Path.home() / ".local/share/walmart/attached-chrome"))
     parser.add_argument("--out")
-    parser.add_argument("--scrub-literal", action="append")
     parser.add_argument("--yes", action="store_true")
     return run(parser.parse_args(argv))
 

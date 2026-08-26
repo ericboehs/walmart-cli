@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of sixty-nine defects
+The layout of the suite is not arbitrary. It is the residue of seventy defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -30,6 +30,7 @@ Each of these was written deliberately, read fine, and passed:
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
+| a flag that no longer did anything | `--scrub-literal` survived the removal of the last text path and would have accepted a value it could not act on |
 | a bound measured in the wrong place | the cap stopped the recursion but the root walk still visited every entry to count them; the test counted recursive calls, so it passed |
 | breadth uncapped while claiming otherwise | the comment said depth, breadth and length were bounded; only depth and length were |
 | a shape that kept every key | "carries the contract and none of the contents" was false: a map keyed by email or cart id puts the secret in the key position, where nothing was looking |
@@ -282,6 +283,8 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **Keep only what the run came for.** A capture aimed at one unknown should
+  not re-collect the known thing beside it; the second copy is all cost.
 - **A test of a bound must measure the thing being bounded.** Counting
   recursive calls proved nothing about a loop that never recursed. Count what
   was consumed.

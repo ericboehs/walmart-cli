@@ -776,8 +776,8 @@
   {
     "label": "the evidence file labels the operation from the raw url",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "            \"operation\": operation,\n            \"body\": scrub.scrub_json(self._decode(body), self.literals),",
-    "to": "            \"operation\": url.rsplit(\"/\", 1)[-1],\n            \"body\": scrub.scrub_json(self._decode(body), self.literals),",
+    "from": "            \"operation\": operation,\n            \"body_shape\": _shape(decoded),",
+    "to": "            \"operation\": url.rsplit(\"/\", 1)[-1],\n            \"body_shape\": _shape(decoded),",
     "command": [
       "uv",
       "run",
@@ -1356,8 +1356,8 @@
   {
     "label": "the response body is written to disk",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "                \"body_shape\": shape_of(payload),\n            }",
-    "to": "                \"body_shape\": shape_of(payload),\n                \"body\": payload,\n            }",
+    "from": "                \"body_shape\": _shape(payload),\n            }",
+    "to": "                \"body_shape\": _shape(payload),\n                \"body\": payload,\n            }",
     "command": [
       "uv",
       "run",
@@ -1510,8 +1510,78 @@
   {
     "label": "the driver is told the gate is about syntax",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "    print(\"its structure with every value and every unrecognised key removed. The\")",
-    "to": "    print(\"its structure with every value and every non-schema key removed. The\")",
+    "from": "    print(\"response -- structure with every value and every unrecognised key\")",
+    "to": "    print(\"response -- structure with every value and every non-schema key\")",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the request body is written to disk",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            \"body_shape\": _shape(decoded),\n        }",
+    "to": "            \"body_shape\": _shape(decoded),\n            \"body\": decoded,\n        }",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "request headers are written to disk",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            \"operation\": operation,\n            \"body_shape\": _shape(decoded),",
+    "to": "            \"operation\": operation,\n            \"headers\": dict(getattr(request, \"headers\", {}) or {}),\n            \"body_shape\": _shape(decoded),",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "an unparseable body is copied instead of named",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            return UNPARSEABLE",
+    "to": "            return body",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the unparseable sentinel is shaped as a string",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return UNPARSEABLE if payload is UNPARSEABLE else shape_of(payload)",
+    "to": "    return shape_of(payload)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "an answered request is held for the rest of the session",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        self._cleared.pop(id(request), None)\n",
+    "to": "",
     "command": [
       "uv",
       "run",

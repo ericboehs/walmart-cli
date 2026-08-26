@@ -285,6 +285,23 @@ this section here.
 
 A remove-and-restore has none of those safety properties and was refused.
 
+## What the first response capture keeps
+
+Metadata and structure, on both sides, and no bodies.
+
+    url (scrubbed), method, resource_type, from_worker, operation, body_shape
+    status, ok, body_shape
+
+No headers. No request body, even though the request contract is already known
+-- keeping it again would add the product chosen, its identifiers and its
+quantity, and add no evidence. No response body. A body that will not parse is
+named `<unparseable>` rather than copied.
+
+Everything the guards need is still checked in memory before it is dropped: the
+operation, the URL, the body's structure, and the correlation between a request
+and its answer. Minimising what is kept must not weaken what is verified, and
+a test asserts a malformed body is still refused.
+
 ## What the first response capture can and cannot tell us
 
 The response to `updateItems` has never been observed. The capture keeps its
