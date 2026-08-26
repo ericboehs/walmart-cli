@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import browser
@@ -167,13 +169,13 @@ def test_the_detail_resolves_what_the_index_could_only_call_online(monkeypatch):
 
 def test_a_finished_walk_reports_complete_and_keeps_no_cursor(monkeypatch):
     # No cursor means Walmart says there is nothing older. A finished walk
-    # holding a session-scoped cursor is an identifier kept for no reason.
+    # no cursor is reported at all: nothing downstream replays one.
     session = one_page_session()
 
     stopped = sync(monkeypatch, session)["stopped"]
 
     assert stopped["reason"] == orders.COMPLETE
-    assert stopped["cursor"] is None
+    assert "cursor" not in stopped
 
 
 # --- Paging ---------------------------------------------------------------------
@@ -252,7 +254,6 @@ def test_a_missing_next_control_is_not_the_end_of_history(monkeypatch):
     stopped = sync(monkeypatch, session)["stopped"]
 
     assert stopped["reason"] == orders.NO_NEXT_PAGE
-    assert stopped["cursor"] == "CURSOR-1"
 
 
 def test_a_page_ceiling_stops_an_unbounded_walk(monkeypatch):
@@ -266,7 +267,6 @@ def test_a_page_ceiling_stops_an_unbounded_walk(monkeypatch):
     stopped = sync(monkeypatch, session, max_pages=1)["stopped"]
 
     assert stopped["reason"] == orders.PAGE_LIMIT
-    assert stopped["cursor"] == "CURSOR-1"
 
 
 # --- Stopping -----------------------------------------------------------------------
@@ -334,7 +334,6 @@ def test_a_stopped_walk_keeps_its_cursor_for_the_next_run(monkeypatch):
     result = sync(monkeypatch, session, wait_seconds=1)
 
     assert result["stopped"]["reason"] == "history_unreadable"
-    assert result["stopped"]["cursor"] == "CURSOR-1"
 
 
 def test_an_unreadable_first_page_is_not_an_empty_history(monkeypatch):
@@ -470,3 +469,27 @@ def test_an_order_id_longer_than_the_bound_is_refused():
     """
     assert orders.ORDER_ID.match("2" * 64)
     assert not orders.ORDER_ID.match("2" * 65)
+
+
+# The cursor was reported to Ruby, written to the archive, and never read by
+# anything. The walk clicks Next rather than replaying it -- deliberately, since
+# replaying earned a 429 -- so the field only ever travelled outward. An
+# identifier with no consumer is a liability, so it no longer crosses the
+# boundary at all.
+def test_no_stop_note_carries_a_cursor_out_of_the_worker(monkeypatch):
+    cases = [
+        (one_page_session(), {}),
+        (
+            FakeSession(
+                pages=[history(orders=[ONLINE_ROW], cursor="CURSOR-1")],
+                next_pages=[graphql_history([ONLINE_ROW], cursor="CURSOR-2")],
+                orders_by_id={"200012345678901": order()},
+            ),
+            {"max_pages": 1},
+        ),
+    ]
+    for session, kwargs in cases:
+        result = sync(monkeypatch, session, **kwargs)
+
+        assert "cursor" not in result["stopped"], result["stopped"]
+        assert "CURSOR" not in json.dumps(result["stopped"])

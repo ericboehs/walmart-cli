@@ -94,7 +94,7 @@ module Walmart
     end
 
     def test_a_fresh_archive_is_not_resumable_because_there_is_nothing_to_resume
-      refute_predicate archive, :resumable?
+      refute_predicate archive, :incomplete?
     end
 
     def test_a_finished_walk_is_complete
@@ -102,16 +102,16 @@ module Walmart
       store.note_sync(reason: "complete")
 
       assert_predicate store, :complete?
-      refute_predicate store, :resumable?
+      refute_predicate store, :incomplete?
     end
 
     def test_an_interrupted_walk_is_synced_but_not_complete
       store = archive
-      store.note_sync(reason: "rate_limited", cursor: "CURSOR")
+      store.note_sync(reason: "rate_limited")
 
       assert_predicate store, :synced?
       refute_predicate store, :complete?
-      assert_predicate store, :resumable?
+      assert_predicate store, :incomplete?
     end
 
     # --- Writing ---------------------------------------------------------------
@@ -331,34 +331,57 @@ module Walmart
       store = archive
       store.note_sync(reason: "complete", oldest_date: "2024-08-26")
 
-      refute_predicate store, :resumable?
+      refute_predicate store, :incomplete?
       assert_equal "complete", store.sync_state["reason"]
     end
 
     # A partial archive that knows it is partial is fine. One that silently
     # believes it is complete is how someone searches two years of history and
     # is told, wrongly, that they never bought a thing.
-    def test_a_walk_stopped_by_a_block_is_resumable
+    def test_a_walk_stopped_by_a_block_is_marked_incomplete
       store = archive
-      store.note_sync(cursor: "CURSOR", reason: "challenge_detected")
+      store.note_sync(reason: "challenge_detected")
 
-      assert_predicate store, :resumable?
-      assert_equal "CURSOR", store.sync_state["cursor"]
+      assert_predicate store, :incomplete?
     end
 
     def test_sync_state_survives_a_restart
-      archive.note_sync(cursor: "CURSOR", reason: "rate_limited")
+      archive.note_sync(reason: "rate_limited")
 
-      assert_predicate archive, :resumable?
+      assert_predicate archive, :incomplete?
     end
 
-    def test_a_complete_walk_keeps_no_cursor
-      # The cursor is session-scoped. Keeping one we have no use for is keeping
-      # an identifier for no reason.
-      store = archive
-      store.note_sync(reason: "complete")
+    # The archive used to persist the pagination cursor, with a comment saying
+    # it was kept so the next run could pick up where it left off. Nothing ever
+    # read it. It was an opaque session-scoped identifier written to disk for no
+    # operational purpose, and its presence made the archive look resumable.
+    #
+    # The old test asserted the cursor survived a restart -- that the writer
+    # wrote and the reader could read the same field. It never asked whether a
+    # consumer existed. That is the night's recurring shape: proving the
+    # mechanism runs, not that anything depends on it.
+    def test_no_stop_reason_writes_a_cursor_to_disk
+      %w[complete cutoff page_limit challenge_detected rate_limited].each do |reason|
+        store = Archive.new(paths: paths)
+        store.note_sync(reason: reason)
 
-      assert_nil store.sync_state["cursor"]
+        refute_includes store.sync_state.keys, "cursor", "#{reason} persisted a cursor"
+        refute_includes File.read(paths.index_file), "cursor"
+      end
+    end
+
+    # The guard above only holds while nothing reintroduces a reader. If a
+    # cursor is ever persisted again it must be because something consumes it,
+    # and this fails until that is true in the code rather than in a comment.
+    def test_nothing_in_the_tree_reads_a_stored_cursor
+      root = File.expand_path("../..", __dir__)
+      readers = Dir[File.join(root, "lib/**/*.rb")].select do |file|
+        File.read(file).match?(/sync_state\[.cursor.\]|sync\[.cursor.\]/)
+      end
+
+      assert_empty readers.map { |file| file.delete_prefix("#{root}/") },
+                   "something reads a stored cursor; either the archive should be storing one " \
+                   "again, or this reader is acting on a field that is always nil"
     end
   end
 end

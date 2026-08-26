@@ -84,6 +84,31 @@ automatically, never runs faster than a person shopping, and stops when told to
 stop. Those exist to keep the traffic honest, and they matter more once the
 detection layer is no longer doing that job for us.
 
+### Known limitation: history deeper than the page ceiling is unreachable
+
+`order sync` walks purchase history from page one, clicking Next, and stops at a
+200-page ceiling. It does not replay a pagination cursor: the worker clicks
+Next deliberately, because replaying a cursor earned a 429.
+
+The consequence is a liveness limit, not a data-loss one. A second sync does not
+continue from where the first stopped -- it restarts at page one. Already
+archived ids are sent so their detail pages are skipped, which makes a re-sync
+cheap, but skipping a detail page does not advance the pagination budget. So for
+a history longer than the ceiling, every run traverses the same pages and stops
+at the same frontier, and `--all` can never complete no matter how often it is
+re-run.
+
+At five orders per page the ceiling is roughly a thousand orders, so this is
+latent for most accounts. The messaging no longer suggests re-running as a
+remedy for `page_limit`, because it is not one.
+
+Fixing it properly needs a design, not a guess. One shape is a total traversal
+ceiling plus a separate budget counted only after the walk passes the
+already-known frontier -- but that needs real traffic accounting, since simply
+not counting known pages weakens the unattended ceiling that exists to stop a
+bug becoming abuse. Actual cursor resume is blocked on observing a mechanism
+that does not earn a 429, and must not be invented.
+
 ### Still unresolved: does "make orders" include placing them?
 
 The owner's framing is "how I as a user of walmart.com want to make orders from

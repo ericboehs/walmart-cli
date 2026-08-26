@@ -44,7 +44,7 @@ module Walmart
     # twice.
     def message
       return never_synced_message unless archive.synced?
-      return nil unless archive.resumable?
+      return nil unless archive.incomplete?
 
       state = archive.sync_state
       window = state["oldest_date"] ? " (nothing older than #{day(state["oldest_date"])})" : ""

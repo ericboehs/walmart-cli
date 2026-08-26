@@ -126,19 +126,46 @@ module Walmart
 
       # --- Sync state ------------------------------------------------------------------
 
-      def test_an_interrupted_walk_leaves_the_archive_resumable
+      def test_an_interrupted_walk_leaves_the_archive_marked_incomplete
+        run_sync(orders: [RECORD], stopped: { "reason" => "rate_limited" })
+
+        assert_predicate Archive.new(paths: paths), :incomplete?
+      end
+
+      # The worker still reports a cursor in its stop note. We must not write it
+      # down: nothing replays it, and an opaque session identifier on disk with
+      # no consumer is exactly what the minimization rule is about.
+      def test_a_cursor_offered_by_the_worker_is_not_persisted
         run_sync(orders: [RECORD], stopped: { "reason" => "rate_limited", "cursor" => "CURSOR" })
 
-        archive = Archive.new(paths: paths)
+        refute_includes Archive.new(paths: paths).sync_state.keys, "cursor"
+        refute_includes File.read(paths.index_file), "CURSOR"
+      end
 
-        assert_predicate archive, :resumable?
-        assert_equal "CURSOR", archive.sync_state["cursor"]
+      # The claim the old naming made, tested directly for the first time: a
+      # second sync does not continue from where the first stopped. It restarts
+      # at page one, and the only thing carried over is the set of ids whose
+      # detail pages can be skipped. Proving the request omits a cursor is what
+      # the persistence test should have been doing all along.
+      def test_a_second_sync_restarts_rather_than_resuming
+        worker = FakeWorker.new(results: { "order.sync" => {
+                                  "orders" => [RECORD], "seen" => [],
+                                  "stopped" => { "reason" => "page_limit", "cursor" => "CURSOR" }
+                                } })
+        stopped = { "reason" => "page_limit", "cursor" => "CURSOR" }
+        run_sync(worker: worker, orders: [RECORD], stopped: stopped)
+        run_sync(worker: worker, orders: [RECORD], stopped: stopped)
+
+        second = worker.calls.last[:params]
+
+        refute_includes second.keys, "cursor"
+        refute_includes second.values.join(" "), "CURSOR"
       end
 
       def test_a_complete_walk_leaves_the_archive_settled
         run_sync(orders: [RECORD], stopped: { "reason" => "complete" })
 
-        refute_predicate Archive.new(paths: paths), :resumable?
+        refute_predicate Archive.new(paths: paths), :incomplete?
       end
 
       def test_json_output_reports_the_stop_reason

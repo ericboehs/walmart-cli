@@ -216,5 +216,31 @@
     "file": "lib/walmart/commands/browser.rb",
     "from": "fmt.say(\"  walmart config set cdp_url #{url}\")",
     "to": "fmt.say(\"  walmart config write cdp_url #{url}\")"
+  },
+  {
+    "label": "the archive starts persisting a cursor nobody reads",
+    "file": "lib/walmart/archive.rb",
+    "from": "        \"reason\" => reason,\n        \"oldest_date\" => oldest_date",
+    "to": "        \"reason\" => reason,\n        \"cursor\" => \"CURSOR\",\n        \"oldest_date\" => oldest_date"
+  },
+  {
+    "label": "the page-ceiling hint promises that re-running gets further",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "          fmt.hint(\"stopped early at the page ceiling (#{Order::PAGE_CEILING} pages); \" \\\n                   \"history older than this cannot be reached by re-running.\")",
+    "to": "          fmt.hint(\"stopped early at the page ceiling; run sync again to continue from here.\")"
+  },
+  {
+    "label": "the worker starts sending a cursor back across the boundary",
+    "file": "pyworker/orders.py",
+    "from": "            \"reason\": reason,\n",
+    "to": "            \"reason\": reason,\n            \"cursor\": cursor,\n",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
   }
 ]

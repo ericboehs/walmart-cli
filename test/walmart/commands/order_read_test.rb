@@ -84,7 +84,7 @@ module Walmart
       # traffic pattern that drew the block, so that advice was worse than
       # unhelpful. Empty and never-synced are different states.
       def test_an_empty_archive_that_was_blocked_says_so_instead_of_run_sync_first
-        archive_orders(sync: { cursor: nil, reason: "challenge_detected", oldest_date: nil })
+        archive_orders(sync: { reason: "challenge_detected", oldest_date: nil })
         run_read(%w[order list])
 
         assert_includes err.string, "challenge_detected"
@@ -93,7 +93,7 @@ module Walmart
       end
 
       def test_a_throttled_empty_archive_advises_waiting_rather_than_retrying
-        archive_orders(sync: { cursor: nil, reason: "rate_limited", oldest_date: nil })
+        archive_orders(sync: { reason: "rate_limited", oldest_date: nil })
         run_read(%w[order list])
 
         assert_includes err.string, "wait a few minutes"
@@ -101,7 +101,7 @@ module Walmart
 
       # The ordinary stop keeps the ordinary advice.
       def test_an_empty_archive_stopped_at_the_page_ceiling_still_says_run_sync
-        archive_orders(sync: { cursor: "abc", reason: "page_limit", oldest_date: nil })
+        archive_orders(sync: { reason: "page_limit", oldest_date: nil })
         run_read(%w[order list])
 
         assert_includes err.string, "walmart order sync"
@@ -266,14 +266,14 @@ module Walmart
       # "We have never bought that" and "we have not looked that far back" are
       # different facts, and only one of them is a reason to stop looking.
       def test_a_partial_archive_says_so_when_listing
-        archive_orders(RECENT, sync: { reason: "rate_limited", cursor: "CURSOR" })
+        archive_orders(RECENT, sync: { reason: "rate_limited" })
         run_read(%w[order list])
 
         assert_includes err.string, "archive is incomplete"
       end
 
       def test_a_partial_archive_says_so_when_searching
-        archive_orders(RECENT, sync: { reason: "challenge_detected", cursor: "CURSOR" })
+        archive_orders(RECENT, sync: { reason: "challenge_detected" })
         run_read(%w[order search], args: ["saffron"])
 
         assert_includes err.string, "archive is incomplete"
@@ -287,7 +287,7 @@ module Walmart
       end
 
       def test_json_carries_the_coverage_alongside_the_results
-        archive_orders(RECENT, sync: { reason: "page_limit", cursor: "CURSOR" })
+        archive_orders(RECENT, sync: { reason: "page_limit" })
         run_read(%w[order list], json: true)
 
         assert_equal false, stdout_json["coverage"]["complete"]

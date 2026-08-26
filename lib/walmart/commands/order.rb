@@ -14,11 +14,22 @@ module Walmart
     #
     # A sync that stops early is a normal outcome, not an error. Walmart can
     # throttle or challenge us halfway through two years of history, and the
-    # right response is to keep what arrived, say how far we got, and make the
-    # next run resume. The failure this command exists to avoid is an archive
-    # that quietly believes it is complete.
+    # right response is to keep what arrived and say how far we got. The failure
+    # this command exists to avoid is an archive that quietly believes it is
+    # complete.
+    #
+    # A second sync does not resume; it restarts at page one. Already-archived
+    # ids are sent so their detail pages are skipped, which makes a re-sync
+    # cheap, but it does not advance the pagination budget. Nothing here should
+    # describe the archive as resumable, because nothing here can resume.
     class Order < Base
       DEFAULT_WINDOW_YEARS = 2
+
+      # Mirrors MAX_PAGES in pyworker/orders.py, for the message only. Two
+      # copies beat one shared constant here: this is the number a human is
+      # told, and if the worker's ceiling moves without this moving, the test
+      # that reads both files fails.
+      PAGE_CEILING = 200
 
       # Reasons that mean nothing is missing from what we asked for.
       #
@@ -55,7 +66,7 @@ module Walmart
         stored = store(Array(result["orders"]), full: flags[:full] == true)
         stopped = result["stopped"] || {}
         archive.note_sync(
-          cursor: stopped["cursor"], reason: stopped["reason"].to_s, oldest_date: stopped["oldest_date"]
+          reason: stopped["reason"].to_s, oldest_date: stopped["oldest_date"]
         )
 
         report(stored, Array(result["seen"]).length, stopped)
@@ -133,10 +144,16 @@ module Walmart
         when "rate_limited"
           fmt.hint("stopped early: Walmart is throttling this session. Wait a few minutes, then sync again.")
         when "page_limit"
-          fmt.hint("stopped early at the page ceiling; run sync again to continue from here.")
+          # Deliberately does not say "run sync again". A re-run starts at page
+          # one and spends the same ceiling reaching the same frontier, so for a
+          # history longer than the ceiling it stops in exactly this place every
+          # time. Telling someone to repeat that is telling them to wait for a
+          # different outcome from the same work.
+          fmt.hint("stopped early at the page ceiling (#{Order::PAGE_CEILING} pages); " \
+                   "history older than this cannot be reached by re-running.")
         else
           fmt.hint("stopped early (#{reason}); history before this point was not read. " \
-                   "Run sync again to resume.")
+                   "Run sync again to re-read from the newest page.")
         end
       end
 

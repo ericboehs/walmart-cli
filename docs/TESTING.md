@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of eighteen defects
+The layout of the suite is not arbitrary. It is the residue of nineteen defects
 found in two days, eleven of which were sitting inside checks that were passing
 at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -27,6 +27,7 @@ Each of these was written deliberately, read fine, and passed:
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
+| the archive's pagination cursor | a stop note persisted the cursor "so the next run can pick up where it left off"; nothing ever read it, `order sync` restarts at page one, and the test named "sync state survives a restart" asserted only that the field round-tripped |
 | `doctor`'s credential check | it probed for an item's *presence* and reported "email + password set", while the password item existed and held nothing; `login` read the value, found none, and offered to create the record that already existed |
 | the first draft of the per-command help table | hand-written from plausibility rather than from `parse_flags`: it invented two flags that do not exist and omitted five that do |
 | the first draft of the page-ceiling test | it asked for 10,000 pages and got 200, which is equally satisfied by ignoring the parameter — which is what the code did, because the test passed the wrong argument shape |
@@ -185,6 +186,16 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **Proving the writer wrote is not proving a consumer exists.** A cursor was
+  written to disk, described in a comment as enabling resume, and read by
+  nothing. The test round-tripped it through the writer and the reader and
+  passed forever. The regression that would have caught it asserts the
+  *opposite* direction: hand the next run a cursor and watch the request omit
+  it. When a field exists for a downstream purpose, test the downstream.
+- **A capability in a name is a claim.** `resumable?` meant "reason is not
+  complete". It was read, by us, as "the next run can continue from here", and
+  the user-facing hint said so. Renamed to `incomplete?`, which is what it
+  knows.
 - **A check may only claim what it looked at.** `doctor` never reads a
   credential value, deliberately, because that can prompt for biometrics -- and
   it reported "set". Presence is not usability: the item existed and was empty.
@@ -222,7 +233,7 @@ more than another assertion on behaviour.
   worker; the worker is a separate process precisely so it need not trust its
   caller. A limit the caller can raise is not a limit.
 - **A constant is a list of one, and the question is the same.** `MAX_PAGES`
-  lowered stops the walk early with a resumable archive; raised, it is an
+  lowered stops the walk early with an incomplete archive; raised, it is an
   unbounded loop against someone else's site, unattended. Pinned. Applying the
   rule to constants also found that the ceiling was only a default — the request
   could name any number and get it — which no caller exercised and no test could
@@ -242,7 +253,7 @@ more than another assertion on behaviour.
   so both are pinned to a documented set. Shrinking `WALMART_SELLERS`, or losing
   a `TYPE_LABELS` entry, or missing a `NEXT_PAGE_LABELS` string all fail
   *closed* into behaviour that is documented and visible — an item refused, a
-  label kept verbatim, a walk that stops with a reason and a resumable archive.
+  label kept verbatim, a walk that stops with a reason and an incomplete archive.
   Those are deliberately not pinned; a membership test there is churn that
   fights ordinary maintenance.
 - **A failure message on a list is a fork in the road, so write it as one.** The

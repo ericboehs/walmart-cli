@@ -165,9 +165,11 @@ def walk(session, params: dict[str, Any]) -> dict[str, Any]:
         "seen": seen,
         "stopped": {
             "reason": reason,
-            # Only kept when it is still useful. A finished walk holding a
-            # session-scoped cursor is an identifier kept for no reason.
-            "cursor": cursor if reason not in (COMPLETE, CUTOFF) else None,
+            # No cursor crosses this boundary. Ruby never replayed it -- the
+            # walk clicks Next, because replaying a cursor earned a 429 -- so
+            # sending one only invited it to be written down, which it was, for
+            # a resume that does not exist. An identifier with no consumer is a
+            # liability and nothing else.
             "oldest_date": _oldest_date(seen),
         },
     }

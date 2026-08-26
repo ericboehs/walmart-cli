@@ -81,13 +81,17 @@ module Walmart
     # Records how far a walk got and why it stopped. A partial archive that
     # knows it is partial is fine; one that silently believes it is complete is
     # not, so the reason is stored even when it is "finished".
-    def note_sync(cursor: nil, reason: "complete", oldest_date: nil)
+    # No cursor is stored. One used to be, described as kept "so the next run
+    # can pick up where it left off" -- and nothing ever read it. The walk in
+    # orders.py clicks Next rather than replaying a cursor, deliberately,
+    # because replaying one earned a 429. So the field was an opaque
+    # session-scoped identifier written to disk for no operational purpose,
+    # which the minimization rule forbids on its own, and it made the archive
+    # look resumable when it is not.
+    def note_sync(reason: "complete", oldest_date: nil)
       index["sync"] = {
         "at" => timestamp,
         "reason" => reason,
-        # The cursor is session-scoped and opaque. It is kept only when a walk
-        # stopped early, and only so the next run can pick up where it left off.
-        "cursor" => cursor,
         "oldest_date" => oldest_date
       }.compact
       save_index
@@ -98,18 +102,20 @@ module Walmart
 
     # Whether a walk has ever run against this archive.
     #
-    # Distinct from complete and from resumable, because "we have never looked"
+    # Distinct from complete and from incomplete, because "we have never looked"
     # is a third state and the most misleading one to round off. An archive
-    # that has never synced is not complete, and it is not resumable either --
-    # there is nothing to resume.
+    # that has never synced is not complete, and it is not incomplete either --
+    # there is nothing to fill in.
     def synced? = !sync_state.empty?
 
     # True when the last walk ended for a reason that leaves history unseen.
     #
-    # This answers "can the next run continue from here", not "is this archive
-    # trustworthy". A never-synced archive is false here and must not be read
-    # as complete on that basis.
-    def resumable? = synced? && sync_state["reason"] != "complete"
+    # Named for what it knows. It was called resumable?, which claimed a
+    # capability the tool does not have: a second sync restarts at page one. It
+    # answers "is there history we have not read", not "can the next run
+    # continue from where this one stopped". A never-synced archive is false
+    # here and must not be read as complete on that basis.
+    def incomplete? = synced? && sync_state["reason"] != "complete"
 
     # True only when a walk has run and finished. The one claim a machine
     # consumer may act on.
