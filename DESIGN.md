@@ -8,6 +8,92 @@ This tool deliberately stops before checkout. It can mutate the shared online
 cart, but it must never place an order. The user reviews substitutions,
 delivery slot, tip, payment, and the final order in Walmart's iPhone app.
 
+## Who this is for, and the position on automated access
+
+This is a personal tool for one Walmart customer to reach **his own account and
+his own data** from a terminal: his order history, his cart, his items. There is
+no third party's data in scope, nothing is resold, and nothing is done at a
+volume or speed a person could not do by hand in the same session.
+
+Walmart serves that account through a website protected by bot detection
+(PerimeterX/HUMAN — the "Press & Hold" widget). A browser driven by
+Playwright/CDP is detectable as automated, and the challenge fails on repeat
+regardless of how genuinely a human holds the button. So the question is not
+whether the user is a human; he is. The question is whether the *client* he uses
+to reach his own account is one Walmart recognises.
+
+**The project's position, decided by the owner:** this tool will work around bot
+detection where it must, in order to give a real customer terminal access to his
+own account. That is a change from the original stance and it is written down
+rather than quietly adopted, because it carries real costs and someone reading
+this later deserves the actual argument.
+
+### What that does and does not license
+
+In scope:
+
+- Presenting a browser Walmart accepts, for the owner's own authenticated
+  session.
+- Reusing a real, human-established session rather than manufacturing one.
+- Human-rate traffic: one person's shopping, not a crawler.
+
+Out of scope, permanently, and not up for a later "while we're here":
+
+- Any other person's account or data.
+- Scraping at volume, price-monitoring fleets, inventory sniping, scalping,
+  resale, or anything whose value comes from doing it faster or more often than
+  a person could.
+- Credential stuffing, account enumeration, or anything touching an account the
+  owner does not own.
+- Defeating a payment control, a fraud check, or a spending limit. Bot detection
+  and payment authorisation are different things, and only the first is in
+  scope.
+
+### The costs, stated plainly
+
+- **walmart.com's Terms of Use apply to the account holder** regardless of this
+  repo having no terms of its own. Automated access is very likely a breach of
+  them. This is a contract question, not a criminal one — but it is not nothing.
+- **The realistic penalty is the account, not a lawsuit.** A flagged account can
+  lose order history and stored payment methods, and it is the same account the
+  household actually buys groceries with. That risk is the owner's to take and
+  he has taken it knowingly.
+- **It is an arms race on their schedule.** Anything that works today can stop
+  working after a deploy on their side, at an hour we do not choose.
+
+### Preferred approach: be a real browser, not a fake human
+
+Ranked by how well each survives the above, best first. Prefer the earliest one
+that works.
+
+1. **Attach to the user's own everyday Chrome** over CDP
+   (`connect_over_cdp`) — a browser he launched, with his profile, where he is
+   already signed in and has cleared challenges himself, as a person. Nothing is
+   forged, because nothing is fake: the session is genuinely human. This is the
+   most honest reading of "I am not a bot" and it is the direction to try first.
+2. **A long-lived persistent profile** that accumulates real history from
+   sessions the user drove himself, used for later headless reads.
+3. **Reduce the automation fingerprint** of a browser we launch, so an
+   ordinary-looking Chrome is not rejected for being scripted.
+4. **Forging sensor/telemetry payloads** — last resort. It is the most
+   brittle, the most clearly adversarial, and the least defensible if anyone
+   ever asks what this tool does. Do not start here.
+
+Whichever is used, the rate limits stay: this tool never retries a block
+automatically, never runs faster than a person shopping, and stops when told to
+stop. Those exist to keep the traffic honest, and they matter more once the
+detection layer is no longer doing that job for us.
+
+### Still unresolved: does "make orders" include placing them?
+
+The owner's framing is "how I as a user of walmart.com want to make orders from
+a CLI". Today's design stops hard before checkout (see Safety invariants), and
+that has not been changed here — removing it means a command that spends money
+without a human looking at a final total, which is a different decision with a
+different failure mode, and it needs to be made explicitly rather than inherited
+from a change about bot detection. **Until the owner says otherwise, no checkout,
+no place-order, no payment, no slot reservation.**
+
 ## Product decisions
 
 These are settled requirements, not open design questions.
@@ -302,7 +388,10 @@ what Walmart's real web app does through Playwright/CDP:
 
 Initial reconnaissance must determine, rather than assume:
 
-1. Walmart bot protection and whether headless system Chrome is accepted.
+1. Walmart bot protection: which vendor, which signals, and which of the ranked
+   approaches above is sufficient. Observed so far: PerimeterX "Press & Hold",
+   which fails repeatedly against a Playwright-driven Chrome even when a human
+   performs the hold.
 2. Login flow, MFA/captcha behavior, session lifetime, and profile reuse.
 3. Stable item, offer, cart-line, store, and order identifiers.
 4. Store selection and delivery fulfillment context.
@@ -315,9 +404,15 @@ Initial reconnaissance must determine, rather than assume:
 
 ### Browser/session model
 
-Use a dedicated persistent profile under the XDG data directory, not the
-user's everyday browser profile. Prefer installed Chrome/Chromium and fall back
-to Playwright Chromium where supported. Login is visible. Normal commands are
+**Superseded in part** by "Preferred approach: be a real browser, not a fake
+human" above. A dedicated profile that has never been driven by a human is
+exactly the profile bot detection rejects, so the ranked options there — the
+user's own Chrome over CDP first — take precedence over the isolation-first
+design below. The rest of this section still holds.
+
+Use a dedicated persistent profile under the XDG data directory when a dedicated
+profile is used at all. Prefer installed Chrome/Chromium and fall back to
+Playwright Chromium where supported. Login is visible. Normal commands are
 headless if reconnaissance proves that works reliably.
 
 If a headless command sees captcha, bot denial, sign-in, MFA, or an unsupported

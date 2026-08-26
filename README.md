@@ -137,11 +137,19 @@ path today; the `Secrets` boundary is shaped so a libsecret provider can be
 added without touching any command.
 
 Sign-in is gated by human-verification challenges. Observed live: a
-press-and-hold challenge on the first page load and another on pressing Sign In.
-**You clear those, in the visible window.** This tool never solves, simulates,
-or evades a challenge — no press-and-hold automation, no captcha services, no
-stealth or fingerprint-spoofing plugins. When one appears, the CLI names it and
-waits. A one-time code by text may also appear; you type that in the window too.
+press-and-hold challenge on the first page load and another on pressing Sign In,
+which a Playwright-driven Chrome fails repeatedly even when a human performs the
+hold — it is rejecting the client, not the person.
+
+This is a personal tool for one customer reaching his own account, and it works
+around that detection where it must. What it does not do is defined in
+[DESIGN.md](DESIGN.md): no other person's account or data, no volume scraping or
+sniping or resale, nothing whose value comes from being faster than a human, and
+nothing touching payment authorisation. The traffic stays at human rate, and the
+tool still never retries a block automatically.
+
+The account holder carries the risk that automated access breaches walmart.com's
+Terms of Use, and that the penalty lands on the account he buys groceries with.
 
 There is no plaintext-config fallback, by design.
 
