@@ -84,6 +84,13 @@ module Walmart
         assert_includes err.string, "cannot read"
       end
 
+      # Whatever a command returns is handed to Kernel#exit. Asserting on
+      # stdout while ignoring the return value is how two commands shipped
+      # printing a good document and then crashing on exit(nil).
+      def test_json_mode_returns_an_exit_code_and_not_nil
+        assert_equal ExitCodes::OK, run_item(result: MILK, json: true)
+      end
+
       def test_json_carries_the_whole_item
         run_item(result: MILK, json: true)
 

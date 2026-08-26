@@ -35,7 +35,13 @@ module Walmart
       private
 
       def render(data)
-        return fmt.emit_json(data) && ExitCodes::OK if json?
+        # Not `emit_json(data) && ExitCodes::OK`: emit_json returns nil, so
+        # that idiom returned nil, and nil reached Kernel#exit as a TypeError
+        # after the document had already been printed.
+        if json?
+          fmt.emit_json(data)
+          return ExitCodes::OK
+        end
 
         rows = FIELDS.filter_map do |label, key|
           value = send(key, data)

@@ -21,6 +21,8 @@ module Walmart
   # (see Walmart::Safety), and the surface-scan suite
   # (test/walmart/*_surface_test.rb) fails the build if one is ever added.
   class CLI
+    include Help
+
     GLOBAL_FLAGS = {
       "--json" => :json,
       "--quiet" => :quiet,
@@ -74,7 +76,8 @@ module Walmart
     end
 
     def self.run(argv, **kwargs)
-      new(argv, **kwargs).run
+      cli = new(argv, **kwargs)
+      cli.exit_status(cli.run)
     end
 
     def run
@@ -106,7 +109,37 @@ module Walmart
       internal_error(e, verbose: options&.fetch(:verbose, false))
     end
 
+    # Whatever #run returns is handed straight to Kernel#exit, so a command that
+    # returns nil raises a TypeError *outside* this class -- past every rescue
+    # above, past the JSON promise, onto the user's screen as a backtrace. That
+    # is not hypothetical: two commands returned nil in JSON mode and printed a
+    # perfectly good document immediately before crashing.
+    #
+    # This cannot repair a wrong exit code and does not try. It converts a
+    # programming error into the documented failure exit and a sentence we
+    # wrote, so the contract survives a command that breaks it. The JSON
+    # document, if one was already emitted, is left alone: emit_json_error is a
+    # no-op once something has been written.
+    def exit_status(code)
+      return code if code.is_a?(Integer)
+
+      # #run normally sets these; parse them again in case it never got that
+      # far, because the whole premise here is that something upstream misbehaved.
+      @options ||= parse_globals(@argv).first
+      message = "internal error: #{command_name} returned #{code.inspect} instead of an exit code"
+      emit_json_error("internal_error", message)
+      @stderr.puts("error: #{message}")
+      ExitCodes::FAILED
+    end
+
     private
+
+    # Named from argv rather than from the dispatcher, because the whole point
+    # is that we are here without a well-behaved command to ask.
+    def command_name
+      words = @argv.reject { |word| word.start_with?("-") }
+      words.empty? ? "this command" : "`#{words.join(" ")}`"
+    end
 
     def parse_globals(argv)
       options = { json: false, quiet: false, verbose: false, no_color: false,
@@ -227,55 +260,6 @@ module Walmart
         @stderr.puts("run again with --verbose for a backtrace")
       end
       ExitCodes::FAILED
-    end
-
-    def print_help(code)
-      return print_help_json(code) if json?
-
-      @stdout.puts(<<~HELP)
-        walmart #{VERSION} - build a Walmart grocery delivery cart from the command line
-
-        This tool never checks out. Review substitutions, the delivery slot, tip,
-        payment, and the final order in Walmart's app.
-
-        Available now:
-        #{command_lines(COMMANDS.map { |path, (_h, summary)| [path, summary] })}
-
-        Planned (not yet implemented):
-        #{command_lines(PLANNED.to_a)}
-
-        Global flags:
-          --json        one complete JSON document, including on errors
-          -q, --quiet   suppress non-essential status output
-          -v, --verbose diagnostic logs (never secrets)
-          --no-color    disable terminal color
-          --fresh       bypass an eligible read cache
-          --confirm     approve a removal; never means approve an order
-      HELP
-      code
-    end
-
-    # Help is stdout too, so in JSON mode it has to be a document like
-    # everything else -- otherwise `walmart --json` with no arguments emits
-    # prose into a parser.
-    def print_help_json(code)
-      context(@options).formatter.emit_json(
-        "name" => "walmart-cli",
-        "version" => VERSION,
-        "checks_out" => false,
-        "commands" => COMMANDS.map { |path, (_h, summary)| command_doc(path, summary) },
-        "planned" => PLANNED.map { |path, summary| command_doc(path, summary) }
-      )
-      code
-    end
-
-    def command_doc(path, summary)
-      { "command" => path.join(" "), "summary" => summary }
-    end
-
-    def command_lines(pairs)
-      width = pairs.map { |path, _| path.join(" ").length }.max.to_i
-      pairs.map { |path, summary| "  #{path.join(" ").ljust(width)}  #{summary}" }.join("\n")
     end
   end
 end

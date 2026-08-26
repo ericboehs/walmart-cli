@@ -83,6 +83,10 @@ module Walmart
         assert_includes err.string, "Sold out"
       end
 
+      def test_json_mode_returns_an_exit_code_and_not_nil
+        assert_equal ExitCodes::OK, run_cart(lines: [MILK], totals: TOTALS, json: true)
+      end
+
       def test_json_output_carries_the_whole_cart
         run_cart(lines: [MILK], totals: TOTALS, json: true)
 

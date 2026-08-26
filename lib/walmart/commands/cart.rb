@@ -36,7 +36,13 @@ module Walmart
 
       def render(data)
         lines = Array(data["lines"])
-        return fmt.emit_json(data) && ExitCodes::OK if json?
+        # Not `emit_json(data) && ExitCodes::OK`: emit_json returns nil, so
+        # that idiom returned nil, and nil reached Kernel#exit as a TypeError
+        # after the document had already been printed.
+        if json?
+          fmt.emit_json(data)
+          return ExitCodes::OK
+        end
 
         if lines.empty?
           fmt.empty_result(what: "your cart")

@@ -14,6 +14,7 @@ require_relative "walmart/secrets"
 require_relative "walmart/formatter"
 require_relative "walmart/child_process"
 require_relative "walmart/worker"
+require_relative "walmart/help"
 require_relative "walmart/cli"
 
 module Walmart

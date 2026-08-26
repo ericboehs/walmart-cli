@@ -4,6 +4,45 @@ require_relative "../test_helper"
 
 module Walmart
   class CLITest < TestCase
+    # The backstop for the bug above: if a command returns something that is
+    # not an exit code, the user must get our sentence and a documented exit
+    # code, never a TypeError from Kernel#exit with our backtrace in it.
+    def test_a_command_returning_nil_becomes_a_reported_internal_error
+      cli = CLI.new(%w[cart show], stdout: out, stderr: err, env: env)
+
+      assert_equal ExitCodes::FAILED, cli.exit_status(nil)
+      assert_match(/internal error/, err.string)
+      assert_match(/cart show/, err.string)
+    end
+
+    def test_a_command_returning_nil_in_json_mode_still_emits_a_document
+      cli = CLI.new(%w[cart show --json], stdout: out, stderr: err, env: env)
+      cli.exit_status(nil)
+
+      assert_equal "internal_error", JSON.parse(out.string).dig("error", "code")
+    end
+
+    # exit_status having the right behaviour is worth nothing if CLI.run does
+    # not call it. Removing that call failed no test until this one existed --
+    # the guard would have been dead code that reads as protection.
+    class BrokenCLI < CLI
+      def run = nil
+    end
+
+    def test_the_entry_point_applies_the_guard
+      code = BrokenCLI.run(%w[cart show], stdout: out, stderr: err, env: env)
+
+      assert_equal ExitCodes::FAILED, code
+      assert_match(/internal error/, err.string)
+    end
+
+    def test_a_real_exit_code_passes_through_untouched
+      cli = CLI.new(["version"], stdout: out, stderr: err, env: env)
+
+      assert_equal ExitCodes::UNVERIFIED, cli.exit_status(ExitCodes::UNVERIFIED)
+      assert_empty err.string
+    end
+
     def test_version
       code = CLI.run(["version"], stdout: out, stderr: err, env: env)
 

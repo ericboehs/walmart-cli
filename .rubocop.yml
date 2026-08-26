@@ -54,3 +54,10 @@ Naming/FileName:
 
 Style/SpecialGlobalVars:
   Enabled: false
+
+# The smoke script is one program: a plan and a runner, deliberately split so
+# that "what should be true" and "did it turn out to be" are separate objects.
+# Splitting the file too would put them out of each other's sight.
+Style/OneClassPerFile:
+  Exclude:
+    - "script/smoke"

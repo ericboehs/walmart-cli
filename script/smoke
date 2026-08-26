@@ -199,6 +199,115 @@ class Smoke
     }.merge(extra)
   end
 
+  def cases = Plan.new.cases
+
+  # A case's expectation doubles as its stub configuration: what the worker is
+  # told to do and what we then demand of the output are one description, so
+  # the two cannot drift apart.
+  def plan_for(expect)
+    return [{}, expect, nil, false] unless expect.is_a?(Hash)
+
+    extra = {}
+    extra["SMOKE_FORCE_FAILURE"] = expect[:failure] if expect[:failure]
+    extra["SMOKE_STOP_REASON"] = expect[:stop] if expect[:stop]
+    extra["SMOKE_LEAK_PROBE"] = "1" if expect[:leak]
+    [extra, expect[:json] ? :json : expect[:text], expect[:code], expect[:leak] == true]
+  end
+
+  def check(kase)
+    extra, expect, code, leak_probe = plan_for(kase.expect)
+    out, err, status = Open3.capture3(env(extra, fresh: kase.fresh), RbConfig.ruby, "-I#{ROOT}/lib",
+                                      "#{ROOT}/bin/walmart", *kase.argv)
+    @checked += 1
+    puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}" if VERBOSE
+
+    assert_exit(kase, status)
+    return assert_canary_is_detectable(kase, out, err) if leak_probe
+
+    assert_no_canary(kase, out, err)
+    expect == :json ? assert_one_document(kase, out, code: code) : assert_matches(kase, out, err, expect)
+  end
+
+  def assert_exit(kase, status)
+    return if kase.exit_code.nil? || status.exitstatus == kase.exit_code
+
+    fail!(kase, "expected exit #{kase.exit_code}, got #{status.exitstatus}")
+  end
+
+  # The whole point of --json. Zero bytes is the failure that looks like
+  # success right up until a parser sees it.
+  #
+  # "Some valid JSON came out" is the weakest claim in this file -- weaker than
+  # an exit code, because it is satisfied by the process producing bytes at
+  # all. It is the right assertion for the cases that exist to pin the
+  # one-document contract, and the wrong one for a case with a name like
+  # "login required", which has to be able to tell one failure from another.
+  # So a code can be demanded, and the success cases at least have to not be
+  # errors.
+  def assert_one_document(kase, out, code: nil)
+    return fail!(kase, "stdout was empty; --json promises a document") if out.strip.empty?
+
+    document = JSON.parse(out)
+    error = document.is_a?(Hash) ? document["error"] : nil
+    return assert_error_code(kase, error, code) if code
+
+    fail!(kase, "expected a result, got error #{error["code"].inspect}") if error
+  rescue JSON::ParserError => e
+    fail!(kase, "stdout was not one JSON document (#{e.message.lines.first.strip})")
+  end
+
+  def assert_error_code(kase, error, code)
+    return fail!(kase, "expected error #{code.inspect}, got a result document") unless error
+    return if error["code"] == code
+
+    fail!(kase, "expected error #{code.inspect}, got #{error["code"].inspect}")
+  end
+
+  def assert_matches(kase, out, err, expect)
+    return if expect.nil? || out.match?(expect) || err.match?(expect)
+
+    fail!(kase, "output did not match #{expect.inspect}")
+  end
+
+  def assert_no_canary(kase, out, err)
+    return unless canary?(out, err)
+
+    fail!(kase, "a credential-shaped value reached the output")
+  end
+
+  # Deliberately inverted: this one has to find it, using the same predicate
+  # every other case trusts to come back false.
+  def assert_canary_is_detectable(kase, out, err)
+    return if canary?(out, err)
+
+    fail!(kase, "planted a credential in the worker's reply and the check did not see it; " \
+                "every other canary assertion in this suite is now meaningless")
+  end
+
+  def canary?(out, err) = "#{out}#{err}".include?(CANARY)
+
+  def fail!(kase, reason)
+    @failures << "#{kase.label}: #{reason}"
+  end
+
+  def report
+    if failures.empty?
+      puts "smoke: #{checked} checks passed"
+      return 0
+    end
+
+    warn "smoke: #{failures.length} of #{checked} checks failed"
+    failures.each { |line| warn "  #{line}" }
+    1
+  end
+end
+
+# Builds the case list. Separate from the runner because these are two
+# different questions -- what should be true, and did it turn out to be --
+# and mixing them is how a suite ends up with cases nobody re-reads.
+class Plan
+  Case = Smoke::Case
+
   def cases
     read_cases + stop_cases + json_cases + failure_cases + credential_cases + [leak_probe_case]
   end
@@ -232,7 +341,7 @@ class Smoke
                expect: { failure: "challenge", text: /./ }),
       Case.new(label: "a failing login in json mode does not print it either",
                argv: %w[login --json --verbose], exit_code: nil,
-               expect: { failure: "challenge", json: true })
+               expect: { failure: "challenge", json: true, code: "challenge_detected" })
     ]
   end
 
@@ -291,14 +400,29 @@ class Smoke
   # Every one of these must print exactly one JSON document to stdout. The
   # empty and error paths are the ones that were broken, so they are listed
   # first-class rather than assumed.
+  #
+  # Each entry declares whether it expects a result or a specific error, and
+  # that is the whole point: a case that only requires parseable bytes cannot
+  # tell a result from a failure, let alone one failure from another. Naming
+  # the code also stops a command from quietly changing which error it reports.
+  # argv, the error code expected (nil means a result document), and the exit
+  # status. The pair is the point: a document and a status are two independent
+  # ways to be wrong, and a script reads both. doctor is the only nil status
+  # here, because its exit really is a fact about the machine it runs on.
+  JSON_CASES = [
+    [%w[version], nil, 0], [%w[help], nil, 0], [%w[doctor], nil, nil],
+    [%w[search milk], nil, 0], [%w[item 10450114], nil, 0], [%w[cart show], nil, 0],
+    [%w[order sync], nil, 0], [%w[order list], nil, 0], [%w[order search milk], nil, 0],
+    [%w[order show 200012345678901], nil, 0], [[], nil, 0],
+    [%w[order show nope], "not_found", 1],
+    [%w[search], "usage", 2],
+    [%w[teleport], "unknown_command", 2]
+  ].freeze
+
   def json_cases
-    [
-      %w[version], %w[help], %w[doctor], %w[search milk], %w[item 10450114],
-      %w[cart show], %w[order sync], %w[order list], %w[order search milk],
-      %w[order show nope], %w[order show 200012345678901], %w[search], %w[teleport], []
-    ].map do |argv|
+    JSON_CASES.map do |argv, code, exit_code|
       Case.new(label: "json: #{argv.join(" ").inspect}", argv: argv + ["--json"],
-               exit_code: nil, expect: :json)
+               exit_code: exit_code, expect: { json: true, code: code })
     end + empty_json_cases
   end
 
@@ -308,11 +432,12 @@ class Smoke
   # zero bytes when there is nothing to report -- could not fail it.
   def empty_json_cases
     [
-      %w[order list], %w[order search saffron], %w[order show nope]
-    ].each_with_index.map do |argv, index|
+      [%w[order list], nil, 0], [%w[order search saffron], nil, 0],
+      [%w[order show nope], "not_found", 1]
+    ].each_with_index.map do |(argv, code, exit_code), index|
       Case.new(label: "json (never synced): #{argv.join(" ").inspect}",
-               argv: argv + ["--json"], exit_code: nil, expect: :json,
-               fresh: "json-empty-#{index}")
+               argv: argv + ["--json"], exit_code: exit_code,
+               expect: { json: true, code: code }, fresh: "json-empty-#{index}")
     end
   end
 
@@ -322,88 +447,15 @@ class Smoke
     [
       Case.new(label: "challenge (text)", argv: %w[search milk], exit_code: 1,
                expect: { failure: "challenge", text: /asked for a human/ }),
-      Case.new(label: "challenge (json)", argv: %w[search milk --json], exit_code: nil,
-               expect: { failure: "challenge", json: true }),
-      Case.new(label: "login required (json)", argv: ["cart", "show", "--json"], exit_code: nil,
-               expect: { failure: "login_required", json: true })
+      # exit_code: nil here used to mean "the machine decides", copied from
+      # doctor, where that is true. Nothing is machine-dependent about these:
+      # the stub picks the failure and the mapping is deterministic. That nil
+      # is what let a transport error agree with the failure being tested.
+      Case.new(label: "challenge (json)", argv: %w[search milk --json], exit_code: 1,
+               expect: { failure: "challenge", json: true, code: "challenge_detected" }),
+      Case.new(label: "login required (json)", argv: ["cart", "show", "--json"], exit_code: 1,
+               expect: { failure: "login_required", json: true, code: "login_required" })
     ]
-  end
-
-  def check(kase)
-    extra = {}
-    expect = kase.expect
-    leak_probe = false
-    if expect.is_a?(Hash)
-      extra["SMOKE_FORCE_FAILURE"] = expect[:failure] if expect[:failure]
-      extra["SMOKE_STOP_REASON"] = expect[:stop] if expect[:stop]
-      leak_probe = extra["SMOKE_LEAK_PROBE"] = "1" if expect[:leak]
-      expect = expect[:json] ? :json : expect[:text]
-    end
-
-    out, err, status = Open3.capture3(env(extra, fresh: kase.fresh), RbConfig.ruby, "-I#{ROOT}/lib",
-                                      "#{ROOT}/bin/walmart", *kase.argv)
-    @checked += 1
-    puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}" if VERBOSE
-
-    assert_exit(kase, status)
-    return assert_canary_is_detectable(kase, out, err) if leak_probe
-
-    assert_no_canary(kase, out, err)
-    expect == :json ? assert_one_document(kase, out) : assert_matches(kase, out, err, expect)
-  end
-
-  def assert_exit(kase, status)
-    return if kase.exit_code.nil? || status.exitstatus == kase.exit_code
-
-    fail!(kase, "expected exit #{kase.exit_code}, got #{status.exitstatus}")
-  end
-
-  # The whole point of --json. Zero bytes is the failure that looks like
-  # success right up until a parser sees it.
-  def assert_one_document(kase, out)
-    return fail!(kase, "stdout was empty; --json promises a document") if out.strip.empty?
-
-    JSON.parse(out)
-  rescue JSON::ParserError => e
-    fail!(kase, "stdout was not one JSON document (#{e.message.lines.first.strip})")
-  end
-
-  def assert_matches(kase, out, err, expect)
-    return if expect.nil? || out.match?(expect) || err.match?(expect)
-
-    fail!(kase, "output did not match #{expect.inspect}")
-  end
-
-  def assert_no_canary(kase, out, err)
-    return unless canary?(out, err)
-
-    fail!(kase, "a credential-shaped value reached the output")
-  end
-
-  # Deliberately inverted: this one has to find it, using the same predicate
-  # every other case trusts to come back false.
-  def assert_canary_is_detectable(kase, out, err)
-    return if canary?(out, err)
-
-    fail!(kase, "planted a credential in the worker's reply and the check did not see it; " \
-                "every other canary assertion in this suite is now meaningless")
-  end
-
-  def canary?(out, err) = "#{out}#{err}".include?(CANARY)
-
-  def fail!(kase, reason)
-    @failures << "#{kase.label}: #{reason}"
-  end
-
-  def report
-    if failures.empty?
-      puts "smoke: #{checked} checks passed"
-      return 0
-    end
-
-    warn "smoke: #{failures.length} of #{checked} checks failed"
-    failures.each { |line| warn "  #{line}" }
-    1
   end
 end
 
