@@ -88,10 +88,14 @@ module Walmart
     # session-scoped identifier written to disk for no operational purpose,
     # which the minimization rule forbids on its own, and it made the archive
     # look resumable when it is not.
-    def note_sync(reason: "complete", oldest_date: nil)
+    def note_sync(reason: "complete", oldest_date: nil, since: nil)
       index["sync"] = {
         "at" => timestamp,
         "reason" => reason,
+        # The window that was asked for. Without it a cutoff cannot be told
+        # apart from a truncation: both stopped before the end of history, but
+        # one stopped exactly where it was told to.
+        "since" => since,
         "oldest_date" => oldest_date
       }.compact
       save_index
@@ -99,6 +103,9 @@ module Walmart
     end
 
     def sync_state = index["sync"] || {}
+
+    # Stop reasons that mean "we read everything we set out to read".
+    WINDOW_SETTLED = %w[complete cutoff].freeze
 
     # Whether a walk has ever run against this archive.
     #
@@ -115,7 +122,21 @@ module Walmart
     # answers "is there history we have not read", not "can the next run
     # continue from where this one stopped". A never-synced archive is false
     # here and must not be read as complete on that basis.
-    def incomplete? = synced? && sync_state["reason"] != "complete"
+    #
+    # A cutoff is not incomplete. It means the walk reached the edge of the
+    # window it was given and stopped on purpose. Counting it as "stopped early"
+    # made `order sync --year 2026` exit 0 in silence and then made `order list`
+    # call the same run a truncation and advise re-running it -- advice that
+    # produces the identical cutoff every time.
+    def incomplete? = synced? && !WINDOW_SETTLED.include?(sync_state["reason"])
+
+    # Reached the end of what was asked for, whether or not that was all of
+    # history. `complete?` stays narrower on purpose: it is the claim a machine
+    # consumer acts on, and it must mean "there is nothing older".
+    def window_complete? = synced? && WINDOW_SETTLED.include?(sync_state["reason"])
+
+    # The window the last sync was given, if it was given one.
+    def requested_since = sync_state["since"]
 
     # True only when a walk has run and finished. The one claim a machine
     # consumer may act on.

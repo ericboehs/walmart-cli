@@ -365,6 +365,39 @@ module Walmart
         assert_empty worker.calls
       end
 
+      # The false remedy, in the place a person actually meets it. A cutoff must
+      # not be described as stopping early and must not advise a command that
+      # produces the same cutoff again.
+      def test_a_cutoff_states_its_scope_instead_of_asking_for_a_rerun
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2026-01-01" })
+        run_read(%w[order list])
+        text = out.string + err.string
+
+        assert_match(/covers the window that was requested/, text)
+        assert_match(/--all/, text)
+        refute_match(/stopped early/, text)
+        refute_match(/archive is incomplete/, text)
+      end
+
+      def test_a_cutoff_names_the_window_it_covered
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2025-03-04" })
+        run_read(%w[order list])
+
+        assert_match(/back to 2025-03-04/, out.string + err.string)
+      end
+
+      # A script has to be able to tell "everything" from "everything I asked
+      # for", or it re-runs the narrow sync forever.
+      def test_json_separates_complete_history_from_a_completed_window
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2026-01-01" })
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        refute coverage["complete"], "a cutoff is not complete history"
+        assert coverage["window_complete"], "a cutoff did finish the window it was given"
+        assert_equal "2026-01-01", coverage["requested_since"]
+      end
+
       private
 
       def archive_orders(*orders, sync: nil)

@@ -2,16 +2,22 @@
 
 The walk is deliberately boring: load /orders, read the rows the page shipped,
 load each order's own page for the record, and click "Next page" for more.
-Nothing here synthesizes a request. The cursor exists, and we could build the
-PurchaseHistoryV3 call ourselves, but a replayed history request with a partial
-header set is exactly the shape that earned a 429 during recon -- and unlike a
-search, a throttled history walk fails halfway through somebody's two years.
+Nothing here synthesizes a request. A cursor exists on the page and we could
+build the PurchaseHistoryV3 call ourselves, but a replayed history request with
+a partial header set is exactly the shape that earned a 429 during recon -- and
+unlike a search, a throttled history walk fails halfway through somebody's two
+years. Nothing reads that cursor and nothing reports it: see note_sync in
+archive.rb for why an identifier with no consumer was a liability.
 
-The walk is also interruptible by design. A block or a throttle stops it, and
-what it collected so far is returned along with the reason and the cursor it
-stopped at. A delivered partial result beats a wedged exit: the archive can
-store what arrived, mark itself incomplete, and resume. The one thing this must
-never do is finish quietly and let the caller believe it saw everything.
+The walk is interruptible by design. A block or a throttle stops it, and what it
+collected so far is returned along with the reason it stopped. A delivered
+partial result beats a wedged exit: the archive stores what arrived and marks
+itself incomplete.
+
+It does not resume. A later run starts at page one and is told which ids are
+already held, so it can skip their detail pages -- that makes a re-sync cheap,
+not incremental in the pagination sense. The one thing this must never do is
+finish quietly and let the caller believe it saw everything.
 """
 
 from __future__ import annotations
@@ -81,8 +87,8 @@ def action_order_sync(request: dict[str, Any]) -> dict[str, Any]:
     """Worker entry point for `walmart order sync`.
 
     Returns every order record it managed to read, plus why it stopped. Both
-    halves matter: the caller archives the records and stores the reason so a
-    later run knows whether it is resuming or starting fresh.
+    halves matter: the caller archives the records and stores the reason, which
+    is what lets an archive say how much of history is actually behind it.
     """
     params = normalize_params(request)
     options = browser.BrowserOptions.from_request(request.get("options", {}))
@@ -142,7 +148,11 @@ def walk(session, params: dict[str, Any]) -> dict[str, Any]:
         for number in range(1, params["max_pages"] + 1):
             cursor = page.get("next_cursor")
             seen.extend(page["orders"])
-            _read_page(session, page["orders"], params, records)
+            if _read_page(session, page["orders"], params, records):
+                # Every dated row on this page is older than the window and
+                # none was undated, so this page is the frontier.
+                reason = CUTOFF
+                break
 
             if not cursor:
                 # No cursor means Walmart says there is nothing older. That is
@@ -231,19 +241,40 @@ def _next_button(session):
     return None
 
 
-def _read_page(session, rows, params, records) -> None:
+def _read_page(session, rows, params, records) -> bool:
+    """Read every in-window row on this page. True when the page is a frontier.
+
+    The cutoff used to be raised on the first row older than the window, which
+    abandoned every row after it. That bet completeness on Walmart returning
+    history in date order -- the same assumption _oldest_date refuses to make,
+    in this same file, because one out-of-order page turns a coverage claim into
+    a confident lie. A page shaped [old, in-window] silently dropped the second
+    order, reported cutoff, exited 0, and did it again on every later run.
+
+    So an out-of-window row is skipped, not fatal, and the walk stops only when
+    a whole page is older than the window. An undated row counts against the
+    frontier: _older_than treats it as in-window precisely because it is not
+    evidence we have gone back far enough.
+    """
+    frontier = bool(rows)
     for row in rows:
+        # Validated before it is compared, not only before it is navigated to.
+        # known_ids arrives from the caller and the protocol is directly
+        # invocable, so checking membership first let a malformed id be waved
+        # through as "already covered" by supplying that same string.
+        order_id = _safe_order_id(row["order_id"])
+
         if _older_than(row, params["since"]):
-            # The cutoff ends the walk rather than skipping one order: history
-            # is ordered newest first, so everything after this is older too.
-            raise Stop(CUTOFF, f"reached orders older than {params['since']}")
-        if row["order_id"] in params["known_ids"] and not params["full"]:
             continue
-        records.append(_read_order(session, row))
+
+        frontier = False
+        if order_id in params["known_ids"] and not params["full"]:
+            continue
+        records.append(_read_order(session, row, order_id))
+    return frontier
 
 
-def _read_order(session, row: dict[str, Any]) -> dict[str, Any]:
-    order_id = _safe_order_id(row["order_id"])
+def _read_order(session, row: dict[str, Any], order_id: str) -> dict[str, Any]:
     protocol.progress(f"reading order {row.get('display_id') or order_id}")
     response = session.goto(f"{ORDERS_URL}/{order_id}", wait_until="domcontentloaded")
     _guard(session, response)
@@ -279,7 +310,7 @@ def _guard(session, response) -> None:
     """Refuse to keep walking through a throttle or a block."""
     status = getattr(response, "status", None) if response is not None else None
     if status == 429:
-        raise Stop("rate_limited", "Walmart is rate-limiting this session; resume in a few minutes")
+        raise Stop("rate_limited", "Walmart is rate-limiting this session; try again in a few minutes")
     if challenge.detect_url(getattr(session.page, "url", None)):
         raise Stop(challenge.CHALLENGE_CODE, challenge.ADVICE)
 

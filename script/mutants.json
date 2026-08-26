@@ -220,8 +220,8 @@
   {
     "label": "the archive starts persisting a cursor nobody reads",
     "file": "lib/walmart/archive.rb",
-    "from": "        \"reason\" => reason,\n        \"oldest_date\" => oldest_date",
-    "to": "        \"reason\" => reason,\n        \"cursor\" => \"CURSOR\",\n        \"oldest_date\" => oldest_date"
+    "from": "        \"reason\" => reason,\n        # The window that was asked for.",
+    "to": "        \"reason\" => reason,\n        \"cursor\" => \"CURSOR\",\n        # The window that was asked for."
   },
   {
     "label": "the page-ceiling hint promises that re-running gets further",
@@ -283,6 +283,46 @@
       "pyworker",
       "pytest",
       "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "a cutoff is reported as a truncated sync again",
+    "file": "lib/walmart/archive.rb",
+    "from": "    def incomplete? = synced? && !WINDOW_SETTLED.include?(sync_state[\"reason\"])",
+    "to": "    def incomplete? = synced? && sync_state[\"reason\"] != \"complete\""
+  },
+  {
+    "label": "the cutoff notice advises re-running the same command",
+    "file": "lib/walmart/coverage.rb",
+    "from": "      return window_message if archive.sync_state[\"reason\"] == \"cutoff\"",
+    "to": "      return nil if archive.sync_state[\"reason\"] == \"nope\""
+  },
+  {
+    "label": "the cutoff stops the walk on the first old row again",
+    "file": "pyworker/orders.py",
+    "from": "        if _older_than(row, params[\"since\"]):\n            continue\n\n        frontier = False",
+    "to": "        if _older_than(row, params[\"since\"]):\n            raise Stop(CUTOFF, \"reached orders older than the window\")\n\n        frontier = False",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "a known id is trusted without being validated",
+    "file": "pyworker/orders.py",
+    "from": "        order_id = _safe_order_id(row[\"order_id\"])\n\n        if _older_than",
+    "to": "        order_id = row[\"order_id\"]\n\n        if _older_than",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
     ]
   }
 ]

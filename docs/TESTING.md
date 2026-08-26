@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of twenty-one defects
+The layout of the suite is not arbitrary. It is the residue of twenty-five defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -27,6 +27,8 @@ Each of these was written deliberately, read fine, and passed:
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
+| the cutoff | it stopped the walk on the *first* row older than the window, dropping every later row on that page — while `_oldest_date`, in the same file, refuses to trust row order for exactly that reason |
+| `cutoff` as a verdict | `order sync --year` exited 0 in silence, then `order list` called the same run "stopped early" and advised re-running it, which reaches the identical cutoff every time |
 | the response observer | `on_response` subscribed on the *context*, so it heard every tab in the browser; the tests passed because in a launched browser there is only one tab, and the second tab only exists in the mode we added last |
 | the worker's CDP endpoint | loopback was enforced in Ruby only, and the worker executes what it is handed; the protocol is directly invocable, so the check sat outside the boundary it was protecting |
 | the archive's pagination cursor | a stop note persisted the cursor "so the next run can pick up where it left off"; nothing ever read it, `order sync` restarts at page one, and the test named "sync state survives a restart" asserted only that the field round-tripped |
@@ -227,6 +229,12 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **Hardening one consumer of an assumption does not harden the others.**
+  `_oldest_date` carries a docstring explaining that Walmart pages can be out of
+  order, and that deriving a claim from row order makes one bad page into a
+  confident lie. Twenty lines away the cutoff bet completeness on row order.
+  The author saw the risk, fixed the consumer in front of them, and did not go
+  looking for the second one. When you write "we cannot assume X", grep for X.
 - **A safety property proved in one mode is not proved in the other.** "We touch
   only our own tab" was true of navigation and false of observation, and every
   test passed, because a launched browser has one tab and the second tab is only

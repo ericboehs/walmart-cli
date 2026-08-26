@@ -62,11 +62,13 @@ module Walmart
       def archive = @archive ||= Archive.new(paths: context.paths)
 
       def sync(flags)
-        result = worker.run("order.sync", params: params_for(flags))
+        params = params_for(flags)
+        result = worker.run("order.sync", params: params)
         stored = store(Array(result["orders"]), full: flags[:full] == true)
         stopped = result["stopped"] || {}
         archive.note_sync(
-          reason: stopped["reason"].to_s, oldest_date: stopped["oldest_date"]
+          reason: stopped["reason"].to_s, oldest_date: stopped["oldest_date"],
+          since: params["since"]
         )
 
         report(stored, Array(result["seen"]).length, stopped)

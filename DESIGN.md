@@ -109,6 +109,23 @@ not counting known pages weakens the unattended ceiling that exists to stop a
 bug becoming abuse. Actual cursor resume is blocked on observing a mechanism
 that does not earn a 429, and must not be invented.
 
+### Known limitation: coverage describes the last run, not the archive
+
+`index.json` holds one sync note, and it describes the run that wrote it. Two
+consequences, both real and neither fixed:
+
+- A narrow `--year` sync after a complete `--all` overwrites `complete` with
+  `cutoff`, so an archive that genuinely holds everything will describe itself
+  as covering only the narrow window. Pessimistic rather than dangerous, but
+  wrong.
+- `oldest_date` is the minimum date seen *by that run*, not the oldest record on
+  disk. Any sentence that sounds like an archive floor must not be derived from
+  it.
+
+The fix is accumulated coverage -- tracking which windows have been read, rather
+than what the last walk did -- and it needs a design. Until then, the coverage
+sentence talks about the last sync and says so.
+
 ### Still unresolved: does "make orders" include placing them?
 
 The owner's framing is "how I as a user of walmart.com want to make orders from

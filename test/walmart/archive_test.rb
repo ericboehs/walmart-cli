@@ -345,6 +345,57 @@ module Walmart
       assert_predicate store, :incomplete?
     end
 
+    # `order sync --year 2026` exits 0 with no warning, because cutoff is a
+    # settled reason. The archive then called that same run "stopped early",
+    # said it was incomplete, and advised running `walmart order sync` to fill
+    # it in -- a command that reaches the identical cutoff every time. Two
+    # components, each self-consistent, disagreeing about whether the same run
+    # succeeded. It is the page-ceiling false remedy again, one reason over.
+    def test_a_cutoff_is_not_a_truncated_sync
+      store = archive
+      store.note_sync(reason: "cutoff", since: "2026-01-01", oldest_date: "2026-01-02")
+
+      refute_predicate store, :incomplete?
+      assert_predicate store, :window_complete?
+    end
+
+    # But it is not complete history either, and complete? is the claim a
+    # machine consumer acts on.
+    def test_a_cutoff_is_not_complete_history
+      store = archive
+      store.note_sync(reason: "cutoff", since: "2026-01-01")
+
+      refute_predicate store, :complete?
+    end
+
+    def test_a_full_walk_is_complete_and_window_complete_both
+      store = archive
+      store.note_sync(reason: "complete")
+
+      assert_predicate store, :complete?
+      assert_predicate store, :window_complete?
+      refute_predicate store, :incomplete?
+    end
+
+    def test_a_truncated_walk_is_neither
+      %w[page_limit challenge_detected rate_limited no_next_page].each do |reason|
+        store = Archive.new(paths: paths)
+        store.note_sync(reason: reason)
+
+        assert_predicate store, :incomplete?, "#{reason} should read as incomplete"
+        refute_predicate store, :window_complete?, "#{reason} should not read as settled"
+      end
+    end
+
+    # Without the requested window, a cutoff cannot be told apart from a
+    # truncation: both stopped before the end of history.
+    def test_the_requested_window_is_recorded_with_the_stop
+      store = archive
+      store.note_sync(reason: "cutoff", since: "2025-01-01")
+
+      assert_equal "2025-01-01", store.requested_since
+    end
+
     def test_sync_state_survives_a_restart
       archive.note_sync(reason: "rate_limited")
 

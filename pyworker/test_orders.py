@@ -272,17 +272,50 @@ def test_a_page_ceiling_stops_an_unbounded_walk(monkeypatch):
 # --- Stopping -----------------------------------------------------------------------
 
 
-def test_the_cutoff_ends_the_walk_rather_than_skipping_one_order(monkeypatch):
-    # History is newest first, so everything past the cutoff is older too.
+def test_a_page_entirely_older_than_the_window_ends_the_walk(monkeypatch):
+    # The frontier: every dated row on the page is older than the window.
     session = FakeSession(
-        pages=[history(orders=[ONLINE_ROW, IN_STORE_ROW], cursor="CURSOR-1")],
-        orders_by_id={"200012345678901": order()},
+        pages=[history(orders=[IN_STORE_ROW], cursor="CURSOR-1")],
+        orders_by_id={},
     )
 
     result = sync(monkeypatch, session, since="2026-08-19")
 
     assert result["stopped"]["reason"] == orders.CUTOFF
+    assert result["orders"] == []
+
+
+# The old shape of this test asserted the opposite and held the defect in place:
+# the cutoff was raised on the first out-of-window row, abandoning every row
+# after it on that page. That bet completeness on Walmart returning history in
+# date order -- the assumption _oldest_date refuses to make, in the same file,
+# for the same reason. A page shaped [old, in-window] dropped the second order
+# silently, reported cutoff, exited 0, and repeated the miss on every re-run.
+def test_an_out_of_order_page_does_not_lose_the_order_after_the_old_one(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[IN_STORE_ROW, ONLINE_ROW], cursor=None)],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, since="2026-08-19")
+
     assert [record["order_id"] for record in result["orders"]] == ["200012345678901"]
+    assert result["stopped"]["reason"] == orders.COMPLETE
+
+
+def test_a_mixed_page_is_not_a_frontier_and_the_walk_continues(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW, IN_STORE_ROW], cursor="CURSOR-1")],
+        next_pages=[graphql_history([IN_STORE_ROW], cursor="CURSOR-2")],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, since="2026-08-19")
+
+    # The in-window order is read, and the walk goes on to the next page, which
+    # is entirely old and therefore is the frontier.
+    assert [record["order_id"] for record in result["orders"]] == ["200012345678901"]
+    assert result["stopped"]["reason"] == orders.CUTOFF
 
 
 def test_an_undated_row_does_not_end_the_walk(monkeypatch):
@@ -493,3 +526,44 @@ def test_no_stop_note_carries_a_cursor_out_of_the_worker(monkeypatch):
 
         assert "cursor" not in result["stopped"], result["stopped"]
         assert "CURSOR" not in json.dumps(result["stopped"])
+
+
+# known_ids arrives from the caller, and the worker protocol is directly
+# invocable, so it is untrusted input. The membership test used to run before
+# validation, which meant a malformed order id could be waved through as
+# "already covered" by handing the worker that same string. The archive would
+# then report complete while quietly holding nothing for it.
+def test_a_malformed_id_is_refused_even_when_the_caller_calls_it_known(monkeypatch):
+    bad = {**ONLINE_ROW, "id": "../../checkout"}
+    session = FakeSession(
+        pages=[history(orders=[bad], cursor=None)],
+        orders_by_id={},
+    )
+
+    result = sync(monkeypatch, session, known_ids=["../../checkout"])
+
+    assert result["stopped"]["reason"] == "order_unreadable"
+    assert result["orders"] == []
+
+
+def test_a_malformed_id_is_refused_when_it_is_out_of_the_window_too(monkeypatch):
+    # Validation happens before the window test as well: an id we will not
+    # navigate to is not made acceptable by being old.
+    bad = {**IN_STORE_ROW, "id": "not a valid id"}
+    session = FakeSession(pages=[history(orders=[bad], cursor=None)], orders_by_id={})
+
+    result = sync(monkeypatch, session, since="2026-08-19")
+
+    assert result["stopped"]["reason"] == "order_unreadable"
+
+
+def test_a_well_formed_known_id_is_still_skipped(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW], cursor=None)],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, known_ids=["200012345678901"])
+
+    assert result["orders"] == []
+    assert result["stopped"]["reason"] == orders.COMPLETE

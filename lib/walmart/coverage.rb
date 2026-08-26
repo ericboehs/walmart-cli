@@ -31,6 +31,11 @@ module Walmart
       {
         "synced" => archive.synced?,
         "complete" => archive.complete?,
+        # Scoped completeness. A --year sync that reaches its window is not
+        # complete history, but it is not a truncation either, and a script
+        # that cannot tell the two apart will re-run it forever.
+        "window_complete" => archive.window_complete?,
+        "requested_since" => archive.requested_since,
         "last_sync" => state["at"],
         "stopped_because" => archive.synced? ? state["reason"] : NEVER_SYNCED,
         "oldest_seen" => state["oldest_date"]
@@ -44,6 +49,7 @@ module Walmart
     # twice.
     def message
       return never_synced_message unless archive.synced?
+      return window_message if archive.sync_state["reason"] == "cutoff"
       return nil unless archive.incomplete?
 
       state = archive.sync_state
@@ -53,6 +59,19 @@ module Walmart
     end
 
     private
+
+    # A cutoff is not a warning. The walk did what it was asked and stopped at
+    # the edge of the requested window, so the sentence states the scope and
+    # names the only command that widens it. It must not say "run sync again":
+    # the same command reaches the same cutoff every time, which is the false
+    # remedy we removed from the page ceiling.
+    def window_message
+      state = archive.sync_state
+      window = state["since"] ? " back to #{day(state["since"])}" : ""
+      "the archive covers the window that was requested#{window}; " \
+        "older history was not asked for. Run `walmart order sync --all` to read everything " \
+        "Walmart still shows."
+    end
 
     # What to do next depends on what stopped the walk, and for two reasons the
     # generic "run sync again" is actively wrong. A challenge is cleared by a

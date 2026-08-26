@@ -27,6 +27,7 @@
 # one), 1 when any mutant survived. That inversion is the point: a surviving
 # mutant is the bad news, and it should be the failing exit code.
 
+require "fileutils"
 require "json"
 require "open3"
 
@@ -143,7 +144,8 @@ def parse_argv(argv)
     key = args.shift
     raise "unknown flag: #{key}" unless key.start_with?("--")
 
-    flags[key.delete_prefix("--").to_sym] = key == "--verbose" ? true : args.shift
+    boolean = %w[--verbose --allow-dirty].include?(key)
+    flags[key.delete_prefix("--").to_sym] = boolean ? true : args.shift
   end
   [flags, argv[(split + 1)..]]
 end
@@ -169,15 +171,53 @@ end
 # has no way to tell a mutation from someone's edit. That happened: a peer
 # reviewing this repo found lib/walmart/secrets.rb modified, correctly refused
 # to touch it, and stopped. It was a mutant, mid-flight.
-def assert_planned_files_are_clean(mutations)
-  files = mutations.map(&:file).uniq
-  dirty = files.reject do |file|
+BACKUP_DIR = File.join(__dir__, "..", ".git", "mutate-backup")
+
+# Files this run will edit in place.
+#
+# Mutation testing rewrites tracked source and restores it in an ensure. That
+# covers exceptions, including Interrupt, but not SIGKILL -- and if the process
+# is hard-killed with uncommitted work in a planned file, the only clean copy
+# was in memory. A bystander running `git status` mid-run also cannot tell a
+# mutation from someone's edit; that happened, on a secrets file, and the
+# reviewer correctly stopped.
+#
+# Committed work needs neither protection: `git checkout` restores it. So the
+# default is to refuse a dirty planned file, and --allow-dirty takes a real
+# on-disk backup first rather than trusting the ensure.
+def guard_planned_files(mutations, allow_dirty:)
+  dirty = mutations.map(&:file).uniq.reject do |file|
     `git status --porcelain -- #{file}`.strip.empty?
   end
   return if dirty.empty?
 
-  raise "uncommitted changes in #{dirty.join(", ")}; commit or stash before mutating, " \
-        "so a restore cannot lose them and a bystander cannot mistake a mutant for your work"
+  unless allow_dirty
+    raise "uncommitted changes in #{dirty.join(", ")}. Commit them, or pass --allow-dirty " \
+          "to back them up to .git/mutate-backup first. A hard kill mid-run would otherwise " \
+          "leave them mutated with no clean copy anywhere"
+  end
+
+  back_up(dirty)
+end
+
+def back_up(files)
+  FileUtils.mkdir_p(BACKUP_DIR)
+  files.each do |file|
+    target = File.join(BACKUP_DIR, file.tr("/", "_"))
+    FileUtils.cp(file, target)
+    warn "backed up #{file} -> #{target}"
+  end
+end
+
+# A backup left behind means a previous run did not finish. Say so before doing
+# anything else, because the next run's "original" would be the mutated file.
+def warn_about_abandoned_backups
+  leftovers = Dir[File.join(BACKUP_DIR, "*")]
+  return if leftovers.empty?
+
+  warn "a previous mutation run left backups behind; it may have been killed mid-run:"
+  leftovers.each { |path| warn "  #{path}" }
+  warn "compare them against your working tree before trusting this run"
 end
 
 def main(argv)
@@ -185,7 +225,8 @@ def main(argv)
   mutations = mutations_from(flags)
   runner = Runner.new(command, verbose: flags[:verbose])
 
-  assert_planned_files_are_clean(mutations)
+  warn_about_abandoned_backups
+  guard_planned_files(mutations, allow_dirty: flags[:"allow-dirty"])
   # Says so on stderr, so anyone reading this tree while it runs knows why a
   # tracked file is modified.
   warn "mutating tracked files in place; the tree is dirty until this finishes"
@@ -194,6 +235,9 @@ def main(argv)
   return 1 unless runner.baseline(mutations.map(&:command).uniq)
 
   survivors = mutations.reject { |mutation| runner.caught?(mutation) }
+  # Only on a clean finish. A run that raised leaves them, which is what the
+  # abandoned-backup warning is for.
+  FileUtils.rm_rf(BACKUP_DIR)
 
   if survivors.empty?
     puts "#{mutations.length} mutants, #{mutations.length} caught"
