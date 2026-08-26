@@ -13,6 +13,7 @@ Nothing here performs a purchase. This module exists to refuse one.
 from __future__ import annotations
 
 import re
+from urllib.parse import unquote, urlsplit
 
 # Substrings that must not appear in any other source file. Compared after
 # stripping separators, so place_order / place-order / placeOrder all match.
@@ -39,6 +40,15 @@ FORBIDDEN_URL_FRAGMENTS = (
     "/wallet",
     "/order-confirmation",
 )
+
+# The only hosts this tool may navigate to. Matched against the parsed
+# hostname, never as a substring, so www.walmart.com.evil.example is refused.
+ALLOWED_HOSTS = ("walmart.com",)
+
+# How many times to unwrap percent-encoding before giving up. A handful covers
+# any nesting a real URL contains; the cap is there so a crafted input cannot
+# make the guard spin.
+MAX_DECODE_PASSES = 5
 
 # Accessible names / text of controls automation must never click.
 FORBIDDEN_CONTROL_PATTERNS = (
@@ -69,11 +79,59 @@ def violations(text: str) -> list[str]:
     return [term for term in FORBIDDEN_TERMS if term in haystack]
 
 
+def decode_url(url: str) -> str:
+    """Percent-decode until the string stops changing.
+
+    The browser decodes before it resolves, so a guard that matches the raw
+    string is not looking at the destination. /%63heckout and
+    /orders/..%2F..%2Fcheckout both arrive at the one place this tool must
+    never go, and both slipped past a plain substring test. Decoding is
+    repeated because %252f decodes to %2f, and capped because an attacker
+    picks the input.
+    """
+    text = url
+    for _ in range(MAX_DECODE_PASSES):
+        decoded = unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    # Windows-style separators resolve as path separators in a URL too.
+    return text.replace("\\", "/")
+
+
 def is_forbidden_url(url: str | None) -> bool:
+    """Whether a URL names somewhere this tool must never go.
+
+    Both the raw and the decoded forms are checked. Over-blocking here costs a
+    refused navigation; under-blocking costs an order nobody authorised.
+    """
     if not url:
         return False
-    lowered = url.lower()
-    return any(fragment in lowered for fragment in FORBIDDEN_URL_FRAGMENTS)
+    for candidate in (url.lower(), decode_url(url).lower()):
+        if any(fragment in candidate for fragment in FORBIDDEN_URL_FRAGMENTS):
+            return True
+    return False
+
+
+def is_allowed_host(url: str | None) -> bool:
+    """Whether a URL points at Walmart.
+
+    Parsed rather than matched, because every interesting way to fake a host is
+    a string that contains the right one: userinfo (https://www.walmart.com@evil
+    .example) and suffixes (www.walmart.com.evil.example) both read as Walmart
+    to a substring test and neither is.
+    """
+    if not url:
+        return False
+    try:
+        parts = urlsplit(decode_url(url))
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+
+    host = (parts.hostname or "").lower().rstrip(".")
+    return any(host == allowed or host.endswith(f".{allowed}") for allowed in ALLOWED_HOSTS)
 
 
 def is_forbidden_control(label: str | None) -> bool:
@@ -83,9 +141,18 @@ def is_forbidden_control(label: str | None) -> bool:
 
 
 def assert_navigable(url: str) -> str:
-    """Gate every navigation in the worker. Raises rather than proceeding."""
+    """Gate every navigation in the worker. Raises rather than proceeding.
+
+    Two questions, because they fail differently: is this somewhere we must
+    never go, and is it even Walmart. Today every call site builds its URL from
+    WALMART_ORIGIN, so the host check refuses nothing -- but that is a property
+    of the call sites, and this function is what we point at when we say the
+    tool cannot wander.
+    """
     if is_forbidden_url(url):
         raise UnsafeNavigation(f"refusing to navigate to a forbidden destination: {url}")
+    if not is_allowed_host(url):
+        raise UnsafeNavigation(f"refusing to navigate off Walmart: {url}")
     return url
 
 

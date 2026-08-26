@@ -53,12 +53,36 @@ module Walmart
       FORBIDDEN_TERMS.select { |term| haystack.include?(term) }
     end
 
+    # Percent-decodes repeatedly, so an encoded destination is compared as the
+    # browser would resolve it. Mirrors safety.py's decode_url; see the note
+    # there for why one pass is not enough.
+    MAX_DECODE_PASSES = 5
+
+    def self.decode_url(url)
+      text = url.to_s
+      MAX_DECODE_PASSES.times do
+        decoded = text.gsub(/%[0-9A-Fa-f]{2}/) { |escape| escape[1..].to_i(16).chr }
+        break if decoded == text
+
+        text = decoded
+      end
+      text.tr("\\", "/")
+    end
+
     # True when +url+ points anywhere this CLI must never go.
+    #
+    # Checks the raw and the decoded forms. Over-blocking costs a refused
+    # navigation; under-blocking costs an order nobody authorised.
+    #
+    # No host allowlist here, unlike safety.py: the Ruby side never navigates,
+    # and a guard with no caller is untested surface that ages. Navigation is
+    # gated in the worker, where navigation happens.
     def self.forbidden_url?(url)
       return false if url.nil?
 
-      lowered = url.to_s.downcase
-      FORBIDDEN_URL_FRAGMENTS.any? { |fragment| lowered.include?(fragment) }
+      [url.to_s.downcase, decode_url(url).downcase].any? do |candidate|
+        FORBIDDEN_URL_FRAGMENTS.any? { |fragment| candidate.include?(fragment) }
+      end
     end
   end
 end

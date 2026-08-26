@@ -346,6 +346,28 @@ def test_an_unreadable_first_page_is_not_an_empty_history(monkeypatch):
     assert result["orders"] == []
 
 
+def test_a_hostile_order_id_never_becomes_a_url(monkeypatch):
+    # Same value, same provenance as the one archive.rb sanitizes before it
+    # becomes a filesystem path. It was trusted here because it becomes a URL
+    # instead, and an encoded traversal in it would have navigated somewhere
+    # this tool must never go.
+    hostile = {**ONLINE_ROW, "id": "200012345678901/..%2F..%2Fcheckout"}
+    session = FakeSession(pages=[history(orders=[hostile], cursor=None)])
+
+    result = sync(monkeypatch, session)
+
+    assert result["stopped"]["reason"] == "order_unreadable"
+    assert not [url for url in session.navigated if "checkout" in url.lower()]
+
+
+def test_an_ordinary_order_id_still_navigates(monkeypatch):
+    session = one_page_session()
+
+    sync(monkeypatch, session)
+
+    assert "https://www.walmart.com/orders/200012345678901" in session.navigated
+
+
 # --- Incremental sync --------------------------------------------------------------
 
 

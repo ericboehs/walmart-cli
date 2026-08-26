@@ -80,6 +80,23 @@ module Walmart
       refute Safety.forbidden_url?("https://www.walmart.com/ip/12345")
     end
 
+    def test_percent_encoding_cannot_smuggle_a_destination
+      # A browser decodes before it resolves, so a guard that reads the raw
+      # string is not looking at where the request will actually land.
+      %w[
+        https://www.walmart.com/%63heckout
+        https://www.walmart.com/orders/..%2F..%2Fcheckout
+        https://www.walmart.com/orders/..%252F..%252Fcheckout
+        https://www.walmart.com/%70ayment/add
+      ].each do |url|
+        assert Safety.forbidden_url?(url), "#{url} should be refused"
+      end
+    end
+
+    def test_a_backslash_is_a_separator_too
+      assert Safety.forbidden_url?('https://www.walmart.com/orders\\..\\checkout')
+    end
+
     def test_separator_styles_cannot_smuggle_a_term
       %w[place_order place-order placeOrder PLACE.ORDER].each do |variant|
         refute_empty Safety.violations(variant), "#{variant} should be caught"

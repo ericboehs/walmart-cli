@@ -16,6 +16,7 @@ never do is finish quietly and let the caller believe it saw everything.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import browser
@@ -29,6 +30,13 @@ ORDERS_URL = f"{browser.WALMART_ORIGIN}/orders"
 HISTORY_MARKER = "/orchestra/cph/graphql/purchasehistoryv3/"
 
 NEXT_PAGE_LABELS = ("Next page", "Next")
+
+# An order id is Walmart's data, not ours. archive.rb already treats it as
+# untrusted before it becomes a filesystem path; this is the same value about
+# to become a URL, and the same provenance deserves the same suspicion.
+# Anything outside this set could otherwise carry an encoded traversal into a
+# destination this tool must never reach.
+ORDER_ID = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
 
 # Walmart's own page size. Raising it hopefully is an experiment with a 429 as
 # the price of being wrong, so it stays where the site put it.
@@ -217,8 +225,9 @@ def _read_page(session, rows, params, records) -> None:
 
 
 def _read_order(session, row: dict[str, Any]) -> dict[str, Any]:
-    protocol.progress(f"reading order {row.get('display_id') or row['order_id']}")
-    response = session.goto(f"{ORDERS_URL}/{row['order_id']}", wait_until="domcontentloaded")
+    order_id = _safe_order_id(row["order_id"])
+    protocol.progress(f"reading order {row.get('display_id') or order_id}")
+    response = session.goto(f"{ORDERS_URL}/{order_id}", wait_until="domcontentloaded")
     _guard(session, response)
 
     payload = session.page.evaluate(_NEXT_DATA_SCRIPT)
@@ -232,6 +241,20 @@ def _read_order(session, row: dict[str, Any]) -> dict[str, Any]:
     for key in ("display_id", "date", "title"):
         record[key] = record.get(key) or row.get(key)
     return record
+
+
+def _safe_order_id(order_id: Any) -> str:
+    """An order id we are willing to put in a URL.
+
+    Validated rather than escaped: an id that is not the shape Walmart uses is
+    not an id we mis-encoded, it is a page we do not understand, and quietly
+    rewriting it into something navigable would be inventing a destination.
+    Stopping keeps the coverage record honest, which skipping would not.
+    """
+    text = str(order_id or "")
+    if not ORDER_ID.match(text):
+        raise Stop("order_unreadable", "an order id was not a shape this tool will navigate to")
+    return text
 
 
 def _guard(session, response) -> None:
