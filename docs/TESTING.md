@@ -101,6 +101,21 @@ practices make it survive: record the mutants and their failures in the commit
 message, and prefer assertions that name the specific thing — an error code, not
 "some JSON came out"; an exit status, not "it printed something".
 
+**The plan is an inventory of silent failures, so it rots silently too.** Rename
+a constant and the mutant proving its guard works stops applying to anything;
+`rake mutants` would say so, but only if someone runs it, and the reason the plan
+exists is that nobody is watching these guards. `test/walmart/mutation_plan_test.rb`
+therefore checks the plan the way the plan checks the guards — every file still
+present, every pattern matching exactly one place, no mutant a no-op, every
+Python mutant checked by a Python suite. That is the half a machine can do.
+
+The other half cannot be automated and is a habit instead: **when you add a
+guard, add a mutant.** Nothing fails if you don't — that is the definition of
+the guards in this file — so the moment to do it is while writing the guard,
+when you still know what it is protecting against. Cart add will need entries
+for the seller check at mutation time, the quantity arithmetic, and the
+confirmation gate.
+
 **A mutation run must prove the mutation happened before it proves anything
 else.** Twice in one night an edit matched nothing, changed nothing, reported
 nothing, and the suite passed — which is indistinguishable from a mutant that
