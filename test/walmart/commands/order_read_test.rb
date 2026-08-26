@@ -264,6 +264,59 @@ module Walmart
         assert_equal "page_limit", stdout_json["coverage"]["stopped_because"]
       end
 
+      # A never-synced archive is not a complete one. A machine consumer asking
+      # "is this the whole history" must not be told yes when the true answer is
+      # "we have never looked".
+      def test_a_never_synced_archive_is_not_reported_complete
+        archive_orders(RECENT)
+        run_read(%w[order list], json: true)
+
+        assert_equal false, stdout_json["coverage"]["complete"]
+        assert_equal false, stdout_json["coverage"]["synced"]
+        assert_equal "never_synced", stdout_json["coverage"]["stopped_because"]
+      end
+
+      # Records can exist without a sync note -- a rebuilt index, for instance --
+      # so the empty-archive message does not cover this.
+      def test_a_never_synced_archive_says_so_in_text_mode
+        archive_orders(RECENT)
+        run_read(%w[order list])
+
+        assert_includes err.string, "nothing has been synced yet"
+      end
+
+      def test_a_synced_complete_archive_reports_complete
+        archive_orders(RECENT, sync: { reason: "complete" })
+        run_read(%w[order list], json: true)
+
+        assert_equal true, stdout_json["coverage"]["complete"]
+      end
+
+      # --- The --json contract ------------------------------------------------------
+
+      # Zero bytes and exit 0 is indistinguishable from a successful empty
+      # result only if you already know the contract is broken.
+      def test_an_empty_search_is_still_a_json_document
+        archive_orders(RECENT, sync: { reason: "complete" })
+        run_read(%w[order search], args: ["saffron"], json: true)
+
+        assert_empty stdout_json["results"]
+      end
+
+      def test_an_empty_list_is_still_a_json_document
+        run_read(%w[order list], json: true)
+
+        assert_empty stdout_json["results"]
+      end
+
+      # The empty document has to carry the coverage too, or a consumer reads
+      # "no results" from an archive that was never filled and believes it.
+      def test_the_empty_document_still_reports_coverage
+        run_read(%w[order search], args: ["milk"], json: true)
+
+        assert_equal false, stdout_json["coverage"]["complete"]
+      end
+
       def test_an_unknown_subcommand_is_a_usage_error
         assert_raises(UsageError) { run_read(%w[order purge]) }
       end

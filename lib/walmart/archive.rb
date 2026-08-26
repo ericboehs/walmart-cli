@@ -95,8 +95,24 @@ module Walmart
 
     def sync_state = index["sync"] || {}
 
+    # Whether a walk has ever run against this archive.
+    #
+    # Distinct from complete and from resumable, because "we have never looked"
+    # is a third state and the most misleading one to round off. An archive
+    # that has never synced is not complete, and it is not resumable either --
+    # there is nothing to resume.
+    def synced? = !sync_state.empty?
+
     # True when the last walk ended for a reason that leaves history unseen.
-    def resumable? = !sync_state.empty? && sync_state["reason"] != "complete"
+    #
+    # This answers "can the next run continue from here", not "is this archive
+    # trustworthy". A never-synced archive is false here and must not be read
+    # as complete on that basis.
+    def resumable? = synced? && sync_state["reason"] != "complete"
+
+    # True only when a walk has run and finished. The one claim a machine
+    # consumer may act on.
+    def complete? = synced? && sync_state["reason"] == "complete"
 
     private
 

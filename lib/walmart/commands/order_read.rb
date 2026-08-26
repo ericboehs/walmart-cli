@@ -2,6 +2,7 @@
 
 require_relative "base"
 require_relative "../archive"
+require_relative "../coverage"
 
 module Walmart
   module Commands
@@ -98,7 +99,10 @@ module Walmart
         # The index said we had it and the file is not there. Reporting "no
         # such order" would send someone re-syncing to fix a missing file,
         # which a dedupe-by-id sync will not do.
-        raise Error, "the archive index lists that order but its file is missing" if record.nil?
+        if record.nil?
+          raise Error.new("the archive index lists that order but its file is missing",
+                          code: "record_missing")
+        end
 
         render_order(record)
       end
@@ -113,7 +117,7 @@ module Walmart
         return exact["order_id"] if exact
 
         matches = entries.select { |entry| matches_partial?(entry, text) }
-        raise Error, not_found(text) if matches.empty?
+        raise Error.new(not_found(text), code: "not_found") if matches.empty?
         raise UsageError, ambiguous(text, matches) if matches.length > 1
 
         matches.first["order_id"]
@@ -248,11 +252,17 @@ module Walmart
       end
 
       def emit_record(payload)
-        fmt.emit_json(payload.is_a?(Array) ? { "results" => payload, "coverage" => coverage } : payload)
+        fmt.emit_json(payload.is_a?(Array) ? { "results" => payload, "coverage" => coverage.to_h } : payload)
         ExitCodes::OK
       end
 
+      # An empty result is still a result, and in JSON mode it must still be a
+      # document: a consumer piping stdout to a parser gets a parse error from
+      # zero bytes, and the exit code says success, so the failure surfaces
+      # somewhere the script author never looked.
       def empty(what)
+        return emit_record([]) if json?
+
         if archive.entries.empty?
           fmt.empty_result(what: what, where: "the archive", reason: "nothing is archived yet")
           fmt.hint("run `walmart order sync` first")
@@ -263,27 +273,14 @@ module Walmart
         ExitCodes::OK
       end
 
-      def coverage
-        state = archive.sync_state
-        {
-          "complete" => !archive.resumable?,
-          "last_sync" => state["at"],
-          "stopped_because" => state["reason"],
-          "oldest_seen" => state["oldest_date"]
-        }.compact
-      end
+      # An answer from a partial archive has to say it is partial. The claim
+      # itself lives in Coverage, which both output modes read, so the JSON
+      # field and the printed sentence cannot drift apart.
+      def coverage = @coverage ||= Coverage.new(archive)
 
-      # An answer from a partial archive has to say it is partial. "We have
-      # never bought that" and "we have not looked that far back" are different
-      # facts, and only one of them is a reason to stop looking.
       def coverage_notice
-        return unless archive.resumable?
-
-        reason = archive.sync_state["reason"]
-        oldest = archive.sync_state["oldest_date"]
-        window = oldest ? " (nothing older than #{day(oldest)})" : ""
-        fmt.hint("the archive is incomplete#{window}: the last sync stopped early (#{reason}). " \
-                 "Run `walmart order sync` to fill it in.")
+        message = coverage.message
+        fmt.hint(message) if message
       end
 
       def day(value) = value.to_s[0, 10]

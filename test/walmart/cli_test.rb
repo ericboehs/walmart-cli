@@ -71,6 +71,73 @@ module Walmart
       assert_equal true, payload["config"]["headless"]
     end
 
+    # --- The --json contract ----------------------------------------------------
+    #
+    # `--json` promises one complete machine-readable document. The promise has
+    # to hold on the paths nobody demos, because a consumer pipes stdout to a
+    # parser and a zero-byte stdout fails inside the parser rather than at the
+    # check they wrote.
+
+    def test_an_error_is_a_json_document_in_json_mode
+      context = build_context(json: true)
+      code = CLI.new(%w[order show 404 --json], stdout: out, stderr: err, env: env,
+                                                context: context).run
+      payload = JSON.parse(context.formatter.out.string)
+
+      assert_equal ExitCodes::FAILED, code
+      assert_equal "not_found", payload.dig("error", "code")
+    end
+
+    def test_an_unknown_command_is_a_json_document_in_json_mode
+      context = build_context(json: true)
+      CLI.new(%w[teleport --json], stdout: out, stderr: err, env: env, context: context).run
+      payload = JSON.parse(context.formatter.out.string)
+
+      assert_equal "unknown_command", payload.dig("error", "code")
+    end
+
+    def test_an_internal_error_is_still_a_json_document
+      context = build_context(json: true)
+      def context.paths = raise("a bug, not a known failure mode")
+
+      code = CLI.new(%w[order list --json], stdout: out, stderr: err, env: env,
+                                            context: context).run
+      payload = JSON.parse(context.formatter.out.string)
+
+      assert_equal ExitCodes::FAILED, code
+      assert_equal "internal_error", payload.dig("error", "code")
+    end
+
+    # Help goes to stdout too, so in JSON mode it cannot be prose.
+    def test_help_is_a_json_document_in_json_mode
+      context = build_context(json: true)
+      CLI.new(%w[--json], stdout: out, stderr: err, env: env, context: context).run
+      payload = JSON.parse(context.formatter.out.string)
+
+      assert_equal false, payload["checks_out"]
+      assert_includes payload["commands"].map { |row| row["command"] }, "order sync"
+    end
+
+    # One document, not two. A second would concatenate into something that is
+    # neither JSON nor NDJSON, and the caller would read it as our data being
+    # wrong rather than our output being malformed.
+    def test_an_error_after_a_document_does_not_emit_a_second_one
+      context = build_context(json: true)
+      context.formatter.emit_json("already" => true)
+      CLI.new(%w[teleport --json], stdout: out, stderr: err, env: env, context: context).run
+
+      assert_equal 1, context.formatter.out.string.scan(/^\{$/).length
+    end
+
+    def test_the_error_document_carries_no_secrets
+      context = build_context(json: true)
+      def context.paths = raise("password=hunter2 leaked")
+
+      CLI.new(%w[order list --json], stdout: out, stderr: err, env: env, context: context).run
+
+      refute_includes context.formatter.out.string, "hunter2"
+    end
+
     def test_a_config_error_exits_with_the_usage_code
       FileUtils.mkdir_p(File.dirname(paths.config_file))
       File.write(paths.config_file, "{broken")

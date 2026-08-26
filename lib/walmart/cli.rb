@@ -79,6 +79,7 @@ module Walmart
 
     def run
       options, words = parse_globals(@argv)
+      @options = options
 
       return print_help(ExitCodes::OK) if words.empty? || help?(words)
       return print_version(options) if words.first == "version"
@@ -96,6 +97,7 @@ module Walmart
       # Exit 2 (USAGE) is reused deliberately: the documented contract has four
       # codes, and "the run did not happen" is the closest of the four. Shell
       # convention would be 130; adopting it would be a contract change.
+      emit_json_error("aborted", "aborted")
       @stderr.puts("\naborted")
       ExitCodes::USAGE
     rescue StandardError => e
@@ -134,8 +136,35 @@ module Walmart
 
     def dispatch(path, rest, options)
       handler = COMMANDS.fetch(path).first
-      context = build_context(options)
-      handler.new(context).run(path, rest)
+      handler.new(context(options)).run(path, rest)
+    end
+
+    # Built once and remembered, so an error raised mid-command is reported
+    # through the same formatter -- and can therefore see whether a JSON
+    # document has already gone out.
+    def context(options)
+      @context ||= build_context(options)
+    end
+
+    def json? = !!@options&.fetch(:json, false)
+
+    # --json promises one complete machine-readable document. That promise has
+    # to survive the paths nobody demos: an error, an abort, an empty result.
+    # A consumer that pipes stdout to a parser and gets zero bytes fails inside
+    # the parser rather than at the check they wrote, and on the empty path it
+    # fails while the exit code says success.
+    def emit_json_error(code, message, details = nil)
+      return unless json?
+
+      formatter = @context&.formatter || context(@options).formatter
+      return if formatter.json_emitted?
+
+      payload = { "error" => { "code" => code, "message" => Redact.text(message.to_s) } }
+      payload["error"]["details"] = details if details.is_a?(Hash) && !details.empty?
+      formatter.emit_json(payload)
+    rescue StandardError
+      # Reporting must never raise on top of the thing it is reporting.
+      nil
     end
 
     def build_context(options)
@@ -163,12 +192,14 @@ module Walmart
     end
 
     def unknown_command(words)
+      emit_json_error("unknown_command", "unknown command: #{words.join(" ")}")
       @stderr.puts("error: unknown command: #{words.join(" ")}")
       @stderr.puts("run `walmart help` for the command list")
       ExitCodes::USAGE
     end
 
     def report(error, verbose: false)
+      emit_json_error(error.code || "error", error.message, error.details)
       @stderr.puts("error: #{error.message}")
       @stderr.puts("run: walmart login") if error.is_a?(WorkerError) && error.login_required?
       report_details(error) if verbose
@@ -188,6 +219,7 @@ module Walmart
     end
 
     def internal_error(error, verbose: false)
+      emit_json_error("internal_error", "#{error.class}: #{error.message}")
       @stderr.puts("internal error: #{error.class}: #{Redact.text(error.message)}")
       if verbose
         Redact.tail(error.backtrace, limit: 20).each { |line| @stderr.puts("  #{line}") }
@@ -198,6 +230,8 @@ module Walmart
     end
 
     def print_help(code)
+      return print_help_json(code) if json?
+
       @stdout.puts(<<~HELP)
         walmart #{VERSION} - build a Walmart grocery delivery cart from the command line
 
@@ -211,7 +245,7 @@ module Walmart
         #{command_lines(PLANNED.to_a)}
 
         Global flags:
-          --json        one complete machine-readable JSON document
+          --json        one complete JSON document, including on errors
           -q, --quiet   suppress non-essential status output
           -v, --verbose diagnostic logs (never secrets)
           --no-color    disable terminal color
@@ -219,6 +253,24 @@ module Walmart
           --confirm     approve a removal; never means approve an order
       HELP
       code
+    end
+
+    # Help is stdout too, so in JSON mode it has to be a document like
+    # everything else -- otherwise `walmart --json` with no arguments emits
+    # prose into a parser.
+    def print_help_json(code)
+      context(@options).formatter.emit_json(
+        "name" => "walmart-cli",
+        "version" => VERSION,
+        "checks_out" => false,
+        "commands" => COMMANDS.map { |path, (_h, summary)| command_doc(path, summary) },
+        "planned" => PLANNED.map { |path, summary| command_doc(path, summary) }
+      )
+      code
+    end
+
+    def command_doc(path, summary)
+      { "command" => path.join(" "), "summary" => summary }
     end
 
     def command_lines(pairs)

@@ -26,6 +26,10 @@ Metrics/AbcSize:
 
 Metrics/ClassLength:
   Max: 200
+  # A test class is a list of cases, not a unit of design; splitting one to
+  # satisfy a line count would scatter related cases across files.
+  Exclude:
+    - "test/**/*"
 
 Metrics/CyclomaticComplexity:
   Max: 12

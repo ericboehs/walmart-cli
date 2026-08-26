@@ -46,6 +46,38 @@ module Walmart
       Archive.new(paths: paths, now: -> { Time.utc(2026, 8, 26, 3, 0, 0) }, **kwargs)
     end
 
+    # --- Never synced -------------------------------------------------------------
+    #
+    # "We have never looked" is a third state. Rounding it off to complete is
+    # the exact lie this layer exists to prevent, and it would be told by the
+    # code written to prevent it.
+
+    def test_a_fresh_archive_has_not_been_synced
+      refute_predicate archive, :synced?
+      refute_predicate archive, :complete?
+    end
+
+    def test_a_fresh_archive_is_not_resumable_because_there_is_nothing_to_resume
+      refute_predicate archive, :resumable?
+    end
+
+    def test_a_finished_walk_is_complete
+      store = archive
+      store.note_sync(reason: "complete")
+
+      assert_predicate store, :complete?
+      refute_predicate store, :resumable?
+    end
+
+    def test_an_interrupted_walk_is_synced_but_not_complete
+      store = archive
+      store.note_sync(reason: "rate_limited", cursor: "CURSOR")
+
+      assert_predicate store, :synced?
+      refute_predicate store, :complete?
+      assert_predicate store, :resumable?
+    end
+
     # --- Writing ---------------------------------------------------------------
 
     def test_an_order_is_written_under_its_year
