@@ -51,6 +51,21 @@ module Walmart
       end
 
       # A locked or denied keychain looks exactly like an empty one from here.
+      # The state Eric actually had: a keychain item that exists and is empty.
+      # It must not read as "none found", which offers to create the record he
+      # already has, and it must not read as a store failure either.
+      def test_an_empty_keychain_entry_is_named_rather_than_called_missing
+        worker = FakeWorker.new(results: { "login" => { "signed_in" => true } })
+        empty = Secrets.new(provider: FakeProvider.new({ "email" => "a@b.c", "password" => "" }))
+
+        run_login(worker: worker, secrets: empty)
+        combined = out.string + err.string
+
+        assert_includes combined, "password entry is empty"
+        assert_includes combined, "-U -s walmart-cli"
+        refute_includes combined, "no stored credentials found"
+      end
+
       # Telling that user "no stored credentials found" sends them to type a
       # password by hand when the real fix is unlocking the keychain.
       def test_an_unreadable_keychain_is_not_reported_as_missing_credentials

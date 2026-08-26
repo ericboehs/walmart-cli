@@ -63,6 +63,7 @@ module Walmart
       def probe(_account) = :absent
       def present?(_account) = false
       def read(_account) = nil
+      def empty_accounts = []
       def describe = "no credential store configured (manual login only)"
       def last_error = nil
     end
@@ -85,9 +86,10 @@ module Walmart
         @env = env
         @runner = runner || method(:run_security)
         @last_error = nil
+        @empty_accounts = []
       end
 
-      attr_reader :last_error
+      attr_reader :last_error, :empty_accounts
 
       def name = "keychain"
 
@@ -125,7 +127,18 @@ module Walmart
         end
 
         value = out.to_s.sub(/\n\z/, "")
-        value.empty? ? nil : Secret.new(value)
+        # An item that exists and holds nothing is its own state. `security`
+        # exits 0 for it, and a presence probe -- which is all doctor may run,
+        # since reading a value can prompt for biometrics -- cannot tell it from
+        # a usable credential. Recording it here is what lets login say "the
+        # password item is empty" instead of "no stored credentials found",
+        # which sends someone to add a record they already have.
+        if value.empty?
+          @empty_accounts |= [account.to_s]
+          return nil
+        end
+
+        Secret.new(value)
       end
 
       def describe = "macOS Keychain (service #{@service})"
@@ -148,6 +161,7 @@ module Walmart
       def probe(_account) = :absent
       def present?(_account) = false
       def read(_account) = nil
+      def empty_accounts = []
       def describe = "libsecret provider not implemented yet (manual login on Linux)"
       def last_error = nil
     end
@@ -191,6 +205,10 @@ module Walmart
     # True when an unattended-ish credential fill is possible. Never implies the
     # login will succeed; MFA and challenges are decided live.
     def complete? = email_present? && password_present?
+
+    # Accounts whose stored value is empty. Only populated by a read, so this
+    # is meaningful after credentials_payload has been asked for.
+    def empty_accounts = @provider.empty_accounts
 
     def email = @provider.read(EMAIL_ACCOUNT)
     def password = @provider.read(PASSWORD_ACCOUNT)

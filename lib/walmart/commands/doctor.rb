@@ -139,7 +139,14 @@ module Walmart
                     detail: "#{secrets.describe}: unreadable (#{secrets.last_error})",
                     hint: "the keychain refused the lookup; walmart login still works manually")
         elsif status["email_present"] && status["password_present"]
-          Check.new(name: "credentials", status: :ok, detail: "#{secrets.describe}: email + password set")
+          # "present", not "set". doctor deliberately never reads a credential
+          # value -- that can prompt for biometrics -- so all it can honestly
+          # report is that the items exist. An item can exist and hold nothing,
+          # which is what "set" claimed and login then contradicted with "no
+          # stored credentials found". Presence is not usability, and the word
+          # has to stop short of what the check actually looked at.
+          Check.new(name: "credentials", status: :ok,
+                    detail: "#{secrets.describe}: email + password present (values not read)")
         elsif status["available"]
           Check.new(name: "credentials", status: :warn,
                     detail: "#{secrets.describe}: incomplete " \

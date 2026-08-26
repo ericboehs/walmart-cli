@@ -55,6 +55,8 @@ module Walmart
           fmt.status("opening a visible browser for manual sign-in")
         elsif credentials
           fmt.status("opening a visible browser; stored credentials will be filled in")
+        elsif secrets.empty_accounts.any?
+          announce_empty_entries
         elsif secrets.unreadable?
           fmt.warn("credential store unreadable (#{secrets.last_error}); " \
                    "falling back to manual sign-in")
@@ -75,6 +77,18 @@ module Walmart
           level = event["level"].to_s
           fmt.status(event["message"].to_s) if verbose? || %w[warn error].include?(level)
         end
+      end
+
+      # Distinct from "absent". The item is there and holds nothing, so
+      # "no stored credentials found" would send someone to create a record they
+      # already have -- which is how it was reported before, and the advice
+      # quietly did not work.
+      def announce_empty_entries
+        accounts = secrets.empty_accounts.sort
+        fmt.warn("the keychain #{accounts.join(" and ")} entry is empty; " \
+                 "falling back to manual sign-in")
+        fmt.hint("set it with: security add-generic-password -U -s walmart-cli " \
+                 "-a #{accounts.first} -w")
       end
 
       def report(data)

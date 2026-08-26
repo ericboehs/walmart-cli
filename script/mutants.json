@@ -164,5 +164,11 @@
     "file": "lib/walmart/commands/login.rb",
     "from": "fmt.say(\"next: walmart search \\\"oat milk\\\", or walmart order sync to build the archive\")",
     "to": "fmt.say(\"next: walmart store pin\")"
+  },
+  {
+    "label": "an empty keychain item reads as a usable credential",
+    "file": "lib/walmart/secrets.rb",
+    "from": "        if value.empty?\n          @empty_accounts |= [account.to_s]\n          return nil\n        end\n\n        Secret.new(value)",
+    "to": "        Secret.new(value)"
   }
 ]

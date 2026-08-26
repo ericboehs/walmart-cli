@@ -90,7 +90,12 @@ module Walmart
         refute_includes out.string, "hunter2"
         refute_includes out.string, "eric@example.com"
         refute_includes err.string, "hunter2"
-        assert_includes out.string, "email + password set"
+        # "present", not "set". doctor never reads a value, so it cannot know a
+        # credential is usable -- and it reported "set" for an empty keychain
+        # item while login said none were found. A check may only claim what it
+        # looked at.
+        assert_includes out.string, "email + password present"
+        refute_includes out.string, "password set"
       end
 
       # This asserted the hint said "walmart store pin", which is how the bug

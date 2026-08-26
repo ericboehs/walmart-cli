@@ -151,6 +151,40 @@ module Walmart
       refute_includes calls.flatten, "-w"
     end
 
+    # Eric hit this on his first real login. The keychain held a password item
+    # with an empty value: `security` exits 0, the presence probe says present,
+    # doctor reported "email + password set", and login said "no stored
+    # credentials found" and offered to create the record that already existed.
+    # Three components, all self-consistent, and the advice did not work.
+    def test_an_item_that_exists_but_holds_nothing_is_not_a_credential
+      provider = keychain(runner: ->(args) { args.include?("-w") ? [0, "\n"] : [0, "attributes"] })
+
+      assert_equal :present, provider.probe("password")
+      assert_nil provider.read("password")
+      assert_includes provider.empty_accounts, "password"
+      assert_nil provider.last_error, "an empty value is not a store failure"
+    end
+
+    def test_a_readable_credential_is_never_reported_as_empty
+      provider = keychain(runner: ->(args) { args.include?("-w") ? [0, "sekret\n"] : [0, "attrs"] })
+
+      provider.read("password")
+
+      assert_empty provider.empty_accounts
+    end
+
+    def test_the_facade_reports_which_account_is_empty
+      secrets = Secrets.new(provider: keychain(runner: lambda { |args|
+        return [0, "attrs"] unless args.include?("-w")
+
+        args.include?("password") ? [0, "\n"] : [0, "someone@example.com\n"]
+      }))
+
+      assert_nil secrets.credentials_payload
+      assert_equal ["password"], secrets.empty_accounts
+      refute_predicate secrets, :unreadable?
+    end
+
     def test_keychain_reports_a_missing_record_as_absent
       provider = keychain(runner: ->(_args) { [44, ""] })
 

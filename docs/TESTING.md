@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of seventeen defects
+The layout of the suite is not arbitrary. It is the residue of eighteen defects
 found in two days, eleven of which were sitting inside checks that were passing
 at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -27,6 +27,7 @@ Each of these was written deliberately, read fine, and passed:
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
+| `doctor`'s credential check | it probed for an item's *presence* and reported "email + password set", while the password item existed and held nothing; `login` read the value, found none, and offered to create the record that already existed |
 | the first draft of the per-command help table | hand-written from plausibility rather than from `parse_flags`: it invented two flags that do not exist and omitted five that do |
 | the first draft of the page-ceiling test | it asked for 10,000 pages and got 200, which is equally satisfied by ignoring the parameter — which is what the code did, because the test passed the wrong argument shape |
 
@@ -184,6 +185,12 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A check may only claim what it looked at.** `doctor` never reads a
+  credential value, deliberately, because that can prompt for biometrics -- and
+  it reported "set". Presence is not usability: the item existed and was empty.
+  Three components each behaved correctly and the user got "set" from one and
+  "no stored credentials found" from another. The wording now stops where the
+  evidence stops: "present (values not read)".
 - **A suggestion is a promise about the tool.** After signing in, the CLI said
   "next: walmart store pin", which it answers with "unknown command" — the first
   instruction a new user is given, and it did not work. `PLANNED` exists so

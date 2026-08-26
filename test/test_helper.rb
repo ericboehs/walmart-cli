@@ -90,7 +90,22 @@ module Walmart
       end
 
       def present?(account) = probe(account) == :present
-      def read(account) = @values[account.to_s] ? Secrets::Secret.new(@values[account.to_s]) : nil
+
+      # Mirrors the real provider: an item can exist and hold nothing, and that
+      # is neither "absent" nor "the store refused us".
+      def read(account)
+        raw = @values[account.to_s]
+        return nil if raw.nil?
+
+        if raw.empty?
+          @empty_accounts = (@empty_accounts || []) | [account.to_s]
+          return nil
+        end
+
+        Secrets::Secret.new(raw)
+      end
+
+      def empty_accounts = @empty_accounts || []
       def describe = "fake provider"
       def last_error = @error_accounts.empty? ? nil : "fake refusal"
     end
