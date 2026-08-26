@@ -49,6 +49,17 @@ module Walmart
         subcommand == "start" ? start(flags) : status(flags)
       end
 
+      # Public so `doctor` can report the same fact this command reports, rather
+      # than growing a second implementation that can disagree with it.
+      def reachable_version(url)
+        uri = URI.parse(url)
+        return nil unless uri.port
+
+        endpoint_version(uri.port)
+      rescue URI::InvalidURIError
+        nil
+      end
+
       private
 
       def parse_browser_flags(args)

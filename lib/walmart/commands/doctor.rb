@@ -2,6 +2,7 @@
 
 require "json"
 require_relative "base"
+require_relative "attachment_check"
 require_relative "../version"
 require_relative "../which"
 
@@ -11,6 +12,8 @@ module Walmart
     # network. Every check is local: the worker probe inspects the Python
     # environment and browser binaries, and never contacts Walmart.
     class Doctor < Base
+      include AttachmentCheck
+
       # Chromium writes these into a persistent profile and removes them on a
       # clean exit. Named here rather than probed with ps, because the process
       # is not ours to identify and a name match would be a guess.
@@ -35,6 +38,7 @@ module Walmart
         checks << credentials_check
         checks << store_check
         checks << picker_check
+        checks << attachment_check
         checks << profile_lock_check
 
         render(checks)
@@ -198,6 +202,7 @@ module Walmart
       end
 
       def idle_profile_check
+        return unused_profile_check unless config.fetch("cdp_url").to_s.empty?
         return no_profile_check unless File.directory?(paths.browser_profile)
         return stale_browser_check if stale_browser_lock
 

@@ -324,5 +324,17 @@
       "pytest",
       "pyworker/test_orders.py"
     ]
+  },
+  {
+    "label": "doctor stops mentioning the attachment it is using",
+    "file": "lib/walmart/commands/doctor.rb",
+    "from": "        checks << attachment_check\n",
+    "to": ""
+  },
+  {
+    "label": "doctor advises walmart login for a profile attached mode never uses",
+    "file": "lib/walmart/commands/doctor.rb",
+    "from": "        return unused_profile_check unless config.fetch(\"cdp_url\").to_s.empty?\n",
+    "to": ""
   }
 ]

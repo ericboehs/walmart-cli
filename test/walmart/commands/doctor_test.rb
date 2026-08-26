@@ -188,11 +188,56 @@ module Walmart
         assert_equal true, payload["ok"]
       end
 
+      # Eric configured cdp_url, ran doctor, and got a page of green ticks that
+      # said nothing about the attachment he had just set up -- while the
+      # profile line reported a directory attached mode never touches.
+      def test_doctor_reports_that_it_is_attached
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
+                   config: config("cdp_url" => "http://127.0.0.1:9222"),
+                   version: "Chrome/151")
+
+        assert_match(%r{attachment.+attached to http://127\.0\.0\.1:9222 \(Chrome/151\)}, out.string)
+      end
+
+      def test_a_configured_but_dead_endpoint_is_a_warning_with_the_remedy
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
+                   config: config("cdp_url" => "http://127.0.0.1:9222"),
+                   version: nil)
+
+        assert_match(/nothing is listening/, out.string)
+        # Hints go to stderr, so the remedy is asserted where it is printed.
+        assert_match(/attachment: run: walmart browser start/, err.string)
+      end
+
+      def test_not_attached_is_reported_as_a_normal_state_not_a_warning
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
+
+        assert_match(/ok\s+attachment\s+not attached/, out.string)
+      end
+
+      # "no browser profile yet -- run walmart login" is advice for a mode we
+      # are not in.
+      def test_the_launched_profile_is_not_reported_as_missing_while_attached
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
+                   config: config("cdp_url" => "http://127.0.0.1:9222"),
+                   version: "Chrome/151")
+
+        refute_match(/no browser profile yet/, out.string)
+        assert_match(/not used while attached/, out.string)
+      end
+
       private
 
-      def run_doctor(worker:, secrets: nil, json: false)
+      # `version:` stands in for the CDP endpoint's reply. Stubbed rather than
+      # served, because doctor must not need a live browser to report on one --
+      # and a test that opens a socket is a test that fails on someone's laptop
+      # for reasons unrelated to the code.
+      def run_doctor(worker:, secrets: nil, json: false, config: nil, version: :none)
         context = build_context(worker: worker, secrets: secrets, json: json)
-        Doctor.new(context).run(["doctor"], [])
+        context.define_singleton_method(:config) { config } if config
+        doctor = Doctor.new(context)
+        doctor.define_singleton_method(:attachment_version) { |_url| version } unless version == :none
+        doctor.run(["doctor"], [])
       end
     end
   end
