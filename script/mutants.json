@@ -1256,20 +1256,6 @@
     ]
   },
   {
-    "label": "the shape keeps values instead of types",
-    "file": "scripts/capture-cart-mutation.py",
-    "from": "    return type(value).__name__",
-    "to": "    return value",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_recon.py"
-    ]
-  },
-  {
     "label": "the shape calls a boolean a number",
     "file": "scripts/capture-cart-mutation.py",
     "from": "    if isinstance(value, bool):\n        return \"boolean\"\n",
@@ -1287,20 +1273,6 @@
     "label": "the shape walk is unbounded",
     "file": "scripts/capture-cart-mutation.py",
     "from": "    if depth >= MAX_SHAPE_DEPTH:\n        return \"...\"\n",
-    "to": "",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_recon.py"
-    ]
-  },
-  {
-    "label": "an empty list looks like a full one",
-    "file": "scripts/capture-cart-mutation.py",
-    "from": "        if not value:\n            return {\"list\": 0}\n",
     "to": "",
     "command": [
       "uv",
@@ -1358,6 +1330,132 @@
     "file": "scripts/capture-cart-mutation.py",
     "from": "                \"operation\": operation,\n                \"status\": status,",
     "to": "                \"operation\": url.rsplit(\"/\", 1)[-1],\n                \"status\": status,",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the shape keeps values instead of types",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return type(value).__name__",
+    "to": "    return value",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the response body is written to disk",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "                \"body_shape\": shape_of(payload),\n            }",
+    "to": "                \"body_shape\": shape_of(payload),\n                \"body\": payload,\n            }",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a dynamic key is copied verbatim into the shape",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            if is_schema_key(key):",
+    "to": "            if True:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a long identifier counts as a field name",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return isinstance(key, str) and len(key) <= MAX_KEY_LENGTH and bool(SCHEMA_KEY.match(key))",
+    "to": "    return isinstance(key, str) and bool(SCHEMA_KEY.match(key))",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a list is described by its first element only",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        shapes = [shape_of(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]\n        return _collapse(shapes, len(value), \"list\")",
+    "to": "        return {\"list\": len(value), \"of\": shape_of(value[0], depth + 1)}",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a capped shape does not admit it was capped",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if truncated or count > MAX_LIST_ITEMS:\n        described[\"truncated\"] = True\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the variant list is unbounded",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if len(seen) >= MAX_VARIANTS:\n            truncated = True\n            break\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the summary prints dynamic keys to the terminal",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            named = sorted(key for key in data if is_schema_key(key))",
+    "to": "            named = sorted(data)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the driver is told a forbidden operation aborts the run",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    print(\"It never navigates and never clicks. An order flow is not recorded:\")",
+    "to": "    print(\"It never navigates and never clicks. Anything forbidden aborts it.\")",
     "command": [
       "uv",
       "run",

@@ -882,22 +882,35 @@ def test_proving_per_line_delivery_requires_a_per_line_check():
     )
 
 
-def test_accepting_a_response_requires_observed_rejections_too():
-    """A success shape is only half the contract.
+def test_accepting_a_response_requires_a_semantic_check_not_key_presence():
+    """A success shape is only half the contract, and the other half is not a capture.
 
-    Knowing what success looks like does not let us recognise failure: a 200
-    carrying a refusal is the shape most likely to be mistaken for agreement.
-    So whoever fills in the success shape must also record the rejections they
-    saw, and each one must be judged not-accepted by the same code path.
+    An earlier version of this test demanded a corpus of observed rejections
+    beside the observed success. That was wrong in a way worth recording: the
+    only way to observe a rejection on purpose is to send a mutation designed
+    to fail, and we do not send invalid requests to see what happens. A
+    rejection that arrives on its own is evidence and is kept; one that has to
+    be provoked is not evidence, it is a request we had no reason to make.
+
+    What is required instead is that acceptance is decided by reading the
+    response's own verdict, rather than by noticing that a key exists. The
+    adversarial cases below are derived from the predicate, not from Walmart.
     """
     if cart_mutate.ACCEPTED_RESPONSE_SHAPE is None:
         pytest.skip("still unobserved, as recorded")
 
-    examples = getattr(cart_mutate, "OBSERVED_REJECTIONS", None)
-    assert examples, "a success shape was recorded without any observed rejection beside it"
-    for payload in examples:
-        ack = cart_mutate.acknowledgement(200, payload)
-        assert not ack.accepted, f"an observed rejection was read as success: {payload}"
+    assert hasattr(cart_mutate, "accepts"), (
+        "a success shape was recorded without a predicate that reads it; "
+        "shallow key matching cannot tell agreement from a refusal that has the same keys"
+    )
+    source = inspect.getsource(cart_mutate.acknowledgement)
+    assert "accepts" in source, "the predicate exists but acknowledgement does not use it"
+
+
+def test_any_rejection_that_was_actually_observed_is_still_refused():
+    """Kept if it arrived on its own. Never manufactured."""
+    for payload in getattr(cart_mutate, "OBSERVED_REJECTIONS", ()):
+        assert not cart_mutate.acknowledgement(200, payload).accepted, payload
 
 
 def test_a_declared_failure_inside_a_success_is_never_accepted():
@@ -909,9 +922,13 @@ def test_a_declared_failure_inside_a_success_is_never_accepted():
     if cart_mutate.ACCEPTED_RESPONSE_SHAPE is None:
         pytest.skip("still unobserved, as recorded")
 
-    for field in ("success", "ok", "accepted"):
-        for falsy in (False, "false", 0, None):
-            payload = {"data": {"updateItems": {field: falsy}}}
+    for field in ("success", "ok", "accepted", "status"):
+        for wrong in (False, "false", 0, None, "FAILED", "", []):
+            payload = {"data": {"updateItems": {field: wrong}}}
             assert not cart_mutate.acknowledgement(200, payload).accepted, (
-                f"{field}={falsy!r} was read as success"
+                f"{field}={wrong!r} was read as success"
             )
+
+    # Missing entirely, and the wrong container. Silence is not agreement.
+    for payload in ({}, {"data": None}, {"data": {}}, {"data": {"updateItems": None}}):
+        assert not cart_mutate.acknowledgement(200, payload).accepted, payload

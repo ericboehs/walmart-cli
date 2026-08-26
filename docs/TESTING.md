@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of sixty-three defects
+The layout of the suite is not arbitrary. It is the residue of sixty-six defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -29,6 +29,9 @@ Each of these was written deliberately, read fine, and passed:
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| a shape that kept every key | "carries the contract and none of the contents" was false: a map keyed by email or cart id puts the secret in the key position, where nothing was looking |
+| a list described by element zero | the line we care about may not be first, and an errors array is heterogeneous by nature |
+| a prompt that promised to abort | a forbidden operation is counted and the run continues; telling someone the tool will stop them is worse than telling them nothing |
 | three tests passing for the wrong reason | the order-flow, allowlist and same-host response tests all used an uncleared request, so the correlation check refused them before the guard under test was reached; three mutants survived and named it |
 | a guard tested against an imagined caller | the store check was tested with a bare id string while Ruby sends the whole store object; both suites passed and every correctly configured production request would have been refused |
 | one gate for two unknowns | per-line delivery was "documented as unproven", so capturing a response would have silently authorised a second, unrelated missing contract |
@@ -276,6 +279,15 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **Keys are values.** Anything copied verbatim out of an unseen document has
+  to earn it -- schema-shaped and short -- and the rest collapse into a marker
+  that counts them without quoting them.
+- **An equivalent mutant is a report of dead code.** When removing a branch
+  changes no behaviour and breaks no test, delete the branch; do not write a
+  test to defend it.
+- **Never provoke a failure to learn its shape.** A rejection that arrives on
+  its own is evidence; one that had to be caused is a request we had no reason
+  to make. Adversarial cases are derived from the predicate instead.
 - **A guard must be the only thing that can stop the request it is asked
   about.** If an earlier check refuses first, the test proves the earlier
   check. Clear the way to the guard deliberately.

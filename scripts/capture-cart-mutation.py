@@ -26,6 +26,7 @@ import contextlib
 import datetime as dt
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -83,24 +84,78 @@ def is_update_items_body(body: object) -> bool:
     return isinstance(supplied.get("items"), list)
 
 
-# How deep a shape may go before it stops describing and starts copying. A
-# response we have never seen has no known depth, and an unbounded walk over a
-# hostile document is a way to hang the capture.
+# Bounds on the shape walk. A response nobody has seen has no known depth,
+# breadth or length, and an unbounded walk over one is a way to hang the
+# capture or to write a file the size of the cart.
 MAX_SHAPE_DEPTH = 12
+MAX_LIST_ITEMS = 25
+MAX_VARIANTS = 5
+MAX_KEY_LENGTH = 40
+
+# A key that looks like it came from a schema rather than from data. Keys are
+# the one part of a shape that is copied verbatim, so they have to earn it:
+# GraphQL field names are short identifiers, while an email, a UUID, an order
+# number or a hash is not. The length cap matters as much as the pattern -- a
+# 64-character persisted-query hash is letters and digits too.
+SCHEMA_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+# What a key that did not earn it becomes. The text is dropped, the fact that
+# there were some is kept, because a map keyed by id is itself a shape.
+DYNAMIC_KEYS = "<dynamic keys>"
+
+
+def is_schema_key(key: object) -> bool:
+    return isinstance(key, str) and len(key) <= MAX_KEY_LENGTH and bool(SCHEMA_KEY.match(key))
+
+
+def _distinct(shapes: list[Any]) -> tuple[list[Any], bool]:
+    """Unique shapes, in order, capped. Returns (shapes, truncated).
+
+    Looking only at element zero was not safe to promote as a contract: the
+    line we care about may not be first, and an errors array is heterogeneous
+    by nature. Keeping every element instead would copy the response's size
+    into the evidence file, so it is bounded and says when it truncated.
+    """
+    seen: dict[str, Any] = {}
+    truncated = False
+    for shape in shapes:
+        key = json.dumps(shape, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        if len(seen) >= MAX_VARIANTS:
+            truncated = True
+            break
+        seen[key] = shape
+    return list(seen.values()), truncated
+
+
+def _collapse(shapes: list[Any], count: int, label: str) -> dict[str, Any]:
+    distinct, truncated = _distinct(shapes)
+    described: dict[str, Any] = {label: count}
+    if len(distinct) == 1:
+        described["of"] = distinct[0]
+    elif distinct:
+        described["variants"] = distinct
+    if truncated or count > MAX_LIST_ITEMS:
+        described["truncated"] = True
+    return described
 
 
 def shape_of(value: Any, depth: int = 0) -> Any:
-    """The structure of a payload with every value replaced by its type.
+    """The structure of a payload with every value -- and every dynamic key -- removed.
 
     Separate from scrubbing, and stricter. Scrubbing removes what we know to be
     sensitive; this removes everything, so what is left cannot leak by being
     something nobody thought to add to a list of key names. It is the form the
-    contract can eventually be written down in.
+    contract can be written down in.
+
+    Keys are the exception that had to be closed: an earlier version kept every
+    key, which is only value-free until a response contains a map keyed by
+    email or by order id. Keys now have to look like schema identifiers, and
+    the rest collapse into one marker that counts them without quoting them.
 
     Booleans are named apart from numbers, because bool is an int in Python and
-    that distinction has already caused two defects here. Lists report their
-    length and the shape of their first element: a response whose data is an
-    empty list is a different observation from one with items in it.
+    that distinction has already caused two defects here.
     """
     if depth >= MAX_SHAPE_DEPTH:
         return "..."
@@ -109,11 +164,22 @@ def shape_of(value: Any, depth: int = 0) -> Any:
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, dict):
-        return {key: shape_of(item, depth + 1) for key, item in value.items()}
+        described: dict[str, Any] = {}
+        dynamic: list[Any] = []
+        for key, item in value.items():
+            if is_schema_key(key):
+                described[key] = shape_of(item, depth + 1)
+            else:
+                dynamic.append(shape_of(item, depth + 1))
+        if dynamic:
+            described[DYNAMIC_KEYS] = _collapse(dynamic, len(dynamic), "count")
+        return described
     if isinstance(value, list):
-        if not value:
-            return {"list": 0}
-        return {"list": len(value), "of": shape_of(value[0], depth + 1)}
+        # An empty list needs no special case: _collapse describes nothing as
+        # {"list": 0}. It had one, and mutating it away changed no behaviour and
+        # broke no test -- which is what an equivalent mutant is for.
+        shapes = [shape_of(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]
+        return _collapse(shapes, len(value), "list")
     return type(value).__name__
 
 
@@ -277,19 +343,26 @@ class Recorder:
         else:
             print(f"  response {status}: {self._summarise(payload)}")
 
+        # The shape only. The body exists in this process for as long as it
+        # takes to derive that, and is not written down.
+        #
+        # An updateItems response has never been seen. It may well carry a
+        # whole cart, or the household behind it. A scrubber works from a list
+        # of field names, and no list can be shown to recognise fields nobody
+        # has looked at yet -- so the first run keeps the structure and none of
+        # the data. If the structure turns out not to be enough, the way to
+        # learn more is another observation with named paths approved in
+        # advance, not a copy of everything taken now in case.
         self.responses.append(
             {
                 "url": scrub.scrub_url(url),
                 "operation": operation,
                 "status": status,
                 "ok": getattr(response, "ok", None),
-                # The shape with every value removed. This is the part that can
-                # eventually be quoted into a test or a document, because it
-                # carries the contract and none of the contents.
                 "body_shape": shape_of(payload),
-                "body": scrub.scrub_json(payload, self.literals),
             }
         )
+        del payload
 
     @staticmethod
     def _summarise(payload: Any) -> str:
@@ -300,7 +373,10 @@ class Recorder:
             parts.append("errors present")
         data = payload.get("data")
         if isinstance(data, dict):
-            parts.append(f"data keys: {', '.join(sorted(data)) or 'none'}")
+            # Schema keys only, for the same reason the shape filters them: a
+            # key can be an id, and this goes to a terminal and a scrollback.
+            named = sorted(key for key in data if is_schema_key(key))
+            parts.append(f"data keys: {', '.join(named) or 'none'}")
         elif "data" in payload:
             parts.append("data is not an object")
         return "; ".join(parts) or "no data and no errors"
@@ -349,18 +425,23 @@ class Recorder:
 
 def confirm(out_dir: Path) -> bool:
     print("This attaches to your own Chrome and records while YOU click.")
-    print("It never navigates and never clicks. Anything the safety guard forbids aborts it.")
+    print("It never navigates and never clicks. An order flow is not recorded:")
+    print("its body is never read and it is counted as refused.")
+    print("It does not stop: you are driving, and stopping is your decision.")
     print(f"Output (gitignored, 0600): {out_dir}")
     print()
-    print("Do this after it says 'recording':")
-    print("  1. go to any Walmart product page in the tab that opens")
-    print("  2. click Add to cart, once")
-    print("  3. change the quantity, then remove it again if you like")
-    print("  4. come back here and press Enter")
+    print("One observation is the goal, so keep it to one:")
+    print("  1. open your existing cart in the tab that opens")
+    print("  2. change the quantity of ONE line you already have, once")
+    print("  3. come back here and press Enter, then put it back yourself")
     print()
-    print("Both sides of each updateItems call are recorded: the request, and")
-    print("the answer. Nothing else is read -- an order-flow response body is")
-    print("never fetched, not even to throw away.")
+    print("Editing a line already in the cart avoids introducing a new item, a")
+    print("new variant, or a second mutation to explain. Which line, and how you")
+    print("restore it, are yours to choose.")
+    print()
+    print("Recorded: the request, as before, and the SHAPE of the response --")
+    print("its structure with every value and every non-schema key removed. The")
+    print("response body itself is not written down.")
     print()
     return input("start recording? [y/N] ").strip().lower() in ("y", "yes")
 

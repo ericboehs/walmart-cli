@@ -846,7 +846,7 @@ def test_a_body_that_cannot_be_read_is_a_finding_not_a_crash(tmp_path):
     request = _cleared_request(recorder)
     recorder.on_response(CaptureResponse(request.url, request, text=None))
     assert recorder.unreadable_responses == 1
-    assert recorder.responses[0]["body"] is None
+    assert recorder.responses[0]["body_shape"] == "null"
     assert recorder.responses[0]["status"] == 200
 
 
@@ -915,27 +915,57 @@ def test_the_shape_of_a_recorded_response_contains_no_recorded_value(tmp_path):
     assert "CART-SECRET-1" not in json.dumps(recorder.responses[0]["body_shape"])
 
 
-def test_a_cart_id_in_a_response_is_scrubbed_like_one_in_a_request(tmp_path):
-    """The request side learned this the hard way; the response side inherits it."""
+# --- the response body is not written down -------------------------------------------
+#
+# The request side is scrubbed and kept. The response side is not kept at all
+# on the first run: no updateItems response has ever been seen, it may carry a
+# whole cart or the household behind it, and a scrubber works from a list of
+# field names that cannot be shown to recognise fields nobody has looked at.
+# Structure, then, and none of the data.
+
+
+def test_no_value_from_a_response_reaches_the_file(tmp_path):
+    """Not scrubbed and kept -- not kept. A denylist cannot vouch for the unseen."""
     recorder = _recorder(tmp_path)
     request = _cleared_request(recorder)
-    recorder.on_response(
-        CaptureResponse(
-            request.url, request, text='{"data":{"cartId":"cart-id-canary-0000-not-a-real-cart"}}'
-        )
+    body = json.dumps(
+        {
+            "data": {
+                "cartId": "cart-id-canary-0000-not-a-real-cart",
+                "customer": {"email": "someone@example.test", "firstName": "Canary"},
+                "address": "123 Nowhere Road",
+                "items": [{"name": "A Product Nobody Should See", "price": 12.34}],
+            }
+        }
     )
+    recorder.on_response(CaptureResponse(request.url, request, text=body))
     recorder.write([])
     written = (tmp_path / "capture.json").read_text()
-    assert "cart-id-canary-0000-not-a-real-cart" not in written
+    for secret in (
+        "cart-id-canary-0000-not-a-real-cart",
+        "someone@example.test",
+        "Canary",
+        "123 Nowhere Road",
+        "A Product Nobody Should See",
+        "12.34",
+    ):
+        assert secret not in written, secret
 
 
-def test_a_literal_given_on_the_command_line_is_scrubbed_from_a_response(tmp_path):
-    """--scrub-literal is how the driver removes what no key name would catch."""
-    recorder = _capture_module().Recorder(tmp_path, ["Owasso"])
+def test_the_record_has_no_body_field_at_all(tmp_path):
+    """A field that is not there cannot be filled in later by accident."""
+    recorder = _recorder(tmp_path)
     request = _cleared_request(recorder)
-    recorder.on_response(CaptureResponse(request.url, request, text='{"data":{"s":"Owasso"}}'))
-    recorder.write([])
-    assert "Owasso" not in (tmp_path / "capture.json").read_text()
+    recorder.on_response(CaptureResponse(request.url, request))
+    assert "body" not in recorder.responses[0]
+
+
+def test_the_structure_survives_even_though_the_values_do_not(tmp_path):
+    """Dropping the body must not drop the contract, which is the point of the run."""
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request, text='{"data":{"updateItems":{"id":"x"}}}'))
+    assert recorder.responses[0]["body_shape"] == {"data": {"updateItems": {"id": "str"}}}
 
 
 # --- what the run amounted to ---------------------------------------------------------
@@ -962,3 +992,151 @@ def test_requests_without_responses_is_a_failure_not_a_quiet_success():
 def test_getting_what_it_came_for_says_nothing():
     verdict = _capture_module().verdict
     assert verdict(watched=True, mutations=1, responses=1) is None
+
+
+# --- keys are the part of a shape that is copied verbatim -----------------------------
+#
+# "Carries the contract and none of the contents" was false while every key was
+# kept. A response with a map keyed by email, order id or cart id puts the
+# secret in the key position, where nothing was looking.
+
+
+def test_a_secret_used_as_an_object_key_does_not_survive(tmp_path):
+    shape_of = _capture_module().shape_of
+    shaped = shape_of(
+        {
+            "cartsByEmail": {
+                "someone@example.test": {"total": 1},
+                "cart-id-canary-0000-not-a-real-cart": {"total": 2},
+            }
+        }
+    )
+    rendered = json.dumps(shaped)
+    assert "someone@example.test" not in rendered
+    assert "cart-id-canary-0000-not-a-real-cart" not in rendered
+
+
+def test_dynamic_keys_are_counted_without_being_quoted():
+    """A map keyed by id is itself a shape, so the count is worth keeping."""
+    module = _capture_module()
+    shaped = module.shape_of({"m": {"a@b.test": {"n": 1}, "c@d.test": {"n": 2}}})
+    dynamic = shaped["m"][module.DYNAMIC_KEYS]
+    assert dynamic["count"] == 2
+    assert dynamic["of"] == {"n": "int"}
+
+
+def test_schema_keys_are_kept_beside_dynamic_ones():
+    module = _capture_module()
+    shaped = module.shape_of({"updateItems": {"ok": True}, "9f8e@x.test": {"ok": False}})
+    assert shaped["updateItems"] == {"ok": "boolean"}
+    assert module.DYNAMIC_KEYS in shaped
+
+
+def test_a_long_identifier_is_not_mistaken_for_a_field_name():
+    """A persisted-query hash is letters and digits too, so length has to count."""
+    module = _capture_module()
+    assert module.is_schema_key("updateItems")
+    assert module.is_schema_key("_typename")
+    assert not module.is_schema_key("a" * (module.MAX_KEY_LENGTH + 1))
+    assert not module.is_schema_key("45fca98d0f0fb2ffc2ccf8a3290b891445fca98d0f0fb2ffc2ccf8a3290b8914")
+    assert not module.is_schema_key("someone@example.test")
+    assert not module.is_schema_key("6f1b2c3d-4e5f-6789-abcd-ef0123456789")
+    assert not module.is_schema_key(12)
+
+
+# --- a list is not its first element --------------------------------------------------
+#
+# Element zero is not the contract: the line we care about may not be first,
+# and an errors array is heterogeneous by nature.
+
+
+def test_a_later_element_with_a_different_structure_is_recorded():
+    shape_of = _capture_module().shape_of
+    shaped = shape_of([{"a": 1}, {"b": "x", "c": True}])
+    assert shaped["list"] == 2
+    variants = shaped["variants"]
+    assert {"a": "int"} in variants
+    assert {"b": "str", "c": "boolean"} in variants
+
+
+def test_a_uniform_list_is_described_once():
+    shape_of = _capture_module().shape_of
+    assert shape_of([{"a": 1}, {"a": 2}, {"a": 3}]) == {"list": 3, "of": {"a": "int"}}
+
+
+def test_a_long_list_is_bounded_and_says_so():
+    module = _capture_module()
+    shaped = module.shape_of([{"n": i} for i in range(module.MAX_LIST_ITEMS + 10)])
+    assert shaped["list"] == module.MAX_LIST_ITEMS + 10
+    assert shaped["truncated"] is True
+
+
+def test_many_different_structures_are_capped_and_say_so():
+    module = _capture_module()
+    shaped = module.shape_of([{f"k{i}": i} for i in range(module.MAX_VARIANTS + 3)])
+    assert len(shaped["variants"]) == module.MAX_VARIANTS
+    assert shaped["truncated"] is True
+
+
+def test_the_error_shape_a_rejection_would_carry_survives_the_walk():
+    """The shape most likely to arrive first, and the one worth reading."""
+    shape_of = _capture_module().shape_of
+    shaped = shape_of({"errors": [{"message": "x", "path": ["updateItems"]}], "data": None})
+    assert shaped["data"] == "null"
+    assert shaped["errors"]["of"]["message"] == "str"
+
+
+# --- what the driver is told ----------------------------------------------------------
+#
+# The prompt said "anything the safety guard forbids aborts it", which was not
+# true: a forbidden operation is counted, its body is left unread, and the run
+# continues. Telling someone the tool will stop them is worse than telling them
+# nothing, because they will rely on it.
+
+
+def _prompt_text(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr("builtins.input", lambda *_: "n")
+    _capture_module().confirm(tmp_path)
+    return capsys.readouterr().out
+
+
+def test_the_prompt_does_not_promise_to_abort(monkeypatch, capsys, tmp_path):
+    text = _prompt_text(monkeypatch, capsys, tmp_path).lower()
+    assert "abort" not in text
+    assert "does not stop" in text
+
+
+def test_the_prompt_says_the_response_body_is_not_kept(monkeypatch, capsys, tmp_path):
+    text = _prompt_text(monkeypatch, capsys, tmp_path)
+    assert "SHAPE of the response" in text
+    assert "not written down" in text
+
+
+def test_the_prompt_asks_for_one_change_to_an_existing_line(monkeypatch, capsys, tmp_path):
+    """One observation is the goal; a broad script invites several mutations."""
+    text = _prompt_text(monkeypatch, capsys, tmp_path).lower()
+    assert "existing cart" in text
+    assert "one line you already have" in text
+    assert "add to cart" not in text
+
+
+def test_the_running_summary_does_not_print_a_dynamic_key(tmp_path, capsys):
+    """The terminal and its scrollback are disclosure too."""
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    capsys.readouterr()
+    recorder.on_response(
+        CaptureResponse(request.url, request, text='{"data":{"updateItems":{},"someone@example.test":{}}}')
+    )
+    printed = capsys.readouterr().out
+    assert "updateItems" in printed
+    assert "someone@example.test" not in printed
+
+
+def test_an_empty_list_is_not_described_as_having_an_element(tmp_path):
+    """{"list": 0} and a first-element description are different observations."""
+    shape_of = _capture_module().shape_of
+    empty = shape_of({"errors": []})["errors"]
+    assert empty == {"list": 0}
+    assert "of" not in empty
+    assert "variants" not in empty
