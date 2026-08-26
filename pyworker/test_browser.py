@@ -115,11 +115,40 @@ def test_the_raw_playwright_context_is_not_public(make_session):
 
 
 def test_on_response_subscribes_through_the_session(make_session):
-    session = make_session(FakePage())
+    page = FakePage()
+    session = make_session(page)
     calls = []
     session.on_response(calls.append)
 
-    assert session._context.handlers["response"] == [calls.append]
+    assert page.handlers["response"] == [calls.append]
+
+
+# The listener was installed on the context, so it fired for every page in it.
+# Attached to the user's Chrome that is every tab they have open: the cart and
+# order collectors match by URL and could consume someone else's response, and
+# recon records bodies, which would mean writing the user's other browsing to
+# disk. We open our own tab; we must observe only our own tab.
+def test_a_response_from_another_tab_never_reaches_our_handler(make_session):
+    ours = FakePage()
+    session = make_session(ours)
+    theirs = FakePage(url="https://example.com/private")
+    seen = []
+    session.on_response(seen.append)
+
+    theirs.emit("response", "the user's traffic")
+
+    assert seen == []
+
+    ours.emit("response", "ours")
+
+    assert seen == ["ours"]
+
+
+def test_nothing_is_subscribed_on_the_context(make_session):
+    session = make_session(FakePage())
+    session.on_response(lambda _response: None)
+
+    assert session._context.handlers.get("response", []) == []
 
 
 def test_click_allows_an_add_to_cart_control(make_session):
@@ -622,7 +651,7 @@ def test_attached_is_decided_by_the_url_alone():
 
     assert not browser.BrowserOptions.from_request(base).attached
     assert not browser.BrowserOptions.from_request({**base, "cdp_url": ""}).attached
-    assert browser.BrowserOptions.from_request({**base, "cdp_url": "http://x:9222"}).attached
+    assert browser.BrowserOptions.from_request({**base, "cdp_url": "http://127.0.0.1:9222"}).attached
 
 
 # Attached, we own no directory and no lock, so taking one would be a lie about
@@ -654,3 +683,73 @@ class _NullCM:
 
     def __exit__(self, *exc):
         return False
+
+
+# --- CDP endpoint confinement ------------------------------------------------
+
+# Ruby validates cdp_url too. This copy exists because the worker is a separate
+# process precisely so it need not trust its caller, and the protocol is
+# directly invocable: an NDJSON request that never passed through the Ruby
+# config would otherwise reach connect_over_cdp with whatever it liked.
+LOOPBACK_URLS = [
+    "http://127.0.0.1:9222",
+    "http://localhost:9222",
+    "http://LOCALHOST:9222",
+    "http://[::1]:9222",
+    "https://127.0.0.1:9222",
+]
+
+OFF_HOST_URLS = [
+    "http://192.168.1.9:9222",
+    "http://10.0.0.5:9222",
+    "http://example.com:9222",
+    # Substring tests pass these. Parsing does not.
+    "http://127.0.0.1.evil.com:9222",
+    "http://localhost.evil.com:9222",
+    "http://evil.com/127.0.0.1",
+    "http://evil.com#127.0.0.1",
+    "http://evil.com?x=127.0.0.1",
+    # Credentials in the userinfo section put a loopback string left of the host.
+    "http://127.0.0.1@evil.com:9222",
+]
+
+BAD_SCHEMES = [
+    "ftp://127.0.0.1:9222",
+    "file:///etc/passwd",
+    "ws://127.0.0.1:9222",
+    "//127.0.0.1:9222",
+    "127.0.0.1:9222",
+    "not a url",
+]
+
+
+@pytest.mark.parametrize("url", LOOPBACK_URLS)
+def test_a_loopback_cdp_url_is_accepted(url):
+    assert browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": url}).attached
+
+
+@pytest.mark.parametrize("url", OFF_HOST_URLS)
+def test_a_cdp_url_off_loopback_is_refused_by_the_worker_itself(url):
+    with pytest.raises(browser.BrowserUnavailable, match="loopback"):
+        browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": url})
+
+
+@pytest.mark.parametrize("url", BAD_SCHEMES)
+def test_a_cdp_url_that_is_not_http_is_refused_by_the_worker_itself(url):
+    with pytest.raises(browser.BrowserUnavailable, match="http"):
+        browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": url})
+
+
+def test_no_cdp_url_is_the_ordinary_launch_path():
+    for value in (None, "", 0):
+        options = browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": value})
+
+        assert options.cdp_url is None
+        assert not options.attached
+
+
+# The check must refuse rather than sanitize: returning a "cleaned" URL would
+# mean something unsafe was briefly a candidate.
+def test_a_refused_url_never_becomes_options_at_all():
+    with pytest.raises(browser.BrowserUnavailable):
+        browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": "http://evil.com:9222"})

@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import safety
 
@@ -250,13 +251,48 @@ class BrowserOptions:
             profile_lock=options.get("profile_lock") or (options["profile_dir"] + ".lock"),
             headless=requested,
             browser_channel=options.get("browser_channel"),
-            cdp_url=options.get("cdp_url") or None,
+            cdp_url=_checked_cdp_url(options.get("cdp_url")),
         )
 
     @property
     def attached(self) -> bool:
         """True when we are a guest in someone else's browser."""
         return bool(self.cdp_url)
+
+
+# Hosts a debugging endpoint may live on. A CDP port is unauthenticated:
+# whatever reaches it drives the browser and reads its cookies, so pointing one
+# off-host hands a signed-in session to anyone who can route to it.
+#
+# Ruby validates this too. The duplication is the point. The worker is a
+# separate process precisely so it need not trust its caller, and the protocol
+# is directly invocable -- an NDJSON request that never went through the Ruby
+# config would otherwise reach connect_over_cdp unchecked. Written from the URL
+# spec rather than translated from the Ruby, so a blind spot in one is unlikely
+# to be a blind spot in both.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _checked_cdp_url(value: Any) -> str | None:
+    """Return a usable loopback CDP URL, or raise. Never returns something unsafe."""
+    if not value:
+        return None
+
+    text = str(value)
+    parsed = urlsplit(text)
+    if parsed.scheme not in ("http", "https"):
+        raise BrowserUnavailable(f"cdp_url must be an http(s) URL, got {text!r}")
+
+    # hostname is the parsed host, lowercased, with IPv6 brackets removed. It is
+    # not a substring test: "127.0.0.1.evil.com" has a hostname of exactly that.
+    host = parsed.hostname
+    if host not in LOOPBACK_HOSTS:
+        raise BrowserUnavailable(
+            f"cdp_url must point at loopback, got {host!r}: a remote debugging port is "
+            "unauthenticated, so anything that can reach it can drive the browser"
+        )
+
+    return text
 
 
 class Session:
@@ -284,8 +320,24 @@ class Session:
         return self._page
 
     def on_response(self, handler) -> None:
-        """Subscribe to responses. Used by reconnaissance recording."""
-        self._context.on("response", handler)
+        """Subscribe to responses from our own tab, and only ours.
+
+        This was context-scoped, which meant every page in the context -- and
+        attached to the user's browser, that is every tab they have open. We
+        opened our own tab and then installed an observer over all of theirs.
+
+        The consequences were not theoretical. The cart and order collectors
+        match on URL, so a Walmart response caused by the user browsing in
+        another tab could be consumed as ours; login's observer reads an
+        auth-status header and would accept one it never asked for; and
+        reconnaissance records response *bodies*, which under the everyday-Chrome
+        path could mean writing traffic from any site in that browser to disk.
+
+        No consumer needs cross-page events: each observes responses caused by
+        its own navigation. If one ever does, it needs an explicit set of pages
+        we own, not the whole context.
+        """
+        self.page.on("response", handler)
 
     def close(self) -> None:
         # Closing a context we do not own would take the user's other tabs with

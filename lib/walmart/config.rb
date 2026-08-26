@@ -162,7 +162,10 @@ module Walmart
       unless uri && %w[http https].include?(uri.scheme) && uri.host
         raise ConfigError, "cdp_url must be an http(s) URL, got #{value.inspect}"
       end
-      return if LOOPBACK_HOSTS.include?(uri.host)
+      # Downcased because host names are case-insensitive: "LOCALHOST" is
+      # loopback, and refusing it was a correctness bug rather than a safe
+      # default. The worker's copy of this check parses the same way.
+      return if LOOPBACK_HOSTS.include?(uri.host.to_s.downcase)
 
       raise ConfigError,
             "cdp_url must point at loopback (#{LOOPBACK_HOSTS.join(", ")}), got #{uri.host.inspect}: " \

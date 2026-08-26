@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of nineteen defects
+The layout of the suite is not arbitrary. It is the residue of twenty-one defects
 found in two days, eleven of which were sitting inside checks that were passing
 at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -27,6 +27,8 @@ Each of these was written deliberately, read fine, and passed:
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
+| the response observer | `on_response` subscribed on the *context*, so it heard every tab in the browser; the tests passed because in a launched browser there is only one tab, and the second tab only exists in the mode we added last |
+| the worker's CDP endpoint | loopback was enforced in Ruby only, and the worker executes what it is handed; the protocol is directly invocable, so the check sat outside the boundary it was protecting |
 | the archive's pagination cursor | a stop note persisted the cursor "so the next run can pick up where it left off"; nothing ever read it, `order sync` restarts at page one, and the test named "sync state survives a restart" asserted only that the field round-tripped |
 | `doctor`'s credential check | it probed for an item's *presence* and reported "email + password set", while the password item existed and held nothing; `login` read the value, found none, and offered to create the record that already existed |
 | the first draft of the per-command help table | hand-written from plausibility rather than from `parse_flags`: it invented two flags that do not exist and omitted five that do |
@@ -186,6 +188,17 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A safety property proved in one mode is not proved in the other.** "We touch
+  only our own tab" was true of navigation and false of observation, and every
+  test passed, because a launched browser has one tab and the second tab is only
+  possible in attached mode. When a new mode arrives, the old invariants need
+  re-asking in it, not inheriting.
+- **Validation belongs at the boundary that executes, not the one that asks.**
+  `cdp_url` was checked in Ruby and used in Python. The worker is a separate
+  process precisely so it need not trust its caller, and its protocol is
+  directly invocable. Both copies are written independently, from the spec
+  rather than from each other, so a blind spot in one is unlikely to be a blind
+  spot in both.
 - **Proving the writer wrote is not proving a consumer exists.** A cursor was
   written to disk, described in a comment as enabling resume, and read by
   nothing. The test round-tripped it through the writer and the reader and

@@ -85,6 +85,16 @@ class FakePage:
         # In-page fetches: what was asked for, and what the page hands back.
         self.evaluated = []
         self.evaluate_result = {"status": 200, "body": "{}"}
+        # Response handlers attached to this page alone. Page-scoped, because
+        # the real ones are: an observer on the context sees every tab.
+        self.handlers = {}
+
+    def on(self, event, handler):
+        self.handlers.setdefault(event, []).append(handler)
+
+    def emit(self, event, *args):
+        for handler in self.handlers.get(event, []):
+            handler(*args)
 
     def wait_for_timeout(self, milliseconds):
         if self.closed:

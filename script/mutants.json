@@ -202,8 +202,8 @@
   {
     "label": "a cdp_url may point anywhere, not only at loopback",
     "file": "lib/walmart/config.rb",
-    "from": "      return if LOOPBACK_HOSTS.include?(uri.host)",
-    "to": "      return if LOOPBACK_HOSTS.any? { |host| uri.to_s.include?(host) }"
+    "from": "      return if LOOPBACK_HOSTS.include?(uri.host.to_s.downcase)",
+    "to": "      return if LOOPBACK_HOSTS.any? { |host| uri.to_s.downcase.include?(host) }"
   },
   {
     "label": "config set writes a boolean as the string it arrived as",
@@ -241,6 +241,48 @@
       "pyworker",
       "pytest",
       "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "the response observer watches every tab in the user's browser",
+    "file": "pyworker/browser.py",
+    "from": "        self.page.on(\"response\", handler)",
+    "to": "        self._context.on(\"response\", handler)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "the worker trusts its caller about the CDP endpoint",
+    "file": "pyworker/browser.py",
+    "from": "            cdp_url=_checked_cdp_url(options.get(\"cdp_url\")),",
+    "to": "            cdp_url=options.get(\"cdp_url\") or None,",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "the worker's loopback check becomes a substring test",
+    "file": "pyworker/browser.py",
+    "from": "    host = parsed.hostname\n    if host not in LOOPBACK_HOSTS:",
+    "to": "    host = parsed.hostname\n    if not any(name in text for name in LOOPBACK_HOSTS):",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
     ]
   }
 ]
