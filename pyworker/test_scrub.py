@@ -286,3 +286,50 @@ def test_per_request_trace_ids_are_kept_because_they_are_contract():
     headers = scrub.scrub_headers({"traceparent": "00-18cf3a-c9a5fe-00"})
 
     assert "traceparent" in headers
+
+
+# --- Bot-protection identifiers ---------------------------------------------
+#
+# The 412 block payload from the search capture carried uuid and vid at the top
+# level, and carried them again inside the query strings of blockScript and
+# redirectUrl, where key-based scrubbing cannot see them.
+
+
+def test_a_visitor_id_key_is_redacted():
+    scrubbed = scrub.scrub_json({"uuid": "9f0b-1", "vid": "aa11", "appId": "PXabc"})
+
+    assert scrubbed["uuid"] == scrub.REDACTED
+    assert scrubbed["vid"] == scrub.REDACTED
+
+
+def test_the_app_id_survives_because_it_identifies_the_site_not_the_person():
+    assert scrub.scrub_json({"appId": "PXu6b0qd2s"})["appId"] == "PXu6b0qd2s"
+
+
+def test_identifiers_inside_an_embedded_url_are_redacted():
+    payload = {"blockScript": "/px/captcha.js?uuid=9f0b-1&vid=aa11&a=c"}
+
+    scrubbed = scrub.scrub_json(payload)["blockScript"]
+
+    assert "9f0b-1" not in scrubbed
+    assert "aa11" not in scrubbed
+    assert "a=c" in scrubbed
+
+
+def test_the_shape_of_an_embedded_url_survives_redaction():
+    # The path is the contract; only the values go.
+    scrubbed = scrub.scrub_json({"redirectUrl": "/blocked?uuid=9f0b-1"})["redirectUrl"]
+
+    assert scrubbed.startswith("/blocked?uuid=")
+
+
+def test_embedded_identifiers_are_caught_in_plain_text_too():
+    scrubbed = scrub.scrub_text("redirect to /blocked?vid=aa11&uuid=9f0b-1 now")
+
+    assert "aa11" not in scrubbed
+    assert "9f0b-1" not in scrubbed
+
+
+def test_a_word_ending_in_uuid_is_not_treated_as_an_identifier():
+    # "productGuid=" would be a different field; only the named ones are cut.
+    assert "keepme" in scrub.scrub_text("myuuid=keepme")

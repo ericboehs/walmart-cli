@@ -68,6 +68,14 @@ SENSITIVE_KEYS = {
     "customerid",
     "cid",
     "authorization",
+    # Bot-protection visitor and device identifiers. The 412 block payload from
+    # the search capture carried uuid and vid: pseudonymous, but stable enough
+    # to follow one browser across sessions, and useless to a parser test.
+    "uuid",
+    "vid",
+    "visitorid",
+    "deviceid",
+    "pxvid",
     # Postal codes are a person's location to within a few miles. Observed
     # unredacted in 20 typeahead URLs because only *names* like "address" were
     # covered and a bare zip did not look like anything.
@@ -84,7 +92,7 @@ SENSITIVE_KEYS = {
     "pickupstoreid",
 }
 
-TEXT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+TEXT_RULES: tuple[tuple[re.Pattern[str], Any], ...] = (
     (re.compile(r"[\w.+-]+@[\w-]+\.[a-z]{2,}", re.IGNORECASE), EMAIL_PLACEHOLDER),
     (re.compile(r"\b(?:\+1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b"), PHONE_PLACEHOLDER),
     (re.compile(r"\b(?:\d[ -]?){13,16}\b"), REDACTED),
@@ -99,6 +107,14 @@ TEXT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE), f"Bearer {REDACTED}"),
     (re.compile(r"\beyJ[A-Za-z0-9._-]{20,}"), REDACTED),  # JWTs
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
+    # Identifiers embedded in URLs inside a body. The block payload's
+    # blockScript and redirectUrl carried uuid= and vid= in their query strings,
+    # where key-based scrubbing cannot see them: to scrub_json they are just
+    # characters in a string.
+    (
+        re.compile(r"\b(uuid|vid|pxvid|visitorid|deviceid|sid|guid)=[^&\"'\s<>]+", re.IGNORECASE),
+        lambda match: f"{match.group(1)}={REDACTED}",
+    ),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), REDACTED),
 )
 
