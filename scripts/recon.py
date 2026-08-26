@@ -44,6 +44,16 @@ import scrub  # noqa: E402
 
 INTERESTING_TYPES = ("application/json", "text/html", "application/graphql")
 MAX_BODY_BYTES = 4_000_000
+
+# Third-party plumbing that costs a lot of capture and teaches nothing about
+# Walmart's contracts. Partytown is a web worker that proxies other people's
+# scripts: it was 321 of 395 bodies in the search run, 81% of the capture, and
+# not one of them was an endpoint we could ever call.
+#
+# Bot-protection traffic is deliberately NOT in this list. PerimeterX and
+# ThreatMetrix are noise by volume and evidence by nature -- they are how we
+# know what gates the login flow -- so they stay.
+NOISE_URL_FRAGMENTS = ("/~partytown/",)
 DEFAULT_OBSERVE_SECONDS = 180
 # Longest path segment kept verbatim in a filename before it is digested.
 MAX_SEGMENT_CHARS = 40
@@ -104,6 +114,9 @@ class Recorder:
         self.literals = literals
         self.entries: list[dict] = []
         self.counter = 0
+        # Skipping quietly would make the capture lie by omission, so what was
+        # dropped is counted and reported.
+        self.skipped: dict[str, int] = {}
         (self.out_dir / "bodies").mkdir(parents=True, exist_ok=True)
 
     def on_response(self, response) -> None:
@@ -112,9 +125,14 @@ class Recorder:
             if not any(kind in content_type for kind in INTERESTING_TYPES):
                 return
             if safety.is_forbidden_url(response.url):
-                # Should not happen; recorded as a finding rather than saved.
+                # Safety gets first look even when a URL otherwise matches a
+                # noise rule: forbidden traffic is evidence, never clutter.
                 self.entries.append({"url": self.safe_url(response.url), "note": "forbidden url observed"})
                 self.warn("observed a forbidden URL")
+                return
+            noise = _noise_fragment(response.url)
+            if noise:
+                self.skipped[noise] = self.skipped.get(noise, 0) + 1
                 return
 
             body = response.body()
@@ -205,6 +223,7 @@ class Recorder:
             "scrubbed": not self.keep_raw,
             "notes": notes,
             "entries": self.entries,
+            "skipped_as_noise": dict(sorted(self.skipped.items())),
         }
         path = self.out_dir / "index.json"
         path.write_text(json.dumps(index, indent=2, sort_keys=True))
@@ -238,8 +257,19 @@ class Recorder:
         for key, bucket in sorted(by_endpoint.items(), key=lambda kv: -kv[1]["count"]):
             statuses = ",".join(str(status) for status in sorted(bucket["statuses"]))
             lines.append(f"| {bucket['count']} | {statuses} | `{key}` |")
+        if self.skipped:
+            lines += ["", "## skipped as third-party noise", ""]
+            lines += [f"- {count}x `{fragment}`" for fragment, count in sorted(self.skipped.items())]
         lines += ["", "## findings", "", "_fill in before anything is promoted to a fixture_", ""]
         (self.out_dir / "summary.md").write_text("\n".join(lines))
+
+
+def _noise_fragment(url: str | None) -> str | None:
+    """Which noise rule matches this URL, if any."""
+    for fragment in NOISE_URL_FRAGMENTS:
+        if fragment in (url or ""):
+            return fragment
+    return None
 
 
 def pump(session, seconds: float, countdown: bool = False) -> None:

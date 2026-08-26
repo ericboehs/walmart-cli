@@ -464,3 +464,93 @@ def test_the_entry_point_reaches_open_session(monkeypatch, tmp_path):
     index = json.loads((out_dir / "index.json").read_text())
     assert index["plan"] == "store"
     assert all("error" not in note for note in index["notes"])
+
+
+# --- Third-party noise ------------------------------------------------------
+#
+# 321 of 395 bodies in the search run were ~partytown/proxytown, a web worker
+# that proxies other people's scripts. Eighty-one percent of the capture, and
+# not one of them an endpoint we could ever call.
+
+
+class FakeResponse:
+    def __init__(self, url, body=b'{"ok":true}', status=200, content_type="application/json"):
+        self.url = url
+        self.status = status
+        self.headers = {"content-type": content_type}
+        self._body = body
+        self.request = FakeRequest(url)
+
+    def body(self):
+        return self._body
+
+
+def test_partytown_traffic_is_not_recorded(tmp_path):
+    rec = recorder(tmp_path)
+
+    rec.on_response(FakeResponse("https://www.walmart.com/~partytown/proxytown"))
+
+    assert rec.entries == []
+    assert rec.counter == 0
+
+
+def test_skipped_traffic_is_counted_rather_than_forgotten(tmp_path):
+    # Silence would make the capture lie by omission: a reader would think the
+    # site simply never made those calls.
+    rec = recorder(tmp_path)
+
+    for _ in range(3):
+        rec.on_response(FakeResponse("https://www.walmart.com/~partytown/proxytown"))
+
+    assert rec.skipped == {"/~partytown/": 3}
+
+
+def test_safety_gets_first_look_at_a_forbidden_noise_url(tmp_path):
+    rec = recorder(tmp_path)
+
+    rec.on_response(FakeResponse("https://www.walmart.com/~partytown/checkout"))
+
+    assert rec.skipped == {}
+    assert rec.entries == [
+        {"url": "https://www.walmart.com/~partytown/checkout", "note": "forbidden url observed"}
+    ]
+
+
+def test_the_index_reports_what_was_skipped(tmp_path):
+    rec = recorder(tmp_path)
+    rec.on_response(FakeResponse("https://www.walmart.com/~partytown/proxytown"))
+
+    rec.write_index(recon.recon_plans.PLANS["search"], [])
+
+    index = json.loads((tmp_path / "index.json").read_text())
+    assert index["skipped_as_noise"] == {"/~partytown/": 1}
+    assert "1x `/~partytown/`" in (tmp_path / "summary.md").read_text()
+
+
+def test_a_capture_with_no_noise_says_nothing_about_it(tmp_path):
+    rec = recorder(tmp_path)
+
+    rec.write_index(recon.recon_plans.PLANS["search"], [])
+
+    assert json.loads((tmp_path / "index.json").read_text())["skipped_as_noise"] == {}
+    assert "skipped as third-party noise" not in (tmp_path / "summary.md").read_text()
+
+
+def test_real_walmart_traffic_is_still_recorded(tmp_path):
+    rec = recorder(tmp_path)
+
+    rec.on_response(FakeResponse("https://www.walmart.com/orchestra/snb/graphql/Search/abc/search"))
+
+    assert len(rec.entries) == 1
+    assert rec.entries[0]["graphql_operation"] == "snb/Search"
+
+
+def test_bot_protection_traffic_is_kept_because_it_is_evidence(tmp_path):
+    # Noise by volume, evidence by nature: this is how we know what gates the
+    # login flow. Filtering it would delete the finding.
+    rec = recorder(tmp_path)
+
+    rec.on_response(FakeResponse("https://collector-pxu6b0qd2s.px-cloud.net/api/v2/collector"))
+
+    assert len(rec.entries) == 1
+    assert rec.skipped == {}
