@@ -201,6 +201,11 @@ def run(args: argparse.Namespace) -> int:
 
     notes: list[str] = []
     status = 0
+    # Whether we ever got as far as watching. Without this the summary below
+    # reported "no mutating request was recorded" as a finding about Walmart
+    # when the truth was that Chrome was not running -- a message that cannot
+    # tell "we never looked" from "we looked and saw nothing" invents evidence.
+    watched = False
     try:
         with browser.open_session(options) as session:
             session.on_worker(recorder.on_worker)
@@ -209,6 +214,7 @@ def run(args: argparse.Namespace) -> int:
                 "\nrecording - drive the browser yourself; do not enter an order flow"
             )
             print("press Enter here when you are done\n")
+            watched = True
             with contextlib.suppress(EOFError):
                 input()
             notes.append(f"recorded {recorder.mutations} mutating requests")
@@ -229,7 +235,9 @@ def run(args: argparse.Namespace) -> int:
             f"\n{recorder.mutations} mutating request(s), {len(recorder.workers)} worker(s)"
         )
         print(f"wrote {path}")
-        if recorder.mutations == 0:
+        if not watched:
+            print("nothing was recorded because the session never opened.", file=sys.stderr)
+        elif recorder.mutations == 0:
             print(
                 "No mutating request was recorded. That is itself a finding: either no "
                 "add happened, or Playwright is not reporting the worker's traffic and "
