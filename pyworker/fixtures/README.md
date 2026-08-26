@@ -16,3 +16,10 @@ Rules:
    marketplace sellers, unavailable lines, and empty results.
 5. Raw captures live in `pyworker/recon/`, which is gitignored. They are
    unscrubbed by definition and must never be committed.
+6. Synthetic payloads are not fixtures and do not live here. Parser tests build
+   their own payloads by hand from a documented schema (see
+   `pyworker/test_search_parse.py`), which is why the parsers could be written
+   and tested before any real body was approved for reading. A fixture proves
+   we handle the real shape; a synthetic payload proves we handle the shape we
+   believe is real. Both are useful, and conflating them would let an
+   assumption masquerade as evidence.
