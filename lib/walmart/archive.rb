@@ -58,18 +58,32 @@ module Walmart
     # will never rewrite.
     def record(order_id)
       id = order_id.to_s
-      return nil unless entry(id)
+      found = entry(id)
+      return nil unless found
 
-      read_record(confined_path(entry(id)["path"], id), id)
+      # An index entry is meant to be a Hash. It is a file on disk, so "meant
+      # to be" is not a fact: an array or a number here reached `["path"]` and
+      # raised TypeError out of a reader that promises not to.
+      raise damaged(id, "its index entry is not a record") unless found.is_a?(Hash)
+
+      read_record(confined_path(found["path"], id), id)
     end
 
     # The record, or nil for any reason at all. Never raises.
     #
     # For bulk readers: one damaged file must not turn `order search` into a
     # crash across an otherwise intact archive.
+    #
+    # Both archive errors, not just the repairable one. This promise was made
+    # while rescuing ArchiveError alone, and the layers below could still raise
+    # ArgumentError, TypeError and Errno::* on sick input -- so the crash
+    # happened inside damaged_ids, which `order sync` calls before it opens the
+    # worker. A damaged archive crashed the repair path built for it. Those are
+    # translated at the boundary now rather than swallowed here; this rescue
+    # stays narrow so a genuine programming error is still visible.
     def readable_record(order_id)
       record(order_id)
-    rescue ArchiveError
+    rescue ArchiveError, ArchiveIncompatibleError
       nil
     end
 
@@ -83,9 +97,21 @@ module Walmart
     # could never repair the archive. "Known" has to mean "we can return it".
     def readable_ids = index["orders"].keys.select { |id| readable?(id) }
 
-    # Ids the index claims and cannot produce. Worth reporting: they are the
-    # difference between an archive that is thin and one that is damaged.
-    def damaged_ids = index["orders"].keys.reject { |id| readable?(id) }
+    # Ids the index claims and cannot produce *and could repair by re-fetching*.
+    # Incompatible records are excluded: re-fetching one would not help, and
+    # writing it is the thing we must not do.
+    def damaged_ids = index["orders"].keys.select { |id| failure_for(id).is_a?(ArchiveError) }
+
+    # Ids written by a newer version of this CLI.
+    def incompatible_ids
+      index["orders"].keys.select { |id| failure_for(id).is_a?(ArchiveIncompatibleError) }
+    end
+
+    # Ids the worker should not spend a page load on: the ones we can return,
+    # plus the ones we are refusing to overwrite. Fetching an incompatible
+    # record would mean discovering at write time that the only safe move is to
+    # throw the answer away.
+    def unfetchable_ids = readable_ids + incompatible_ids
 
     # --- Writing ---------------------------------------------------------------
 
@@ -96,6 +122,15 @@ module Walmart
     def write(order, force: false)
       order_id = order["order_id"].to_s
       raise ArgumentError, "an order needs an id to be archived" if order_id.empty?
+
+      # Refused before the shortcut, and before force is even considered. An
+      # older CLI declared this record unreadable and then overwrote it,
+      # dropping fields it did not understand -- refusing to read something and
+      # then destroying it is the worst available pairing, and --full did it
+      # too. force means "rewrite a record we understand", never "discard one we
+      # do not".
+      assert_writable!(order_id)
+
       # readable?, not archived?. The shortcut exists to make an incremental
       # sync cheap, and skipping a rewrite because a *broken* entry exists is
       # the opposite: it discards the replacement that would have repaired it.
@@ -187,7 +222,7 @@ module Walmart
     # with a perfectly ordinary-looking path. Both reproduce. Making the
     # invariant executable keeps it true of tomorrow's writer too.
     def confined_path(relative, id)
-      raise damaged(id, "its index entry has no file path") if relative.to_s.empty?
+      raise damaged(id, "its index entry has no file path") unless relative.is_a?(String) && !relative.empty?
 
       # expand_path, not realpath. An index can list orders while orders/ does
       # not exist -- an archive whose only sync hit a challenge is exactly that
@@ -195,7 +230,8 @@ module Walmart
       # the root eagerly made the containment check fail with a raw backtrace
       # in precisely the case this method exists to diagnose.
       root = File.expand_path(paths.orders_dir)
-      path = File.expand_path(File.join(root, relative.to_s))
+      # A null byte in the path raises ArgumentError out of every File method.
+      path = expanded(root, relative, id)
       raise damaged(id, "its index entry points outside the archive") unless inside?(path, root)
       raise damaged(id, "its file is missing") unless File.exist?(path)
 
@@ -213,12 +249,22 @@ module Walmart
       raise damaged(id, "its path is not a regular file") unless File.file?(real)
 
       real
+    rescue SystemCallError => e
+      # The file can vanish, or become a symlink loop, between the existence
+      # check and here.
+      raise damaged(id, "its file could not be resolved (#{e.class.name.split("::").last})")
     end
 
     def inside?(path, root) = path.start_with?("#{root}/")
 
+    def expanded(root, relative, id)
+      File.expand_path(File.join(root, relative))
+    rescue ArgumentError
+      raise damaged(id, "its index entry is not a usable path")
+    end
+
     def read_record(path, id)
-      data = JSON.parse(File.read(path))
+      data = JSON.parse(read_file(path, id))
       raise damaged(id, "its file does not hold an order") unless data.is_a?(Hash)
 
       # Parseable is not the same as ours. Without this, one order's file can
@@ -226,16 +272,58 @@ module Walmart
       # never actually stored.
       found = data["order_id"].to_s
       raise damaged(id, "its file holds order #{found}") unless found == id
-      raise damaged(id, "it was written by a newer version") if data["_format"].to_i > FORMAT
 
+      assert_format!(data, id)
       data
     rescue JSON::ParserError
       raise damaged(id, "its file is not valid JSON")
     end
 
+    # A newer format is refused and preserved; anything else unexpected is
+    # damage, which a re-fetch repairs safely because the result is our own
+    # format. Absent or non-integer counts as damage rather than incompatible:
+    # a missing marker is not evidence of a newer writer, and every record this
+    # CLI has ever written carries one.
+    def assert_format!(data, id)
+      format = data["_format"]
+      unless format.is_a?(Integer) && format.positive?
+        raise damaged(id, "its file does not say what format it is in")
+      end
+      return unless format > FORMAT
+
+      raise ArchiveIncompatibleError.new(
+        "order #{id} was written by a newer version of walmart-cli (format #{format}); " \
+        "this one understands format #{FORMAT}",
+        details: { "order_id" => id, "format" => format }
+      )
+    end
+
+    # Filesystem calls that can fail for reasons that are not bugs. A path can
+    # be unreadable, or vanish between the existence check and the read.
+    def read_file(path, id)
+      File.read(path)
+    rescue SystemCallError => e
+      raise damaged(id, "its file could not be read (#{e.class.name.split("::").last})")
+    end
+
     def damaged(id, why)
       ArchiveError.new("the archive lists order #{id} but #{why}",
                        details: { "order_id" => id })
+    end
+
+    # The error a read of this id would raise, or nil if it reads cleanly.
+    # One place decides, so damaged_ids and incompatible_ids cannot disagree
+    # about which bucket a record is in.
+    def failure_for(order_id)
+      record(order_id)
+      nil
+    rescue ArchiveError, ArchiveIncompatibleError => e
+      e
+    end
+
+    def assert_writable!(order_id)
+      failure = failure_for(order_id)
+      raise failure if failure.is_a?(ArchiveIncompatibleError)
     end
 
     def index_entry(order, relative)

@@ -128,6 +128,21 @@ one its callers ask.
   because the index is a file on disk and the invariant should be executable
   rather than merely true of today's writer.
 
+### A newer format is preserved, never repaired
+
+`_format` on a record says which version of this CLI wrote it.
+
+- Greater than `FORMAT`: refused for reading *and* for writing, including under
+  `--full`. An older process must not overwrite a record it has already
+  admitted it cannot read; that drops every field the newer version added.
+  These ids are reported before the network and skipped rather than fetched,
+  because the only safe thing to do with the answer would be to discard it.
+- Absent, zero, or not an integer: repairable damage. A missing marker is not
+  evidence of a newer writer, and every record this CLI has written carries
+  one, so a re-fetch fixes it and the result is our own format.
+
+`force` means "rewrite a record we understand", never "discard one we do not".
+
 ### Known limitation: coverage describes the last run, not the archive
 
 `index.json` holds one sync note, and it describes the run that wrote it. Two

@@ -340,7 +340,7 @@
   {
     "label": "a damaged record travels to the worker as known again",
     "file": "lib/walmart/commands/order.rb",
-    "from": "\"known_ids\" => flags[:full] == true ? [] : archive.readable_ids",
+    "from": "\"known_ids\" => flags[:full] == true ? [] : archive.unfetchable_ids",
     "to": "\"known_ids\" => flags[:full] == true ? [] : archive.index[\"orders\"].keys"
   },
   {
@@ -376,7 +376,43 @@
   {
     "label": "the reader canonicalises a root that may not exist",
     "file": "lib/walmart/archive.rb",
-    "from": "      root = File.expand_path(paths.orders_dir)\n      path = File.expand_path",
-    "to": "      root = File.realpath(paths.orders_dir)\n      path = File.expand_path"
+    "from": "      root = File.expand_path(paths.orders_dir)\n      # A null byte",
+    "to": "      root = File.realpath(paths.orders_dir)\n      # A null byte"
+  },
+  {
+    "label": "a record from a newer CLI is overwritten",
+    "file": "lib/walmart/archive.rb",
+    "from": "      assert_writable!(order_id)\n",
+    "to": ""
+  },
+  {
+    "label": "the non-raising reader stops catching incompatibility",
+    "file": "lib/walmart/archive.rb",
+    "from": "    rescue ArchiveError, ArchiveIncompatibleError\n      nil\n    end",
+    "to": "    rescue ArchiveError\n      nil\n    end"
+  },
+  {
+    "label": "a malformed index entry is indexed into anyway",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raise damaged(id, \"its index entry is not a record\") unless found.is_a?(Hash)\n",
+    "to": ""
+  },
+  {
+    "label": "an unreadable file raises out of the reader",
+    "file": "lib/walmart/archive.rb",
+    "from": "      File.read(path)\n    rescue SystemCallError => e",
+    "to": "      File.read(path)\n    rescue Encoding::CompatibilityError => e"
+  },
+  {
+    "label": "a null byte in an index path raises out of the reader",
+    "file": "lib/walmart/archive.rb",
+    "from": "      File.expand_path(File.join(root, relative))\n    rescue ArgumentError",
+    "to": "      File.expand_path(File.join(root, relative))\n    rescue Encoding::CompatibilityError"
+  },
+  {
+    "label": "a record with no format marker is treated as current",
+    "file": "lib/walmart/archive.rb",
+    "from": "      unless format.is_a?(Integer) && format.positive?\n        raise damaged(id, \"its file does not say what format it is in\")\n      end\n",
+    "to": ""
   }
 ]

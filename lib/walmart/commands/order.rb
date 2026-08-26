@@ -79,11 +79,24 @@ module Walmart
       # absent from known_ids, so the worker reads them again and write/2 now
       # accepts the replacement.
       def report_damage
+        report_incompatible
         damaged = archive.damaged_ids
         return if damaged.empty?
 
         fmt.warn("#{damaged.length} archived #{damaged.length == 1 ? "order" : "orders"} " \
                  "cannot be read; this sync will fetch #{damaged.length == 1 ? "it" : "them"} again")
+      end
+
+      # Said before the network, not discovered at write time. These records are
+      # skipped rather than fetched, because the only safe thing to do with the
+      # answer would be to throw it away.
+      def report_incompatible
+        newer = archive.incompatible_ids
+        return if newer.empty?
+
+        fmt.warn("#{newer.length} archived #{newer.length == 1 ? "order was" : "orders were"} " \
+                 "written by a newer walmart-cli and will be left untouched")
+        fmt.hint("upgrade walmart-cli to read #{newer.length == 1 ? "it" : "them"}")
       end
 
       def params_for(flags)
@@ -95,7 +108,7 @@ module Walmart
           # used here, which meant an entry left behind by a missing or corrupt
           # file kept the order skipped on every sync, so the damage was
           # permanent unless someone happened to run --full.
-          "known_ids" => flags[:full] == true ? [] : archive.readable_ids
+          "known_ids" => flags[:full] == true ? [] : archive.unfetchable_ids
         }
       end
 

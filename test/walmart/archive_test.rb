@@ -459,6 +459,126 @@ module Walmart
       assert_equal "200012345678901", store.record("200012345678901")["order_id"]
     end
 
+    # --- the reader never raises on sick input -------------------------------------
+
+    # Table-driven because the promise is "nil for any reason at all", and the
+    # first version of it rescued one error class while the layers below could
+    # raise ArgumentError, TypeError and Errno::*. Each case below did escape.
+    # damaged_ids is asserted too: `order sync` calls it before opening the
+    # worker, so a damaged archive crashed the repair path built for it.
+    SICK_ARCHIVES = {
+      "a null byte in the path" => lambda { |store, _path|
+        store.index["orders"]["200012345678901"]["path"] = "2026/evil\0.json"
+      },
+      "an index entry that is an array" => lambda { |store, _path|
+        store.index["orders"]["200012345678901"] = []
+      },
+      "an index entry that is a number" => lambda { |store, _path|
+        store.index["orders"]["200012345678901"] = 7
+      },
+      "an index entry that is a string" => lambda { |store, _path|
+        store.index["orders"]["200012345678901"] = "2026/200012345678901.json"
+      },
+      "a path that is not a string" => lambda { |store, _path|
+        store.index["orders"]["200012345678901"]["path"] = 7
+      },
+      "a file we may not read" => ->(_store, path) { File.chmod(0o000, path) },
+      "a file that is gone" => ->(_store, path) { FileUtils.rm(path) },
+      "a file that is not JSON" => ->(_store, path) { File.write(path, "{") },
+      "a file holding another order" => lambda { |_store, path|
+        File.write(path, JSON.dump("order_id" => "999", "_format" => 1))
+      },
+      "a record from a newer walmart-cli" => lambda { |_store, path|
+        File.write(path, JSON.dump(ORDER.merge("order_id" => "200012345678901", "_format" => 99)))
+      }
+    }.freeze
+
+    SICK_ARCHIVES.each do |name, break_it|
+      define_method(:"test_the_reader_returns_nil_for_#{name.tr(" ", "_")}") do
+        store = archive
+        store.write(ORDER)
+        path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+        break_it.call(store, path)
+
+        assert_nil store.readable_record("200012345678901")
+        refute store.readable?("200012345678901")
+        # The bucketing must not raise either.
+        assert_kind_of Array, store.damaged_ids
+        assert_kind_of Array, store.incompatible_ids
+        assert_kind_of Array, store.unfetchable_ids
+      ensure
+        File.chmod(0o600, path) if path && File.exist?(path)
+      end
+    end
+
+    # --- a newer format is preserved, not repaired -----------------------------------
+
+    # The worst available pairing: read_record correctly refused a format it
+    # does not understand, and then write treated "unreadable" as "repairable"
+    # and overwrote it, dropping every field the newer version had added.
+    def test_a_record_from_a_newer_cli_survives_an_ordinary_write
+      store, path = newer_format_record
+
+      assert_raises(ArchiveIncompatibleError) { store.write(ORDER) }
+      assert_equal 2, JSON.parse(File.read(path))["_format"]
+      assert_equal "keep me", JSON.parse(File.read(path))["newer_only"]
+    end
+
+    # force means "rewrite a record we understand", never "discard one we do
+    # not". --full took the same destructive path.
+    def test_force_does_not_overwrite_a_newer_record_either
+      store, path = newer_format_record
+
+      assert_raises(ArchiveIncompatibleError) { store.write(ORDER, force: true) }
+      assert_equal "keep me", JSON.parse(File.read(path))["newer_only"]
+    end
+
+    def test_a_newer_record_is_not_called_damaged
+      store, = newer_format_record
+
+      assert_empty store.damaged_ids, "re-fetching would not help and writing is forbidden"
+      assert_equal ["200012345678901"], store.incompatible_ids
+    end
+
+    # Skipped rather than fetched: the only safe thing to do with the answer
+    # would be to throw it away, so the page load is wasted.
+    def test_a_newer_record_is_not_worth_fetching
+      store, = newer_format_record
+
+      assert_includes store.unfetchable_ids, "200012345678901"
+    end
+
+    def test_show_says_upgrade_rather_than_calling_it_damage
+      store, = newer_format_record
+
+      error = assert_raises(ArchiveIncompatibleError) { store.record("200012345678901") }
+      assert_match(/newer version of walmart-cli/, error.message)
+      assert_match(/format 2/, error.message)
+    end
+
+    # A missing marker is not evidence of a newer writer, and every record this
+    # CLI has written carries one, so it is damage and a re-fetch repairs it.
+    def test_a_record_with_no_format_marker_is_repairable_damage
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      File.write(path, JSON.dump(ORDER.merge("order_id" => "200012345678901")))
+
+      assert_equal ["200012345678901"], store.damaged_ids
+      assert_empty store.incompatible_ids
+      assert_equal :written, store.write(ORDER)
+    end
+
+    # An archive holding one record written by a newer walmart-cli.
+    def newer_format_record
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      File.write(path, JSON.dump(JSON.parse(File.read(path)).merge("_format" => 2,
+                                                                   "newer_only" => "keep me")))
+      [Archive.new(paths: paths), path]
+    end
+
     def test_a_directory_where_a_record_should_be_is_refused
       store = archive
       store.write(ORDER)

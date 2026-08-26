@@ -68,6 +68,16 @@ module Walmart
     end
   end
 
+  # An archived record was written by a newer version of this CLI. Not damage,
+  # and emphatically not repairable: we cannot read it, so we must not write
+  # over it either. Separate from ArchiveError so no repair path can catch it
+  # by accident.
+  class ArchiveIncompatibleError < Error
+    def initialize(message, code: "archive_incompatible", details: nil)
+      super(message, code: code, exit_code: ExitCodes::FAILED, details: details)
+    end
+  end
+
   # Stored configuration or archive data is unreadable or malformed.
   class ConfigError < Error
     def initialize(message, code: "config", details: nil)
