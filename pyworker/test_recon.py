@@ -1105,28 +1105,79 @@ def test_a_wide_object_of_known_keys_is_capped_and_says_so():
 
 def test_a_wide_object_of_unknown_keys_is_capped_without_quoting_any():
     module = _capture_module()
-    wide = {f"person{i}": {"n": i} for i in range(module.MAX_DICT_ITEMS + 20)}
+    wide = {f"person{i}": {"quantity": i} for i in range(module.MAX_DICT_ITEMS + 20)}
     shaped = module.shape_of(wide)
     rendered = json.dumps(shaped)
     assert "person" not in rendered
-    assert shaped[module.DYNAMIC_KEYS]["count"] == module.MAX_DICT_ITEMS + 20
+    # The count is what was looked at; the total is how many there were. Both
+    # are needed: one bounds the work, the other says the work was bounded.
+    assert shaped[module.DYNAMIC_KEYS]["count"] == module.MAX_DICT_ITEMS
     assert shaped[module.TRUNCATED]["total"] == module.MAX_DICT_ITEMS + 20
 
 
-def test_the_cap_bounds_the_work_not_only_the_output():
-    """Shaping everything and collapsing afterwards is the cost we are avoiding."""
+class CountedPairs(dict):
+    """A dict that reports how many of its entries were actually consumed.
+
+    items() is a generator so that stopping early is visible. The previous
+    version of this test counted recursive calls on the children, which the
+    unbounded root walk never touched -- so it passed while every one of a
+    million entries was still being visited. Count what the bound is supposed
+    to bound.
+    """
+
+    def __init__(self, pairs):
+        super().__init__(pairs)
+        self.yielded = 0
+
+    def items(self):
+        for pair in super().items():
+            self.yielded += 1
+            yield pair
+
+
+@pytest.mark.parametrize("kind", ["known", "unknown", "mixed"])
+def test_no_more_entries_are_consumed_than_the_budget_allows(kind):
+    """One budget for the object, spent before anything is looked at."""
     module = _capture_module()
-    depth_reached = 0
+    known = sorted(module.ALLOWED_SHAPE_KEYS)
+    # A budget smaller than the allowlist, so the all-known case genuinely
+    # exceeds it. With the real budget it does not, and the assertion would
+    # hold whether or not anything was bounded.
+    budget = 5
+    size = budget * 20
 
-    class Counted(dict):
-        def items(self):
-            nonlocal depth_reached
-            depth_reached += 1
-            return super().items()
+    if kind == "known":
+        wide = CountedPairs({key: 1 for key in known})
+    elif kind == "unknown":
+        wide = CountedPairs({f"person{i}": i for i in range(size)})
+    else:
+        mixed = {f"person{i}": i for i in range(size)}
+        mixed.update({key: 1 for key in known})
+        wide = CountedPairs(mixed)
 
-    wide = {f"k{i}": Counted({"quantity": i}) for i in range(module.MAX_DICT_ITEMS + 30)}
-    module.shape_of(wide)
-    assert depth_reached <= module.MAX_DICT_ITEMS
+    assert len(wide) > budget, f"{kind}: the input does not reach the budget"
+
+    original = module.MAX_DICT_ITEMS
+    try:
+        module.MAX_DICT_ITEMS = budget
+        module.shape_of(wide)
+    finally:
+        module.MAX_DICT_ITEMS = original
+
+    assert wide.yielded <= budget, f"{kind}: visited {wide.yielded} entries on a budget of {budget}"
+
+
+def test_known_and_unknown_keys_share_one_budget():
+    """Two budgets meant the stated cap allowed twice as many shaped children."""
+    module = _capture_module()
+    known = sorted(module.ALLOWED_SHAPE_KEYS)
+    mixed = {key: 1 for key in known}
+    mixed.update({f"person{i}": i for i in range(module.MAX_DICT_ITEMS * 2)})
+
+    shaped = module.shape_of(mixed)
+    described = len([key for key in shaped if not key.startswith("<")])
+    counted = shaped.get(module.DYNAMIC_KEYS, {}).get("count", 0)
+    assert described + counted <= module.MAX_DICT_ITEMS
 
 
 def test_the_markers_cannot_collide_with_a_real_field_name():
@@ -1236,3 +1287,10 @@ def test_an_empty_list_is_not_described_as_having_an_element(tmp_path):
     assert empty == {"list": 0}
     assert "of" not in empty
     assert "variants" not in empty
+
+
+def test_the_prompt_describes_the_gate_as_recognition_not_syntax(monkeypatch, capsys, tmp_path):
+    """The gate is a list of observed names; calling it schema syntax misdescribes it."""
+    text = _prompt_text(monkeypatch, capsys, tmp_path)
+    assert "unrecognised key" in text
+    assert "non-schema" not in text

@@ -1466,38 +1466,52 @@
     ]
   },
   {
-    "label": "dict breadth is unbounded for known keys",
-    "file": "scripts/capture-cart-mutation.py",
-    "from": "                if len(described) >= MAX_DICT_ITEMS:\n                    truncated = True\n                    continue\n",
-    "to": "",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_recon.py"
-    ]
-  },
-  {
-    "label": "dict breadth is unbounded for unknown keys",
-    "file": "scripts/capture-cart-mutation.py",
-    "from": "                if len(dynamic) < MAX_DICT_ITEMS:\n                    dynamic.append(shape_of(item, depth + 1))\n                else:\n                    truncated = True",
-    "to": "                dynamic.append(shape_of(item, depth + 1))",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_recon.py"
-    ]
-  },
-  {
     "label": "a capped object does not admit it was capped",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "        if truncated:\n            described[TRUNCATED] = {\"total\": len(value)}\n",
+    "from": "        if total > MAX_DICT_ITEMS:\n            described[TRUNCATED] = {\"total\": total}\n",
     "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the object walk is unbounded at the root",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        for key, item in itertools.islice(value.items(), MAX_DICT_ITEMS):",
+    "to": "        for key, item in value.items():",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "known and unknown keys get a budget each",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        for key, item in itertools.islice(value.items(), MAX_DICT_ITEMS):\n            if is_known_key(key):",
+    "to": "        for key, item in itertools.islice(value.items(), MAX_DICT_ITEMS * 2):\n            if is_known_key(key):",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the driver is told the gate is about syntax",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    print(\"its structure with every value and every unrecognised key removed. The\")",
+    "to": "    print(\"its structure with every value and every non-schema key removed. The\")",
     "command": [
       "uv",
       "run",

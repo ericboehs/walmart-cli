@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import itertools
 import json
 import os
 import sys
@@ -210,29 +211,33 @@ def shape_of(value: Any, depth: int = 0) -> Any:
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, dict):
+        # One budget for the whole object, spent before anything is looked at.
+        #
+        # The previous version capped what it recursed into and what it stored,
+        # then iterated every entry anyway to count the unknown ones -- so a
+        # million-key object still cost a million iterations, which is the cost
+        # the cap was written to avoid. It also gave known and unknown keys a
+        # budget each, so the stated cap allowed twice as many shaped children
+        # as it said; harmless while the allowlist is short, and wrong the day
+        # it grows.
+        #
+        # Missing a known field that arrives after the cutoff is honest,
+        # because the marker says the object was truncated. Scanning an
+        # unbounded object to make sure we did not miss it is not.
+        total = len(value)
         described: dict[str, Any] = {}
         dynamic: list[Any] = []
         dynamic_count = 0
-        truncated = False
-        for key, item in value.items():
+        for key, item in itertools.islice(value.items(), MAX_DICT_ITEMS):
             if is_known_key(key):
-                if len(described) >= MAX_DICT_ITEMS:
-                    truncated = True
-                    continue
                 described[key] = shape_of(item, depth + 1)
             else:
                 dynamic_count += 1
-                # Bounded before the recursion, not after: shaping every value
-                # of a huge object first and collapsing the result afterwards
-                # is the cost we were trying to avoid.
-                if len(dynamic) < MAX_DICT_ITEMS:
-                    dynamic.append(shape_of(item, depth + 1))
-                else:
-                    truncated = True
+                dynamic.append(shape_of(item, depth + 1))
         if dynamic_count:
             described[DYNAMIC_KEYS] = _collapse(dynamic, dynamic_count, "count")
-        if truncated:
-            described[TRUNCATED] = {"total": len(value)}
+        if total > MAX_DICT_ITEMS:
+            described[TRUNCATED] = {"total": total}
         return described
     if isinstance(value, list):
         # An empty list needs no special case: _collapse describes nothing as
@@ -500,7 +505,7 @@ def confirm(out_dir: Path) -> bool:
     print("restore it, are yours to choose.")
     print()
     print("Recorded: the request, as before, and the SHAPE of the response --")
-    print("its structure with every value and every non-schema key removed. The")
+    print("its structure with every value and every unrecognised key removed. The")
     print("response body itself is not written down.")
     print()
     return input("start recording? [y/N] ").strip().lower() in ("y", "yes")
