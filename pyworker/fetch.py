@@ -16,6 +16,7 @@ from typing import Any
 
 import browser
 import cart as cart_module
+import cart_mutate
 import item as item_module
 import login as login_module
 import orders as orders_module
@@ -61,10 +62,10 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "search": search_module.action_search,
     "item": item_module.action_item,
     "cart.show": cart_module.action_cart_show,
-    "cart.add": action_not_implemented("cart.add"),
-    "cart.increment": action_not_implemented("cart.increment"),
-    "cart.decrement": action_not_implemented("cart.decrement"),
-    "cart.remove": action_not_implemented("cart.remove"),
+    "cart.add": cart_mutate.action_cart_change,
+    "cart.increment": cart_mutate.action_cart_change,
+    "cart.decrement": cart_mutate.action_cart_change,
+    "cart.remove": cart_mutate.action_cart_change,
     "my_items.list": action_not_implemented("my_items.list"),
     "order.sync": orders_module.action_order_sync,
     "order.list": action_not_implemented("order.list"),
@@ -131,6 +132,14 @@ def main(argv: list[str] | None = None) -> int:
         # amount of staring at Walmart's markup will explain that.
         protocol.error("browser_closed", str(exc), unverified=mutating)
         return 3 if mutating else 1
+    except cart_mutate.CartMutationRefused as exc:
+        # Declined, not unverified. Every one of these is raised before a
+        # request goes out, so the cart is provably untouched -- reporting it
+        # as "we cannot tell" would send someone to check a cart that nothing
+        # happened to. The generic handler below would do exactly that,
+        # because the action is a mutating one.
+        protocol.error("declined", str(exc))
+        return 2
     except safety.UnsafeNavigation as exc:
         protocol.error("unsafe", str(exc))
         return 2

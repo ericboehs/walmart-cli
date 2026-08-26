@@ -50,6 +50,8 @@ module Walmart
       %w[browser status] => [Commands::Browser, "report whether that Chrome is running"],
       %w[search] => [Commands::Search, "search Walmart's catalog"],
       %w[cart show] => [Commands::Cart, "read the live shared cart"],
+      %w[cart add] => [Commands::Cart, "add to a cart line, or take some off"],
+      %w[cart remove] => [Commands::Cart, "take a line out of the cart"],
       %w[order sync] => [Commands::Order, "archive orders and receipts"],
       %w[order list] => [Commands::OrderRead, "list archived orders"],
       %w[order show] => [Commands::OrderRead, "show one archived order"],
@@ -62,10 +64,6 @@ module Walmart
     PLANNED = {
       %w[store show] => "compare the pinned store with Walmart's active store",
       %w[store pin] => "pin the active grocery store",
-      %w[cart add] => "add an exact item to the cart",
-      %w[cart increment] => "increase a cart line's quantity",
-      %w[cart decrement] => "decrease a cart line's quantity",
-      %w[cart remove] => "remove a cart line",
       %w[cart add-from-order] => "reorder items from an archived order",
       %w[my-items list] => "browse Walmart's My Items",
       %w[my-items search] => "search Walmart's My Items"

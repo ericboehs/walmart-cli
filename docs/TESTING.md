@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of forty-six defects
+The layout of the suite is not arbitrary. It is the residue of forty-nine defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -29,6 +29,9 @@ Each of these was written deliberately, read fine, and passed:
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| tests under `private` | twenty new tests were inserted after a `private` keyword; minitest collected none of them and the suite count did not move enough to notice |
+| invented key names | the mutation module read `cart["items"]` and `line["first_party"]`, neither of which the cart parser produces — written from memory instead of from the parser's output |
+| a grep that matched its own excuse | a test asserting no absolute-quantity flag existed grepped the source for "absolute" and matched the comment explaining why absolutes are forbidden |
 | the guard and the record disagreed | the capture validated the operation with one function and labelled the evidence with another, so every request in the first capture was recorded as its 64-character persisted hash |
 | the canary was the leak | the commit that scrubbed a live identifier copied that same identifier into a tracked regression test, so the fix published what it removed |
 | absence read as agreement | the capture rejected bodies that disagreed with the URL and accepted bodies that named nothing, letting unclassified payloads into the evidence file |
@@ -261,6 +264,16 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A decision table belongs in the test as data.** Fourteen rows of
+  (acknowledgement, before, after, target) caught a case reasoning had missed:
+  a refusal with no usable pre-read was being reported as a clean failure, when
+  "unmoved" cannot be established without a before. Reading the policy in one
+  block is what made the hole visible.
+- **Assert the property beside the table.** The rows say what each case yields;
+  a separate test says APPLIED implies both acknowledgement and a matching
+  post-read. If a row is ever wrong, the property still fails.
+- **Check the test ran.** Twenty tests landed under a `private` and minitest
+  quietly collected none of them. Watch the count move by the number you added.
 - **The guard and the record must answer from the same code.** Two functions
   computed the operation: the validated one gated the request, the naive one
   wrote the document. The safety decision was correct and the evidence

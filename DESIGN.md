@@ -172,6 +172,30 @@ so it cannot on its own support a global claim:
 `window_complete?` stays true for both, because reaching the edge of what was
 asked for is still a success.
 
+### A cart change is not done until the cart says so
+
+`updateItems` sets an absolute quantity. Exposing that would let a count read
+minutes ago overwrite an edit someone made from their phone in between, so the
+CLI speaks only in deltas and the absolute number is derived inside a single
+worker action from a read taken moments before. The window between that read
+and the write is the lost-update window: narrow, documented, and not zero.
+`lineItemId` was considered as a compare-and-set token and rejected on the
+evidence -- a product-page add sends one for a line that does not exist yet, so
+it cannot encode a server-side revision.
+
+Success requires two independent things: Walmart acknowledged the request, and
+a fresh read of the cart shows the intended quantity. Neither alone is enough.
+A 200 carrying GraphQL errors is a failure wearing a success's status code, and
+a cart that happens to match the target proves nothing, because an edit from
+another device looks identical. When those two disagree the answer is
+UNVERIFIED, and it stays UNVERIFIED -- a corrective second write is how one lost
+update becomes two.
+
+Four outcomes, not two. `applied`, `rejected`, `contract_stale` (Walmart no
+longer recognises the pinned persisted query) and `unverified`. Only the last is
+exit 3, and anything this version does not recognise is treated as unverified
+rather than as success.
+
 ### The order flow is refused by name, and recording is an allowlist
 
 Walmart's order flow rides the same `/orchestra/<app>/graphql/<Operation>/<hash>`

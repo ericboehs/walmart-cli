@@ -786,5 +786,163 @@
       "pytest",
       "pyworker/test_recon.py"
     ]
+  },
+  {
+    "label": "a 200 carrying graphql errors counts as success",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    errors = payload.get(\"errors\")\n    if isinstance(errors, list) and errors:",
+    "to": "    errors = payload.get(\"errors\")\n    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "an empty response body counts as agreement",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if not isinstance(data, dict) or not data:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "success no longer requires the cart to show the target",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        if after == target:\n            return APPLIED, \"\"",
+    "to": "        return APPLIED, \"\"",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a matching cart alone is treated as success",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if ack.accepted:\n        if after == target:",
+    "to": "    if ack.accepted or after == target:\n        if after == target:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "an unreadable post-state is reported as a clean failure",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if after is None:\n        return UNVERIFIED, (",
+    "to": "    if False:\n        return UNVERIFIED, (",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a refusal with no pre-read is called cleanly rejected",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    unmoved = before is not None and after == before",
+    "to": "    unmoved = after == before or before is None",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "decrementing past empty is clamped instead of refused",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if target < 0:\n        raise CartMutationRefused(",
+    "to": "    if False:\n        raise CartMutationRefused(",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the marketplace check at mutation time is skipped",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        _assert_first_party(line)\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the cart id leaks into the result document",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        \"message\": message,",
+    "to": "        \"message\": message,\n        \"cart_id\": _LEAKED.get(\"id\"),",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the post-state is read from the response instead of the cart",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        after = quantity_of(_reread(session), item_id)",
+    "to": "        after = target",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "an unknown outcome is treated as success",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        EXIT_FOR.fetch(data[\"outcome\"], ExitCodes::UNVERIFIED)\n      end\n\n      def say_change",
+    "to": "        EXIT_FOR.fetch(data[\"outcome\"], ExitCodes::OK)\n      end\n\n      def say_change"
+  },
+  {
+    "label": "an unverified change exits zero",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        \"unverified\" => ExitCodes::UNVERIFIED",
+    "to": "        \"unverified\" => ExitCodes::OK"
+  },
+  {
+    "label": "a cart change stops asking for confirmation",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        confirm!(question_for(subcommand, item_id, delta))\n",
+    "to": ""
   }
 ]

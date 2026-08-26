@@ -213,7 +213,135 @@ module Walmart
         assert_match(/unexplained\s+-\$2\.00/, out.string)
       end
 
+      # --- changing the cart ---------------------------------------------------
+      #
+      # The worker decides the outcome; this side decides what the outcome
+      # means to a shell and to a person. Every outcome is asserted for both.
+
+      CHANGED = {
+        "item_id" => "10450114", "outcome" => "applied",
+        "quantity_before" => 1, "quantity_after" => 2,
+        "quantity_intended" => 2, "changed" => true, "message" => ""
+      }.freeze
+
+      def test_a_confirmed_change_reports_the_new_quantity
+        code = run_change(CHANGED)
+        assert_equal ExitCodes::OK, code
+        assert_includes out.string, "10450114: 1 -> 2"
+      end
+
+      def test_an_unverified_change_is_exit_three_not_zero
+        code = run_change(CHANGED.merge("outcome" => "unverified",
+                                        "message" => "could not confirm"))
+        assert_equal ExitCodes::UNVERIFIED, code
+        assert_includes err.string, "could not confirm"
+      end
+
+      def test_a_rejected_change_is_a_clean_failure
+        code = run_change(CHANGED.merge("outcome" => "rejected", "message" => "out of stock"))
+        assert_equal ExitCodes::FAILED, code
+      end
+
+      def test_a_stale_contract_is_a_failure_not_an_unknown
+        code = run_change(CHANGED.merge("outcome" => "contract_stale",
+                                        "message" => "update walmart-cli"))
+        assert_equal ExitCodes::FAILED, code
+        assert_includes err.string, "update walmart-cli"
+      end
+
+      # An outcome this version has never heard of must not read as success.
+      def test_an_unknown_outcome_is_unverified
+        assert_equal ExitCodes::UNVERIFIED, run_change(CHANGED.merge("outcome" => "who knows"))
+      end
+
+      def test_no_outcome_at_all_is_unverified
+        assert_equal ExitCodes::UNVERIFIED, run_change(CHANGED.except("outcome"))
+      end
+
+      def test_a_change_asks_before_it_acts
+        worker = FakeWorker.new(results: { "cart.add" => CHANGED })
+        context = build_context(worker: worker)
+        error = assert_raises(UsageError) { Cart.new(context).run(%w[cart add], %w[10450114]) }
+        assert_match(/--confirm/, error.message)
+        assert_empty worker.calls
+      end
+
+      def test_a_declined_change_sends_nothing
+        worker = FakeWorker.new(results: { "cart.add" => CHANGED })
+        # A TTY on both ends, so the interactive path actually runs and the
+        # answer is a real "no" rather than a non-interactive refusal.
+        def out.tty? = true
+        io = StringIO.new("n\n")
+        def io.tty? = true
+        context = build_context(worker: worker, stdin: io)
+        assert_raises(UsageError) { Cart.new(context).run(%w[cart add], %w[10450114]) }
+        assert_empty worker.calls
+      end
+
+      def test_add_defaults_to_one
+        worker = run_change_worker(%w[cart add], %w[10450114])
+        assert_equal({ "item_id" => "10450114", "delta" => 1, "remove" => false },
+                     worker.calls.first[:params])
+      end
+
+      def test_add_passes_the_quantity_through_as_a_delta
+        worker = run_change_worker(%w[cart add], %w[10450114 3])
+        assert_equal 3, worker.calls.first[:params]["delta"]
+      end
+
+      def test_a_negative_quantity_is_a_decrement
+        worker = run_change_worker(%w[cart add], %w[10450114 -2])
+        assert_equal(-2, worker.calls.first[:params]["delta"])
+      end
+
+      def test_remove_sends_no_delta_at_all
+        worker = run_change_worker(%w[cart remove], %w[10450114])
+        assert_equal({ "item_id" => "10450114", "delta" => nil, "remove" => true },
+                     worker.calls.first[:params])
+      end
+
+      # The absolute quantity never crosses the interface. Asserted on what the
+      # command sends rather than on its source, because the first version of
+      # this test grepped for the word "absolute" and matched the comment
+      # explaining why absolutes are forbidden.
+      def test_nothing_the_cli_accepts_can_set_an_absolute_quantity
+        [%w[10450114], %w[10450114 3], %w[10450114 -2]].each do |args|
+          worker = run_change_worker(%w[cart add], args)
+          params = worker.calls.first[:params]
+          assert_equal %w[item_id delta remove].sort, params.keys.sort
+          refute params.key?("quantity"), "sent an absolute quantity for #{args.inspect}"
+        end
+      end
+
+      def test_a_change_needs_an_item
+        assert_raises(UsageError) { run_change_worker(%w[cart add], []) }
+      end
+
+      def test_a_change_of_zero_is_refused
+        assert_raises(UsageError) { run_change_worker(%w[cart add], %w[10450114 0]) }
+      end
+
+      def test_a_quantity_that_is_not_a_number_is_refused
+        assert_raises(UsageError) { run_change_worker(%w[cart add], %w[10450114 lots]) }
+      end
+
+      def test_an_unknown_subcommand_is_refused
+        assert_raises(UsageError) { run_cart(path: %w[cart empty]) }
+      end
+
       private
+
+      def run_change(result, json: false)
+        worker = FakeWorker.new(results: { "cart.add" => result })
+        context = build_context(worker: worker, json: json, options: { confirm: true })
+        Cart.new(context).run(%w[cart add], %w[10450114])
+      end
+
+      def run_change_worker(path, args)
+        worker = FakeWorker.new(results: { "cart.add" => CHANGED, "cart.remove" => CHANGED })
+        Cart.new(build_context(worker: worker, options: { confirm: true })).run(path, args)
+        worker
+      end
 
       def run_cart(worker: nil, lines: [], totals: {}, problems: [], json: false,
                    path: %w[cart show], args: [])

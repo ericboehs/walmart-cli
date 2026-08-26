@@ -63,6 +63,10 @@ module Walmart
       %w[config path] => [],
       %w[config init] => [],
       %w[cart show] => [],
+      %w[cart add] => [
+        ["<item-id> [n]", "add n (default 1); a negative n takes that many out"]
+      ],
+      %w[cart remove] => [["<item-id>", "take the whole line out of the cart"]],
       %w[doctor] => []
     }.freeze
 

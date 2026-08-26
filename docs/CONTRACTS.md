@@ -90,6 +90,29 @@ authority when we must be certain an offer is first-party before adding it.
 Unobserved: a populated variant family. The item sampled had `variantCriteria: []`
 and an empty `variantsMap`.
 
+## Cart (write)
+
+One operation does all four verbs: `POST /orchestra/cartxo/graphql/updateItems/<hash>`
+(also served under `/orchestra/home/`). Observed by capturing a real session, four
+requests; see DESIGN.md for how and why.
+
+`variables.input = {cartId, items:[{offerId, usItemId, quantity, name,
+isPharmacyPrescription, isQSRItem}], enableLiquorBox, skipPolicyCheck, cartLeanMode,
+enableCartSplitClarity, features:[18 opaque flags]}`.
+
+**Quantity is absolute on the wire, and `0` is removal.** The CLI exposes only deltas;
+the absolute number is derived inside one worker action from a cart read taken moments
+earlier. Nothing outside `cart_mutate.py` can set a quantity outright.
+
+**The persisted hash is pinned** and rotates with Walmart's web builds. When it stops
+being recognised every mutation fails the same way, reported as `contract_stale`
+rather than as a mystery.
+
+**The response shape is UNOBSERVED.** The capture recorded requests only. So a
+response is treated as an acknowledgement, never as evidence of the new state: success
+requires both an acknowledged response *and* a fresh cart read showing the target.
+An empty `data` object is deliberately not read as agreement.
+
 ## Cart (read)
 
 Not server-rendered. The page issues
