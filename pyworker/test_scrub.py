@@ -333,3 +333,23 @@ def test_embedded_identifiers_are_caught_in_plain_text_too():
 def test_a_word_ending_in_uuid_is_not_treated_as_an_identifier():
     # "productGuid=" would be a different field; only the named ones are cut.
     assert "keepme" in scrub.scrub_text("myuuid=keepme")
+
+
+# A session-scoped handle to one household's cart. DESIGN.md says this tool
+# does not hold it, and a capture on disk is the one place it could quietly
+# survive that claim -- it did, in the first real capture, until a review
+# asked.
+#
+# The canary is synthetic on purpose. The first version of this test used the
+# real id from that capture, which meant the commit scrubbing the identifier
+# also published it. A regression test for "this value must not persist" is the
+# last place the value may appear.
+def test_a_cart_id_is_scrubbed_wherever_it_appears():
+    payload = {"variables": {"input": {"cartId": "cart-id-canary-0000-not-a-real-cart"}}}
+    scrubbed = scrub.scrub_json(payload)
+    assert scrubbed["variables"]["input"]["cartId"] == scrub.REDACTED
+
+
+def test_a_cart_id_is_scrubbed_under_any_spelling():
+    for key in ("cartId", "cartid", "CARTID", "cart_id"):
+        assert scrub.scrub_json({key: "cart-id-canary"})[key] == scrub.REDACTED

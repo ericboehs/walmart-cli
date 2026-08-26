@@ -576,8 +576,8 @@
   {
     "label": "the operation is read from the whole url including the query",
     "file": "pyworker/safety.py",
-    "from": "    parts = [segment for segment in urlparse(url).path.split(\"/\") if segment]",
-    "to": "    parts = [segment for segment in url.split(\"/\") if segment]",
+    "from": "        path = urlparse(decode_url(url)).path",
+    "to": "        path = url",
     "command": [
       "uv",
       "run",
@@ -640,5 +640,151 @@
     "file": "lib/walmart/commands/cart.rb",
     "from": "        parts << unexplained_row(totals)\n        parts << [\"taxes\", amount_of(totals, \"taxes\")]",
     "to": "        parts << [\"taxes\", amount_of(totals, \"taxes\")]\n        parts << unexplained_row(totals)"
+  },
+  {
+    "label": "the operation guard drops off the navigation boundary",
+    "file": "pyworker/safety.py",
+    "from": "    operation = operation_of(url)\n    if is_forbidden_operation(operation):\n        raise UnsafeNavigation(f\"refusing to call a forbidden operation: {operation}\")\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
+  },
+  {
+    "label": "the operation is read without decoding first",
+    "file": "pyworker/safety.py",
+    "from": "        path = urlparse(decode_url(url)).path",
+    "to": "        path = urlparse(url).path",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
+  },
+  {
+    "label": "the graphql marker goes back to being case-sensitive",
+    "file": "pyworker/safety.py",
+    "from": "    lowered = [segment.lower() for segment in parts]",
+    "to": "    lowered = list(parts)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
+  },
+  {
+    "label": "the operation list stops inheriting the forbidden terms",
+    "file": "pyworker/safety.py",
+    "from": "FORBIDDEN_OPERATIONS = FORBIDDEN_TERMS + (",
+    "to": "FORBIDDEN_OPERATIONS = (",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
+  },
+  {
+    "label": "the capture records any operation it happens to see",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if operation not in ALLOWED_OPERATIONS:\n            self.skipped += 1\n            return\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a body naming another operation is recorded anyway",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        mismatch = safety.operation_mismatch(url, decoded)",
+    "to": "        mismatch = None",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the cart id stops being scrubbed",
+    "file": "pyworker/scrub.py",
+    "from": "    \"cartid\",\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_scrub.py"
+    ]
+  },
+  {
+    "label": "an unclassified body enters the evidence file",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if not is_update_items_body(decoded):\n            self.unclassified += 1\n            print(f\"  not recorded ({operation} body is not the shape we came for)\")\n            return\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the body shape check accepts anything with variables",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return isinstance(supplied.get(\"items\"), list)",
+    "to": "    return True",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a live capture identifier may appear in tracked source",
+    "file": "test/walmart/fixture_hygiene_test.rb",
+    "from": "      assert_empty tracked.split(\"\\n\"),",
+    "to": "      assert_empty [],"
+  },
+  {
+    "label": "the evidence file labels the operation from the raw url",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            \"operation\": operation,",
+    "to": "            \"operation\": url.rsplit(\"/\", 1)[-1],",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
   }
 ]

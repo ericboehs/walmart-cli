@@ -195,3 +195,79 @@ def test_operation_of_is_total():
 def test_no_operation_means_no_refusal():
     assert not safety.is_forbidden_operation(None)
     assert not safety.is_forbidden_operation("")
+
+
+# --- the four holes a review found in the first version -----------------------------
+#
+# Each of these was ALLOWED by assert_navigable when the operation guard was
+# first written. They are kept as one table so the next person can see that the
+# failure was a class, not four accidents: a new guard has to inherit every
+# discipline the old one already had.
+
+REFUSED_URLS = {
+    # Decoded first, bounded, exactly as the URL guard has always done.
+    "percent-encoded first letter": (
+        "https://www.walmart.com/orchestra/cartxo/graphql/%72eserveSlotMutation/h"
+    ),
+    "double-encoded": ("https://www.walmart.com/orchestra/cartxo/graphql/%2572eserveSlotMutation/h"),
+    # The marker was matched case-sensitively, so this returned no operation at
+    # all and the whole check was skipped.
+    "mixed-case marker": "https://www.walmart.com/orchestra/cartxo/GraphQL/CreateContract/h",
+    "upper-case marker": "https://www.walmart.com/orchestra/cartxo/GRAPHQL/CreateContract/h",
+    # Recognised by is_forbidden_operation and allowed by assert_navigable: the
+    # guard existed and was not on the path that executes.
+    "plain forbidden operation": ("https://www.walmart.com/orchestra/cartxo/graphql/CreateContract/h"),
+    "suffixed name": "https://www.walmart.com/orchestra/cartxo/graphql/reserveSlotMutation/h",
+    # Was refused only because "/placeorder" happens to appear in the path.
+    # Now refused by name as well, so the overlap is deliberate.
+    "an order operation the list did not name": (
+        "https://www.walmart.com/orchestra/cartxo/graphql/placeOrderMutation/h"
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED_URLS))
+def test_the_navigation_boundary_refuses_order_operations(case):
+    with pytest.raises(safety.UnsafeNavigation):
+        safety.assert_navigable(REFUSED_URLS[case])
+
+
+def test_ordinary_operations_still_pass_the_boundary():
+    for url in ORDINARY_URLS:
+        assert safety.assert_navigable(url) == url
+
+
+# placeOrderMutation was caught by accidental overlap between two lists. Sharing
+# FORBIDDEN_TERMS makes it deliberate.
+def test_the_operation_list_inherits_every_forbidden_term():
+    for term in safety.FORBIDDEN_TERMS:
+        assert term in safety.FORBIDDEN_OPERATIONS
+
+
+def test_operation_of_decodes_before_reading():
+    url = "https://www.walmart.com/orchestra/x/graphql/%72eserveSlotMutation/h"
+    assert safety.operation_of(url) == "reserveSlotMutation"
+
+
+def test_operation_of_is_total_over_junk():
+    for value in (None, "", 7, [], "not a url", "http://[", "https://x/graphql"):
+        assert safety.operation_of(value) is None
+
+
+# --- the body must name what the path names ----------------------------------------
+
+
+def test_a_body_naming_another_operation_is_a_mismatch():
+    url = "https://www.walmart.com/orchestra/x/graphql/updateItems/h"
+    assert safety.operation_mismatch(url, {"operationName": "CreateContract"}) == "CreateContract"
+
+
+def test_agreement_is_not_a_mismatch():
+    url = "https://www.walmart.com/orchestra/x/graphql/updateItems/h"
+    assert safety.operation_mismatch(url, {"operationName": "updateItems"}) is None
+
+
+def test_a_body_that_names_nothing_is_not_a_mismatch():
+    url = "https://www.walmart.com/orchestra/x/graphql/updateItems/h"
+    for body in (None, {}, [], "text", {"operationName": ""}, {"operationName": 7}):
+        assert safety.operation_mismatch(url, body) is None

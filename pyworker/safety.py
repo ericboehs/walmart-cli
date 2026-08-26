@@ -13,6 +13,7 @@ Nothing here performs a purchase. This module exists to refuse one.
 from __future__ import annotations
 
 import re
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 # Substrings that must not appear in any other source file. Compared after
@@ -57,7 +58,17 @@ FORBIDDEN_URL_FRAGMENTS = (
 #
 # Matched against the operation name only, after normalisation, so an ordinary
 # read whose name merely resembles one of these is not refused by accident.
-FORBIDDEN_OPERATIONS = (
+# Observed order-flow names, plus every term the URL guard already refuses.
+# placeOrderMutation was caught only because "/placeorder" happens to appear in
+# its path -- accidental overlap between two lists, which is not a guarantee.
+# Sharing FORBIDDEN_TERMS makes the overlap deliberate.
+#
+# This list is the alarm, not the lock. It cannot enumerate an order operation
+# Walmart has not shipped yet, so nothing depends on it alone: the capture
+# records one allowed operation and the mutation path constructs one, both by
+# allowlist. A denylist as the primary guarantee would be a promise about
+# names nobody has seen.
+FORBIDDEN_OPERATIONS = FORBIDDEN_TERMS + (
     "reserveslot",
     "createcontract",
     "updatetipping",
@@ -174,18 +185,55 @@ def is_forbidden_operation(name: str | None) -> bool:
 def operation_of(url: str | None) -> str | None:
     """The GraphQL operation a Walmart URL names, if it names one.
 
-    /orchestra/<app>/graphql/<Operation>/<persisted-hash> is the shape. Parsed
-    rather than pattern-matched so a query string cannot smuggle a segment.
+    /orchestra/<app>/graphql/<Operation>/<persisted-hash> is the shape.
+
+    Same discipline as the URL guard, and for the same reasons, all three of
+    which were live defects:
+
+    - decoded first, bounded, because %72eserveSlotMutation reaches the same
+      endpoint and read as an ordinary name
+    - the "graphql" marker matched case-sensitively, so /GraphQL/ returned no
+      operation at all and the whole check was skipped
+    - parsed as a path, never pattern-matched, so a query string cannot
+      smuggle a segment
+
+    Total: any input that is not a URL naming an operation returns None.
     """
-    if not url:
+    if not url or not isinstance(url, str):
         return None
     from urllib.parse import urlparse
 
-    parts = [segment for segment in urlparse(url).path.split("/") if segment]
-    if "graphql" not in parts:
+    try:
+        path = urlparse(decode_url(url)).path
+    except ValueError:
+        # An unparseable URL is not a URL naming an operation. It is still
+        # refused elsewhere, by is_allowed_host.
         return None
-    index = parts.index("graphql")
+    parts = [segment for segment in path.split("/") if segment]
+    lowered = [segment.lower() for segment in parts]
+    if "graphql" not in lowered:
+        return None
+    index = lowered.index("graphql")
     return parts[index + 1] if index + 1 < len(parts) else None
+
+
+def operation_mismatch(url: str | None, body: Any) -> str | None:
+    """The operationName in the body when it disagrees with the URL, else None.
+
+    Walmart puts the operation in both places. A request whose path says
+    updateItems and whose body says something else is either a bug or an
+    attempt to have the guard read one thing and the server another, and we
+    have no reason to send one.
+    """
+    if not isinstance(body, dict):
+        return None
+    named = body.get("operationName")
+    if not isinstance(named, str) or not named:
+        return None
+    from_url = operation_of(url)
+    if from_url is None or normalize(named) == normalize(from_url):
+        return None
+    return named
 
 
 def is_forbidden_control(label: str | None) -> bool:
@@ -197,14 +245,23 @@ def is_forbidden_control(label: str | None) -> bool:
 def assert_navigable(url: str) -> str:
     """Gate every navigation in the worker. Raises rather than proceeding.
 
-    Two questions, because they fail differently: is this somewhere we must
-    never go, and is it even Walmart. Today every call site builds its URL from
-    WALMART_ORIGIN, so the host check refuses nothing -- but that is a property
-    of the call sites, and this function is what we point at when we say the
-    tool cannot wander.
+    Three questions, because they fail differently: is this somewhere we must
+    never go, does it name an operation we must never call, and is it even
+    Walmart. Today every call site builds its URL from WALMART_ORIGIN, so the
+    host check refuses nothing -- but that is a property of the call sites, and
+    this function is what we point at when we say the tool cannot wander.
+
+    The operation check was written and then not wired in here, which meant
+    is_forbidden_operation("CreateContract") returned True while
+    assert_navigable let the same URL through. A guard that is not on the path
+    that executes is a guard nobody is behind: validation belongs at the
+    boundary that acts, not the one that asks.
     """
     if is_forbidden_url(url):
         raise UnsafeNavigation(f"refusing to navigate to a forbidden destination: {url}")
+    operation = operation_of(url)
+    if is_forbidden_operation(operation):
+        raise UnsafeNavigation(f"refusing to call a forbidden operation: {operation}")
     if not is_allowed_host(url):
         raise UnsafeNavigation(f"refusing to navigate off Walmart: {url}")
     return url

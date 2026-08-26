@@ -37,6 +37,10 @@ DROP_HEADERS = {
 
 # JSON keys whose values are replaced wherever they appear, at any depth.
 SENSITIVE_KEYS = {
+    # A session-scoped handle to one household's cart. Not a credential, but
+    # holding it is exactly what DESIGN.md says this tool does not do, and a
+    # capture is the one place it could quietly survive.
+    "cartid",
     "email",
     "emailaddress",
     "phone",

@@ -172,6 +172,28 @@ so it cannot on its own support a global claim:
 `window_complete?` stays true for both, because reaching the edge of what was
 asked for is still a success.
 
+### The order flow is refused by name, and recording is an allowlist
+
+Walmart's order flow rides the same `/orchestra/<app>/graphql/<Operation>/<hash>`
+shape as an ordinary product read, so a URL carrying an entire order submission
+contains no `/checkout` and no `/payment`. The URL guard was never wrong; it was
+answering a different question, and nothing had asked this one until a capture
+recorded three order-flow operations.
+
+`operation_of` therefore inherits every discipline the URL guard already had —
+bounded percent-decoding, path parsing rather than pattern matching, a
+case-insensitive structural marker, total over junk — because the first version
+had none of them and failed in exactly those four ways. `assert_navigable` asks
+it, which is the part that matters: a guard that is not on the path that
+executes is a guard nobody is behind.
+
+The denylist is the alarm, not the lock. It cannot name an operation Walmart has
+not shipped yet, so nothing depends on it alone. The capture persists only
+`updateItems`, the mutation path will construct only `updateItems`, and neither
+accepts a caller-chosen operation. Where a body carries `operationName`, it must
+agree with the path: a request the guard reads as one thing and the server reads
+as another is one we have no reason to send.
+
 ### Settlement is a property of the note, not of the reason
 
 `SyncNote` answers "did this run finish what it set out to do", and both the

@@ -45,6 +45,43 @@ INTERESTING_HOSTS = ("walmart.com",)
 # they are page furniture and they are also where the tracking beacons live.
 BODY_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
+# The only operation this capture exists to record.
+#
+# An allowlist, not a denylist, and that is the whole design. The denylist in
+# safety.py cannot enumerate an order operation Walmart has not shipped yet, so
+# it is the alarm and this is the lock: a name nobody has seen before is not
+# recorded, because we did not come here for it. The first run of this script
+# recorded three order-flow operations, and no list of forbidden names would
+# have been the reason it did not.
+ALLOWED_OPERATIONS = ("updateItems",)
+
+
+def is_update_items_body(body: object) -> bool:
+    """Whether a decoded body has the shape updateItems is observed to send.
+
+    A positive test, not the absence of a negative. Rejecting only bodies that
+    *disagree* with the URL lets an unclassified body into the evidence file,
+    because a body naming nothing disagrees with nothing.
+
+    The discriminator is structural because none of the four observed requests
+    carries operationName at all: Walmart uses persisted queries, so the
+    operation lives in the URL path and the body carries only `variables`.
+    Requiring operationName == updateItems would have recorded nothing. Where a
+    body does carry one -- no observed request does, but the server accepts the
+    field -- it must still agree, which safety.operation_mismatch checks.
+
+    Observed shape: variables.input.items, a list of line entries.
+    """
+    if not isinstance(body, dict):
+        return False
+    variables = body.get("variables")
+    if not isinstance(variables, dict):
+        return False
+    supplied = variables.get("input")
+    if not isinstance(supplied, dict):
+        return False
+    return isinstance(supplied.get("items"), list)
+
 
 def default_out_dir() -> Path:
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -80,6 +117,8 @@ class Recorder:
         self.workers: list[str] = []
         self.mutations = 0
         self.skipped = 0
+        self.refused = 0
+        self.unclassified = 0
 
     def on_worker(self, worker) -> None:
         url = getattr(worker, "url", "") or "(unknown)"
@@ -94,19 +133,20 @@ class Recorder:
         if method not in BODY_METHODS:
             return
 
-        # A capture that recorded the order flow is a capture we must delete,
-        # and deleting it afterwards means it existed on disk first. Skipped
-        # before the body is ever read.
+        # Recorded only if we came here for it. A capture that held the order
+        # flow is a capture we must delete, and deleting it afterwards means it
+        # existed on disk first.
         #
         # This is not hypothetical. The first real run of this script recorded
-        # three order-flow operations because the person driving quite
-        # reasonably kept clicking, and the URL guard could not see them: they
-        # ride the same /orchestra/<app>/graphql/<Operation>/<hash> shape as
-        # every ordinary read.
+        # three order-flow operations, because the person driving quite
+        # reasonably kept clicking.
         operation = safety.operation_of(url)
         if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):
-            self.skipped += 1
+            self.refused += 1
             print(f"  refused (order flow): {operation or scrub.scrub_url(url)}")
+            return
+        if operation not in ALLOWED_OPERATIONS:
+            self.skipped += 1
             return
 
         body = None
@@ -114,6 +154,20 @@ class Recorder:
             body = request.post_data
         except Exception:  # noqa: BLE001 - a body we cannot read is still a finding
             body = None
+
+        # The path and the body must name the same operation. A request the
+        # guard reads as updateItems and the server reads as something else is
+        # a request we have no reason to send or to keep.
+        decoded = self._decode(body)
+        mismatch = safety.operation_mismatch(url, decoded)
+        if mismatch:
+            self.refused += 1
+            print(f"  refused (body names {mismatch}, path names {operation})")
+            return
+        if not is_update_items_body(decoded):
+            self.unclassified += 1
+            print(f"  not recorded ({operation} body is not the shape we came for)")
+            return
 
         self.mutations += 1
         record = {
@@ -123,7 +177,14 @@ class Recorder:
             # The point of the whole exercise: which target issued it.
             "from_worker": self._from_worker(request),
             "headers": scrub.scrub_headers(dict(getattr(request, "headers", {}) or {})),
-            "operation": self._operation(body, url),
+            # The name the guard cleared, not a second opinion. This field
+            # used to be computed by a separate helper that fell back to the
+            # last path segment -- which, for a persisted query, is the hash
+            # after the operation. Every request in the first real capture was
+            # therefore labelled with a 64-character hash. The guard was right
+            # and the evidence file was wrong, which is the more dangerous way
+            # round: nobody rereads a document they believe was validated.
+            "operation": operation,
             "body": scrub.scrub_json(self._decode(body), self.literals),
         }
         self.events.append(record)
@@ -146,16 +207,6 @@ class Recorder:
             return True
         return False
 
-    def _operation(self, body: str | None, url: str) -> str | None:
-        decoded = self._decode(body)
-        if isinstance(decoded, dict):
-            name = decoded.get("operationName")
-            if isinstance(name, str) and name:
-                return name
-        if "/orchestra/" in url:
-            return url.split("?")[0].rsplit("/", 1)[-1]
-        return None
-
     def _decode(self, body: str | None) -> Any:
         if not body:
             return None
@@ -170,7 +221,10 @@ class Recorder:
             "what": "cart mutation performed by hand in the user's own browser",
             "workers_seen": [scrub.scrub_url(url) for url in self.workers],
             "mutating_requests": self.events,
-            "refused_order_flow_requests": self.skipped,
+            "refused_order_flow_requests": self.refused,
+            "requests_not_recorded_because_unasked_for": self.skipped,
+            "requests_not_recorded_because_unrecognised_shape": self.unclassified,
+            "recorded_operations": sorted(ALLOWED_OPERATIONS),
             "notes": notes,
         }
         return write_private(self.out_dir / "capture.json", json.dumps(document, indent=2) + "\n")

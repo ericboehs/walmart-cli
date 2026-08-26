@@ -587,3 +587,142 @@ def test_an_existing_capture_file_is_replaced_not_appended(tmp_path):
     path = recon.write_private(tmp_path / "body.json", "second")
 
     assert path.read_text() == "second"
+
+
+# --- the capture records by allowlist, not denylist --------------------------------
+#
+# The denylist in safety.py cannot enumerate an order operation Walmart has not
+# shipped yet. It is the alarm; this is the lock. A capture that only keeps what
+# it came for cannot be surprised by a name nobody has seen.
+
+
+def _capture_module():
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "capture-cart-mutation.py"
+    spec = importlib.util.spec_from_file_location("capture_cart_mutation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class CaptureRequest:
+    def __init__(self, url, body=None, method="POST"):
+        self.url = url
+        self.method = method
+        self.post_data = body
+        self.resource_type = "fetch"
+        self.headers = {}
+        self.frame = None
+
+
+def _recorder(tmp_path):
+    return _capture_module().Recorder(tmp_path, [])
+
+
+ORCHESTRA = "https://www.walmart.com/orchestra/cartxo/graphql"
+
+
+ITEMS_BODY = '{"variables":{"input":{"items":[{"quantity":1}]}}}'
+
+
+def test_the_operation_it_came_for_is_recorded(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", ITEMS_BODY))
+    assert recorder.mutations == 1
+
+
+def test_an_unasked_for_operation_is_not_recorded(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/SomeFutureMutation/h", '{"a":1}'))
+    assert recorder.mutations == 0
+    assert recorder.skipped == 1
+    assert recorder.refused == 0
+
+
+def test_an_order_flow_operation_is_refused_and_counted_apart(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/reserveSlotMutation/h", '{"a":1}'))
+    assert recorder.mutations == 0
+    assert recorder.refused == 1
+
+
+def test_a_body_naming_a_different_operation_is_refused(tmp_path):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", '{"operationName":"CreateContract"}'))
+    assert recorder.mutations == 0
+    assert recorder.refused == 1
+
+
+def test_nothing_forbidden_reaches_the_written_document(tmp_path):
+    recorder = _recorder(tmp_path)
+    for name in ("updateItems", "reserveSlotMutation", "CreateContract", "updateTipping"):
+        recorder.on_request(CaptureRequest(f"{ORCHESTRA}/{name}/h", ITEMS_BODY))
+    recorder.write([])
+    written = (tmp_path / "capture.json").read_text()
+    for name in ("reserveSlot", "CreateContract", "updateTipping"):
+        assert name not in written, name
+
+
+# --- the body must be the shape we came for, not merely not-disagree ----------------
+#
+# Rejecting only bodies that disagree with the URL lets an unclassified body in,
+# because a body naming nothing disagrees with nothing. None of the four
+# observed updateItems requests carries operationName -- persisted queries put
+# the operation in the path -- so the discriminator has to be structural.
+
+
+def test_the_observed_body_shape_is_recorded(tmp_path):
+    recorder = _recorder(tmp_path)
+    body = '{"variables":{"input":{"items":[{"quantity":1}]}}}'
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", body))
+    assert recorder.mutations == 1
+    # The record names the operation the guard cleared, not the persisted hash
+    # that follows it in the path. The first real capture labelled all four
+    # requests with the hash.
+    assert recorder.events[0]["operation"] == "updateItems"
+
+
+def test_the_recorded_operation_is_the_one_the_guard_allowed(tmp_path):
+    """The document and the guard must not answer from different code."""
+    recorder = _recorder(tmp_path)
+    body = '{"variables":{"input":{"items":[{"quantity":1}]}}}'
+    hashed = f"{ORCHESTRA}/updateItems/45fca98d0f0fb2ffc2ccf8a3290b8914"
+    recorder.on_request(CaptureRequest(hashed, body))
+    recorder.write([])
+    written = json.loads((tmp_path / "capture.json").read_text())
+    recorded = {entry["operation"] for entry in written["mutating_requests"]}
+    assert recorded == {"updateItems"}
+    assert recorded <= set(_capture_module().ALLOWED_OPERATIONS)
+
+
+def test_no_observed_request_carries_an_operation_name():
+    """Pins the evidence the structural discriminator rests on."""
+    capture = Path(__file__).resolve().parent / "recon"
+    files = sorted(capture.glob("cart-mutation-*/capture.json"))
+    if not files:
+        pytest.skip("no live capture on this machine")
+    for file in files:
+        for entry in json.loads(file.read_text())["mutating_requests"]:
+            assert "operationName" not in entry["body"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "{}",
+        '{"variables":{}}',
+        '{"variables":{"input":{}}}',
+        '{"variables":{"input":{"items":"not a list"}}}',
+        '{"variables":"text"}',
+        "[]",
+        "not json",
+        None,
+    ],
+)
+def test_an_unrecognised_body_does_not_enter_the_evidence_file(tmp_path, body):
+    recorder = _recorder(tmp_path)
+    recorder.on_request(CaptureRequest(f"{ORCHESTRA}/updateItems/h", body))
+    assert recorder.mutations == 0
+    recorder.write([])
+    assert json.loads((tmp_path / "capture.json").read_text())["mutating_requests"] == []

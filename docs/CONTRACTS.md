@@ -100,7 +100,20 @@ features:[...]}` plus a large set of feature booleans.
 We read the cart by navigating to `/cart` and listening for the page's own response
 rather than replaying the request. Two reasons: a replay with a partial header set was
 answered `429` twice while the page's identical request succeeded, and listening means
-we never hold the cart id at all. What is never carried cannot leak.
+the read never holds the cart id at all.
+
+**The invariant, restated.** "We never hold the cart id" was true of every path that
+existed when it was written, and `updateItems` requires it — so the claim had to
+narrow rather than quietly acquire an exception. The rule is now that the cart id
+**never crosses the worker boundary and never survives the action**: read from the
+live cart inside a single Python action, used in the request it was read for, and gone
+when that action returns. It is never sent over NDJSON, never persisted, never cached
+between actions, never logged, never placed in an error message, and never revealed by
+`--verbose`. What does not cross a boundary cannot leak past it.
+
+`scrub.SENSITIVE_KEYS` covers `cartId`, because a capture on disk was the one place it
+could quietly outlive that claim. It did, in the first real capture, until a review
+asked.
 
 `data.cart`: `id`, `lineItems[]`, `priceDetails`, `fulfillment`, `customer`,
 `cartCustomerContext`, `checkoutable`, `checkoutableErrors[]`, `checkoutableWarnings[]`,

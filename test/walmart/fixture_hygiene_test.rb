@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require "shellwords"
 
 module Walmart
   # Safety invariant 9: nothing enters the repository as a fixture until it has
@@ -62,6 +63,36 @@ module Walmart
 
       assert_empty tracked,
                    "raw recon captures must stay untracked; they are unscrubbed by definition"
+    end
+
+    # Keeping a capture out of git is not the same as keeping its contents out.
+    #
+    # The commit that scrubbed the cart id from a live capture also copied that
+    # exact id into a tracked test, as the canary proving it gets scrubbed. Both
+    # halves passed their own review: the capture no longer held it, the
+    # scrubber demonstrably worked. The value was published anyway.
+    #
+    # So this reads the untracked captures and asserts none of their
+    # identifier-shaped strings appear in tracked source. Skipped where no
+    # capture exists, which is every machine but the one that recorded it --
+    # a check that cannot run is not a check that passed, so it says so.
+    def test_no_identifier_from_a_live_capture_appears_in_tracked_source
+      captures = Dir.glob("#{ROOT}/pyworker/recon/**/*.json")
+      skip "no live capture on this machine to check against" if captures.empty?
+
+      planted = captures.flat_map { |file| identifiers_in(File.read(file)) }.uniq
+      refute_empty planted, "captures with no identifier-shaped strings cannot prove anything"
+
+      tracked = `cd #{ROOT} && git grep -l -F #{planted.map { |v| "-e #{v.shellescape}" }.join(" ")}`
+      assert_empty tracked.split("\n"),
+                   "a value from a live capture appears in tracked source; " \
+                   "regression canaries must be synthetic"
+    end
+
+    # UUIDs and long opaque tokens. Deliberately not every string: the point is
+    # identifiers that could tie a file to one person's session.
+    def identifiers_in(text)
+      text.scan(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i).uniq
     end
 
     def test_the_scanner_actually_catches_a_planted_secret
