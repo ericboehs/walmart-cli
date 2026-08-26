@@ -10,6 +10,7 @@ require_relative "commands/cart"
 require_relative "commands/item"
 require_relative "commands/login"
 require_relative "commands/order"
+require_relative "commands/order_read"
 require_relative "commands/search"
 
 module Walmart
@@ -43,6 +44,9 @@ module Walmart
       %w[search] => [Commands::Search, "search Walmart's catalog"],
       %w[cart show] => [Commands::Cart, "read the live shared cart"],
       %w[order sync] => [Commands::Order, "archive orders and receipts"],
+      %w[order list] => [Commands::OrderRead, "list archived orders"],
+      %w[order show] => [Commands::OrderRead, "show one archived order"],
+      %w[order search] => [Commands::OrderRead, "search the archive"],
       %w[item] => [Commands::Item, "show one item by id or URL"]
     }.freeze
 
@@ -57,10 +61,7 @@ module Walmart
       %w[cart remove] => "remove a cart line",
       %w[cart add-from-order] => "reorder items from an archived order",
       %w[my-items list] => "browse Walmart's My Items",
-      %w[my-items search] => "search Walmart's My Items",
-      %w[order list] => "list archived orders",
-      %w[order show] => "show one archived order",
-      %w[order search] => "search the archive"
+      %w[my-items search] => "search Walmart's My Items"
     }.freeze
 
     def initialize(argv, env: ENV, stdout: $stdout, stderr: $stderr, stdin: $stdin, context: nil)

@@ -14,6 +14,7 @@ require "walmart/commands/login"
 require "walmart/commands/cart"
 require "walmart/commands/item"
 require "walmart/commands/order"
+require "walmart/commands/order_read"
 require "walmart/commands/search"
 
 module Walmart

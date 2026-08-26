@@ -7,10 +7,11 @@ cart, but there is no command, no flag, and no worker action that submits an
 order. Substitutions, the delivery slot, tip, payment, and the final review all
 happen in Walmart's app, where they belong.
 
-> **Status: early.** The foundation, the safety gates, the worker protocol, and
-> the visible login path exist. Everything that reads or changes a cart is
-> blocked on live reconnaissance and is listed as *planned* in `walmart help`.
-> See [DESIGN.md](DESIGN.md) for the full specification.
+> **Status: early, and read-only.** Search, item lookup, cart reading, order
+> archiving, and the local archive queries work. Nothing here changes a cart
+> yet: cart mutation is blocked on live reconnaissance, and checkout is not a
+> planned feature at all. See [DESIGN.md](DESIGN.md) for the full
+> specification.
 
 ## What works today
 
@@ -20,14 +21,32 @@ walmart doctor                 check the local environment, never the network
 walmart config show|path|init
 walmart login [--manual] [--force] [--wait SECONDS]
 walmart logout
+
+walmart search QUERY            search Walmart's catalog
+walmart item ID_OR_URL          one item, including who actually sells it
+walmart cart show               read the shared cart, never change it
+
+walmart order sync [--year Y] [--all] [--full]
+                                archive orders and in-store receipts locally
+walmart order list [--year Y] [--limit N]
+walmart order show ORDER_ID
+walmart order search TERM       all offline: the archive answers these
 ```
+
+The `order` reads never touch the network. Once a sync has run, "when did we
+last buy oat milk" is answerable on a bad connection. When the archive is
+incomplete -- because a sync was throttled or challenged partway through -- every
+one of those commands says so, because "we never bought that" and "we have not
+looked that far back" are different answers.
 
 ## Planned
 
-`store show|pin`, `search`, `item`, `cart show|add|increment|decrement|remove|
-add-from-order`, `my-items list|search`, and `order sync|list|show|search`.
-Each is declared in `walmart help` so the CLI never pretends to do something it
-cannot yet do.
+`store show|pin`, `cart add|increment|decrement|remove|add-from-order`, and
+`my-items list|search`. Each is declared in `walmart help` so the CLI never
+pretends to do something it cannot yet do.
+
+Cart mutation waits on an observed contract: the update runs in a Web Worker,
+so it has not yet been seen. Nothing here will guess at it.
 
 ## Safety invariants
 
