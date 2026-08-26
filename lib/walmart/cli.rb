@@ -8,6 +8,7 @@ require_relative "commands/doctor"
 require_relative "commands/config_cmd"
 require_relative "commands/cart"
 require_relative "commands/login"
+require_relative "commands/order"
 require_relative "commands/search"
 
 module Walmart
@@ -39,7 +40,8 @@ module Walmart
       %w[config path] => [Commands::ConfigCmd, "print the config file path"],
       %w[config init] => [Commands::ConfigCmd, "write a default config file"],
       %w[search] => [Commands::Search, "search Walmart's catalog"],
-      %w[cart show] => [Commands::Cart, "read the live shared cart"]
+      %w[cart show] => [Commands::Cart, "read the live shared cart"],
+      %w[order sync] => [Commands::Order, "archive orders and receipts"]
     }.freeze
 
     # Declared now so `--help` tells the truth about where the project is,
@@ -55,7 +57,6 @@ module Walmart
       %w[cart add-from-order] => "reorder items from an archived order",
       %w[my-items list] => "browse Walmart's My Items",
       %w[my-items search] => "search Walmart's My Items",
-      %w[order sync] => "archive orders and receipts",
       %w[order list] => "list archived orders",
       %w[order show] => "show one archived order",
       %w[order search] => "search the archive"

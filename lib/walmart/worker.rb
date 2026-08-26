@@ -54,6 +54,7 @@ module Walmart
       cart.decrement
       cart.remove
       my_items.list
+      order.sync
       order.list
       order.show
       recon.capture

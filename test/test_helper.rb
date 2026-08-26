@@ -12,6 +12,7 @@ require "walmart/commands/doctor"
 require "walmart/commands/config_cmd"
 require "walmart/commands/login"
 require "walmart/commands/cart"
+require "walmart/commands/order"
 require "walmart/commands/search"
 
 module Walmart

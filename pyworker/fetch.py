@@ -17,6 +17,7 @@ from typing import Any
 import browser
 import cart as cart_module
 import login as login_module
+import orders as orders_module
 import protocol
 import safety
 import search as search_module
@@ -64,6 +65,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "cart.decrement": action_not_implemented("cart.decrement"),
     "cart.remove": action_not_implemented("cart.remove"),
     "my_items.list": action_not_implemented("my_items.list"),
+    "order.sync": orders_module.action_order_sync,
     "order.list": action_not_implemented("order.list"),
     "order.show": action_not_implemented("order.show"),
     "recon.capture": action_not_implemented("recon.capture"),
