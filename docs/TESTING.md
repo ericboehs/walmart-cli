@@ -290,7 +290,10 @@ more than another assertion on behaviour.
   identifier was published anyway, as the canary. Canaries are synthetic.
 - **A discipline nobody enforces is a habit, and a habit does not fail
   loudly.** The gates were being run by hand before every commit, which worked
-  until the once it did not. `rake hooks`.
+  until the once it did not. `rake hooks` installs it, and it runs the CI set
+  -- rubocop, ruff, both suites, smoke. Not gitleaks, and not mutants, which
+  edit files and take minutes; a green commit means the CI set passed and not
+  that every gate did.
 - **Name the unknown precisely.** A docstring calling the mutation unobserved
   was disproved by its own opening line, which said the request is known;
   the response is the missing half. Being vague about which half is missing is

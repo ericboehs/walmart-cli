@@ -60,7 +60,7 @@ task ci: %i[rubocop ruff test pytest smoke]
 
 task default: :ci
 
-desc "install the git hooks that run the gates before a commit"
+desc "install the git hook that runs the CI task before each commit"
 task :hooks do
   hooks = File.join(__dir__, ".git", "hooks")
   FileUtils.mkdir_p(hooks)
@@ -68,5 +68,6 @@ task :hooks do
   target = File.join(hooks, "pre-commit")
   FileUtils.cp(source, target)
   FileUtils.chmod(0o755, target)
-  puts "installed #{target}"
+  puts "installed #{target} (runs `rake`: rubocop, ruff, test, pytest, smoke)"
+  puts "gitleaks and mutants stay separate; run them yourself"
 end

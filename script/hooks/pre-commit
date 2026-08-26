@@ -1,5 +1,12 @@
 #!/bin/sh
-# Run the gates before a commit is made, not after it is pushed.
+# Run the default CI task before a commit is made, not after it is pushed.
+#
+# That is RuboCop, Ruff, the Ruby suite, the Python suite and the smoke run.
+# It is NOT everything: `rake gitleaks` and `rake mutants` are separate and
+# stay separate. Mutants edit files on disk and take minutes, which is not
+# something to attach to every commit, and gitleaks is worth running before a
+# push rather than before each change. Do not read a green commit as "all
+# gates passed" -- it means the CI set passed.
 #
 # This exists because a commit went in with a failing test. The gates were run
 # -- the failure was in the output -- and the commit command was chained after
