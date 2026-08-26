@@ -146,5 +146,17 @@
     "file": "lib/walmart/safety.rb",
     "from": "      placeorder\n",
     "to": ""
+  },
+  {
+    "label": "the README starts listing flags again",
+    "file": "README.md",
+    "from": "walmart order list        list what has been archived",
+    "to": "walmart order list [--year Y] [--limit N]"
+  },
+  {
+    "label": "help stops documenting a real flag",
+    "file": "lib/walmart/help.rb",
+    "from": "        [\"--marketplace\", \"include marketplace sellers, not only Walmart's own\"]\n",
+    "to": ""
   }
 ]

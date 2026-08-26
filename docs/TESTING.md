@@ -84,6 +84,30 @@ alone cannot tell a clamp from a constant, a sort from a coincidence, or an exit
 status of 3 from an exit status that is always 3. This needs no adversary and no
 imagination, which is why it works when mutation testing is not on your mind.
 
+## The one bug under four of the others
+
+**A mechanism that locates its subject by pattern must assert it found one.**
+
+Four defects tonight were the same bug wearing different clothes:
+
+| The search | What returned nothing |
+| --- | --- |
+| `File.exist?` on a browser lock | Chromium's `SingletonLock` is a symlink to a `host:pid` target that does not exist, so the check followed it and answered "no lock" |
+| a smoke case matching a stop reason | `page_changed` is emitted by nothing, so the case matched the catch-all branch and proved nothing |
+| a mutant's search-and-replace | the pattern did not match, the file did not change, and the suite passed — reported as a guard that works |
+| a test grepping the README by heading | rename the heading and it looks for something absent, then checks nothing |
+
+In every one, **a search that returned nothing was read as a search that found
+nothing wrong.** Absence and success are indistinguishable at the call site
+unless something insists the subject exists first. So: assert the lock path
+resolves, assert the reason is one the worker can emit, refuse to run when the
+mutation did not apply, assert the block was found before asserting on its
+contents.
+
+This is the rule to reach for when a check is about *finding* something. It is
+also the one that keeps recurring after being written down, which is the whole
+argument of this file.
+
 ## The two habits that actually found them
 
 **1. Run the real command and read all three channels.** Not the tests — the
