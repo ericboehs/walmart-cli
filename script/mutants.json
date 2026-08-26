@@ -1614,5 +1614,27 @@
     "file": "docs/CONTRACTS.md",
     "from": "No headers. No request body,",
     "to": "Headers are kept. No request body,"
+  },
+  {
+    "label": "the help text repeats the worker diagnosis",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "What is known: the updateItems request.",
+    "to": "The update is issued from a Web Worker. What is known: the request.",
+    "prose": true,
+    "why": "a docstring is --help text; the documentation parity test reads it from Ruby"
+  },
+  {
+    "label": "the help text stops saying no body is kept",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "No headers, no request body, no response body.",
+    "to": "Everything is scrubbed.",
+    "prose": true,
+    "why": "a docstring is --help text; the documentation parity test reads it from Ruby"
+  },
+  {
+    "label": "the parity test reads only one file",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "from": "      scripts/capture-cart-mutation.py\n      pyworker/cart_mutate.py\n",
+    "to": ""
   }
 ]

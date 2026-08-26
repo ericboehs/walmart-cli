@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
-"""Record what Walmart sends when a human adds an item to their own cart.
+"""Record the shape of Walmart's answer when a human changes their own cart.
 
-The one contract in this project we have never seen. `cart.add`,
-`cart.increment`, `cart.decrement` and `cart.remove` are reserved names in the
-worker protocol and every one of them is a not_implemented stub, because the
-update is issued from a Web Worker and the JS hooks used for every other
-surface run in page context, where a worker's fetch is invisible.
+What is known: the updateItems request. Four were observed at browser level --
+the path, the persisted-query hash, the eighteen feature flags, and the absence
+of both operationName and lineItemId. That contract is written up in
+docs/CONTRACTS.md.
 
-That was a fact about the hook, not about the request. Playwright attaches to
-dedicated worker targets and reports their network events on the owning page,
-so this records at that level instead.
+What is not known, and why this exists: the response. Nothing has ever been
+seen coming back, so the tool cannot tell a change that worked from one that
+silently did nothing, and `cart add` and `cart remove` refuse before opening a
+browser. Per-line delivery eligibility is unobserved too, and is a separate
+gate. Neither opens without evidence.
+
+The requests come from the page. An earlier version of this file said they were
+issued from a Web Worker; that was inferred from page-context hooks seeing
+nothing, and browser-level events later recorded all four with from_worker
+false. Silence from an instrument is a fact about the instrument.
 
 NOTHING HERE DRIVES THE BROWSER. The human clicks; we watch. That is the whole
 design: a mutation we have never observed must not be guessed at, and the
-safest way to observe one is to let the person whose cart it is perform it.
+safest way to observe one is to let the person whose cart it is perform it --
+one quantity change, to a line already in their cart, of their choosing.
 
-Output goes to the gitignored recon directory, scrubbed, 0600. Nothing captured
-here is a fixture until it has been through scripts/promote-fixture.py.
+WHAT IS WRITTEN DOWN is metadata and structure, and no bodies:
+
+    request:  url, method, resource_type, from_worker, operation, body_shape
+    response: url, operation, status, ok, body_shape
+
+No headers, no request body, no response body. A shape is the document with
+every value replaced by its type and every key not already known to us replaced
+by a count. A body that will not parse is named, not copied.
+
+Nothing here is promotable by scripts/promote-fixture.py, which scrubs and
+promotes captured documents: there is no document to promote. A shape may be
+quoted into a test or a contract by hand, which is what it is for.
+
+Output goes to the gitignored recon directory, 0600.
 """
 
 from __future__ import annotations

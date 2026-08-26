@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of seventy-one defects
+The layout of the suite is not arbitrary. It is the residue of seventy-three defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -30,6 +30,8 @@ Each of these was written deliberately, read fine, and passed:
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
+| a parity test that read one file | it passed while the capture script's own --help repeated the whole retracted diagnosis, and the confidence it produced covered everything |
+| "both were true when written" | the comment in the parity test granted an inference the standing of an observation, inside the test written to stop exactly that |
 | a document repeating a retracted diagnosis | CONTRACTS.md still said the mutation runs off the main thread and that no mutation code exists, months after evidence and a commit disproved each |
 | a flag that no longer did anything | `--scrub-literal` survived the removal of the last text path and would have accepted a value it could not act on |
 | a bound measured in the wrong place | the cap stopped the recursion but the root walk still visited every entry to count them; the test counted recursive calls, so it passed |
@@ -284,6 +286,15 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **Parity with one file is not parity.** Enumerate every file that can state
+  the claim, executables included -- a docstring is `--help`, which is the most
+  read prose in a CLI.
+- **A retracted claim may be quoted only by a sentence that says it is false.**
+  That is the difference between a history and a restatement, and it is
+  checkable.
+- **An inference that was later disproved was never "true when written".**
+  Calling it that grants it evidence it never had, and turns a reasoning
+  failure into a maintenance one.
 - **A retraction has to reach the document, not just the commit message.** The
   correction lived in a commit and a lesson; the contract went on stating the
   disproven claim as present fact, next to a section contradicting it.

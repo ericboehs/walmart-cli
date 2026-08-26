@@ -67,8 +67,16 @@ module Walmart
 
     # A Python guard "verified" by a Ruby suite that never imported it would be
     # the next instance of the pattern this whole file exists for.
+    #
+    # The exception is prose. A docstring in a Python file is checked by the
+    # documentation parity test, which reads it as text from Ruby, and there is
+    # nothing for pytest to import. Such a mutant has to say so and say why, so
+    # that "it's only prose" is a claim someone wrote down rather than a
+    # silence in the plan.
     def test_a_python_mutant_names_a_python_suite
       PLAN.select { |mutant| mutant["file"].end_with?(".py") }.each do |mutant|
+        next if prose?(mutant)
+
         command = Array(mutant["command"]).join(" ")
 
         assert_includes command, "pytest",
@@ -76,5 +84,14 @@ module Walmart
                         "#{command.empty? ? "the default Ruby command" : command}"
       end
     end
+
+    def test_a_prose_mutant_says_why_it_is_prose
+      PLAN.select { |mutant| prose?(mutant) }.each do |mutant|
+        refute_empty mutant["why"].to_s.strip,
+                     "#{mutant["label"]}: claims to be prose but does not say why"
+      end
+    end
+
+    def prose?(mutant) = mutant["prose"] == true
   end
 end
