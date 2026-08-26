@@ -7,6 +7,46 @@ module Walmart
   # header, or page content. We surface a tail of it on failure, so it has to
   # go through here first.
   class RedactTest < TestCase
+    # The two denylists are deliberately separate implementations -- the worker
+    # removes these fields, the archive refuses anything still carrying one --
+    # but separate must not mean divergent. Compared as text, because importing
+    # the Python list would make one of the two copies stop existing.
+    def test_the_archive_guard_and_the_worker_denylist_name_the_same_fields
+      source = File.read(File.join(ROOT, "pyworker/orders_parse.py"))
+      body = source[/^DROP_KEYS = frozenset\(\s*\{(.*?)^\s*\}\s*\)/m, 1]
+
+      refute_nil body, "could not find DROP_KEYS in pyworker/orders_parse.py"
+
+      python = body.scan(/"([^"]+)"/).flatten.sort
+
+      assert_equal python, Redact::FORBIDDEN_KEYS.sort,
+                   "the Ruby archive guard and the Python redactor disagree about what is sensitive"
+    end
+
+    # Membership, one field at a time. Without this the list can lose an entry
+    # and stay green, which is exactly how the Python side got here.
+    def test_every_forbidden_field_is_found_however_it_is_spelled_and_nested
+      Redact::FORBIDDEN_KEYS.each do |normalized|
+        nested = { "order" => { "groups_2101" => [{ "items" => [{ normalized => "leaked" }] }] } }
+
+        assert_equal [normalized], Redact.forbidden_keys(nested),
+                     "#{normalized} is in the list but was not found in a record"
+      end
+    end
+
+    def test_spelling_variants_of_one_field_are_all_caught
+      %w[deliveryAddress delivery_address DELIVERY-ADDRESS].each do |spelling|
+        refute_empty Redact.forbidden_keys({ spelling => "x" }), "#{spelling} slipped through"
+      end
+    end
+
+    def test_an_ordinary_record_has_nothing_forbidden_in_it
+      record = { "order_id" => "1", "totals" => { "grand_total" => 44.32 },
+                 "items" => [{ "name" => "milk", "quantity_display" => "2" }] }
+
+      assert_empty Redact.forbidden_keys(record)
+    end
+
     def test_emails_are_replaced
       assert_equal "sent to [REDACTED-EMAIL]", Redact.text("sent to eric.person@gmail.com")
     end

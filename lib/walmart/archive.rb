@@ -69,6 +69,7 @@ module Walmart
       raise ArgumentError, "an order needs an id to be archived" if order_id.empty?
       return :unchanged if archived?(order_id) && !force
 
+      refuse_unredacted!(order_id, order)
       record = order.merge("_synced_at" => timestamp, "_format" => FORMAT)
       relative = relative_path(order_id, order["date"])
       write_json(File.join(paths.orders_dir, relative), record)
@@ -193,6 +194,25 @@ module Walmart
     #
     # EXCL also turns a leftover .tmp from a crashed run into an error instead
     # of something we silently write through.
+    # The last thing between a parser bug and a card number on disk, in a file
+    # we told the user was safe to keep for two years.
+    #
+    # The worker already removes these, so reaching here means the removal
+    # stopped working -- which is exactly why the check lives on this side of
+    # the pipe and reads its own list. It refuses the write rather than
+    # sanitizing: a record we do not understand should not be quietly repaired
+    # and stored, and the archive missing one order is a smaller problem than
+    # the archive holding someone's address.
+    def refuse_unredacted!(order_id, order)
+      leaked = Redact.forbidden_keys(order)
+      return if leaked.empty?
+
+      raise Error.new(
+        "refusing to archive order #{order_id}: it still carries #{leaked.sort.join(", ")}",
+        code: "unredacted_field"
+      )
+    end
+
     def write_json(path, data)
       paths.ensure_private_dir!(File.dirname(path))
       tmp = "#{path}.tmp"

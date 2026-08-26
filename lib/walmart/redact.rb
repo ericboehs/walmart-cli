@@ -34,5 +34,46 @@ module Walmart
     def self.tail(lines, limit: 3)
       Array(lines).last(limit).map { |line| text(line) }
     end
+
+    # Field names that must never reach the archive, mirroring DROP_KEYS in
+    # pyworker/orders_parse.py and the required set in docs/CONTRACTS.md.
+    #
+    # Deliberately a second, independent copy rather than a value imported from
+    # the worker. The worker's list is what does the removing; this is what
+    # notices if the removing stopped happening. A shared constant would fail
+    # both at once, which is the case this exists to survive -- a parser bug, a
+    # shortened denylist, or a response shape we have not seen.
+    #
+    # Normalized the way Python normalizes, so delivery_address,
+    # DeliveryAddress and deliveryAddress are one name.
+    FORBIDDEN_KEYS = %w[
+      paymentMethods refundPaymentMethods chargeHistory authorizationAmount
+      monthlyPayment orderInvoiceDetails digitalInvoiceDetail idBarcodeImageUrl
+      customer driver shopper pickedBy alternatePickupPerson
+      alternateGroupRecipients callDriverDetails checkInDetails vehicleInfo
+      tippingPaymentMethod deliveryAddress deliveryInstructions
+      deliveryPreferences accessPointId address postalCode phone phoneNumber
+      email
+    ].map { |key| key.downcase.gsub(/[^a-z0-9]/, "") }.freeze
+
+    def self.normalize_key(key)
+      key.to_s.downcase.gsub(/[^a-z0-9]/, "")
+    end
+
+    # Every forbidden field name present anywhere in +data+.
+    #
+    # Names only, never values. This feeds an error message, and an error that
+    # quoted the card number it had just caught would be the leak it prevented.
+    def self.forbidden_keys(data, found = [])
+      case data
+      when Hash
+        data.each do |key, value|
+          found << key.to_s if FORBIDDEN_KEYS.include?(normalize_key(key))
+          forbidden_keys(value, found)
+        end
+      when Array then data.each { |entry| forbidden_keys(entry, found) }
+      end
+      found.uniq
+    end
   end
 end

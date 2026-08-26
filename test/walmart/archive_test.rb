@@ -52,6 +52,42 @@ module Walmart
     # the exact lie this layer exists to prevent, and it would be told by the
     # code written to prevent it.
 
+    # The worker removes these before they get here, so this guard should never
+    # fire in practice -- which is precisely why it needs its own test. A guard
+    # that has never fired is a guard nobody has watched work.
+    def test_a_record_that_still_carries_payment_details_is_refused
+      archive = archive()
+      poisoned = ORDER.merge("paymentMethods" => [{ "cardType" => "VISA", "lastFour" => "4242" }])
+
+      error = assert_raises(Error) { archive.write(poisoned) }
+
+      assert_equal "unredacted_field", error.code
+      refute_includes error.message, "4242", "the refusal must not quote what it caught"
+      assert_empty Dir.glob(File.join(paths.orders_dir, "**", "*.json")),
+                   "nothing may reach disk once a forbidden field is seen"
+    end
+
+    # The realistic leak is not a top-level field, it is one buried in a group
+    # inside an item, which a shallow check would archive happily.
+    def test_a_forbidden_field_nested_deep_inside_an_order_is_refused
+      archive = archive()
+      poisoned = ORDER.merge(
+        "items" => [{ "item_id" => "1", "seller" => { "contact" => { "phoneNumber" => "555-0100" } } }]
+      )
+
+      error = assert_raises(Error) { archive.write(poisoned) }
+
+      assert_equal "unredacted_field", error.code
+    end
+
+    # The other half: the guard has to let a real record through, or it would
+    # have been discovered by breaking every sync rather than by this test.
+    def test_an_ordinary_redacted_order_is_archived_normally
+      archive = archive()
+
+      assert_equal :written, archive.write(ORDER)
+    end
+
     def test_a_fresh_archive_has_not_been_synced
       refute_predicate archive, :synced?
       refute_predicate archive, :complete?

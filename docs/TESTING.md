@@ -2,8 +2,8 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of nine defects
-found in two days, seven of which were sitting inside checks that were passing
+The layout of the suite is not arbitrary. It is the residue of ten defects
+found in two days, eight of which were sitting inside checks that were passing
 at the time. This file records what those had in common, because the mistakes
 were not careless ones and will be made again by anyone who only reads the code.
 
@@ -20,8 +20,23 @@ Each of these was written deliberately, read fine, and passed:
 | smoke's credential canary | it scanned for a password in a run where none existed |
 | smoke's worker-failure cases | the stub spoke the wrong protocol, so they hit a transport error that shares an exit code with the failure they named |
 | every test of `item` and `cart show` | they asserted on stdout and discarded the return value, while both commands returned `nil` and crashed at `Kernel#exit` |
+| the redaction tests | they pinned the *mechanism* — depth, lists, spelling — and nothing pinned the *membership*, so deleting `paymentMethods` from the denylist left the whole suite green while card details survived into the archive |
 
-The last one shipped, in two commands, on every JSON invocation.
+The `item` and `cart show` one shipped, in two commands, on every JSON
+invocation.
+
+The last is a distinct sub-shape worth recognising on sight: the check tests a
+mechanism correctly, while the thing it protects is **configuration the
+mechanism reads**. A list, a table, a set of patterns. The mechanism has tests
+and the data has none, so a rename, a merge resolution, or a lint autofix
+removing an unfamiliar-looking entry all pass. Expect it again the moment a
+second denylist appears.
+
+Two tests are needed there, not one, because they fail differently. One asserts
+the list *is* the documented set, so shrinking it fails by name. The other pushes
+a payload carrying every entry through the real code path, so it survives
+somebody replacing the mechanism entirely. The first alone dies in a refactor;
+the second alone cannot tell you *which* field stopped being protected.
 
 None of these is an attention failure. Assertions get written from inside the
 code, and from there the return value of a print, the exit status of a process,
@@ -63,6 +78,12 @@ message, and prefer assertions that name the specific thing — an error code, n
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **Two independent copies beat one shared constant, when the failure being
+  survived is the copy itself being wrong.** `Redact::FORBIDDEN_KEYS` duplicates
+  the worker's `DROP_KEYS` on purpose: the worker removes those fields, and the
+  archive refuses any record still carrying one. A shared constant would fail
+  both at once. A parity test compares them as text, so separate does not become
+  divergent.
 - **Negative controls for absence checks.** Smoke plants a real credential via a
   fake `security` on `PATH` and requires one case to *find* it, using the same
   predicate every other case trusts to come back false. Without that, "no

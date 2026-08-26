@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import orders_parse
@@ -337,6 +339,78 @@ def test_redaction_matches_key_spelling_variants():
     cleaned = orders_parse.redact({"delivery_address": 1, "DeliveryAddress": 2, "keep": 3})
 
     assert cleaned == {"keep": 3}
+
+
+# docs/CONTRACTS.md is the authority for what must never be archived. Copied
+# here as data so that the document and the code can be compared by a machine
+# instead of by someone remembering to reread it.
+CONTRACT_DENYLIST = (
+    "paymentMethods",
+    "refundPaymentMethods",
+    "chargeHistory",
+    "authorizationAmount",
+    "monthlyPayment",
+    "orderInvoiceDetails",
+    "digitalInvoiceDetail",
+    "idBarcodeImageUrl",
+    "customer",
+    "driver",
+    "shopper",
+    "pickedBy",
+    "alternatePickupPerson",
+    "alternateGroupRecipients",
+    "callDriverDetails",
+    "checkInDetails",
+    "vehicleInfo",
+    "tippingPaymentMethod",
+    "deliveryAddress",
+    "deliveryInstructions",
+    "deliveryPreferences",
+    "accessPointId",
+    "address",
+    "postalCode",
+    "phone",
+    "phoneNumber",
+    "email",
+)
+
+
+def test_the_denylist_is_exactly_the_documented_set():
+    """The membership of DROP_KEYS, which no other test can see.
+
+    Every existing redaction test pins the mechanism -- depth, lists, spelling
+    -- and all of them keep passing while the list gets shorter, which is the
+    only change that actually leaks. A rename, a merge resolution or a lint
+    autofix deleting an unfamiliar constant all produce a silent green.
+
+    Failing by name in both directions is the point: a missing key is a leak,
+    and an unexpected one means the contract was edited without the document.
+    """
+    documented = {orders_parse._normalize(key) for key in CONTRACT_DENYLIST}
+
+    assert orders_parse.DROP_KEYS - documented == set(), "undocumented key in DROP_KEYS"
+    assert documented - orders_parse.DROP_KEYS == set(), "documented key missing from DROP_KEYS"
+
+
+@pytest.mark.parametrize("field", CONTRACT_DENYLIST)
+def test_every_denylisted_field_is_dropped_from_a_realistic_order(field):
+    """The same claim, made through the front door.
+
+    The test above compares a constant to a list and would go green if someone
+    replaced the constant with a different mechanism that leaks. This one puts
+    the field inside a nested order payload and asserts the value is gone from
+    the output, so it survives any reimplementation of redaction.
+    """
+    poison = f"LEAKED-{field}"
+    payload = {
+        "order": {
+            "id": "200012345678901",
+            field: poison,
+            "groups_2101": [{"items": [{"name": "milk", field: {"nested": poison}}]}],
+        }
+    }
+
+    assert poison not in json.dumps(orders_parse.redact(payload))
 
 
 def test_the_order_still_archives_everything_it_should():
