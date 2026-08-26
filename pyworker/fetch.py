@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 import browser
+import cart as cart_module
 import login as login_module
 import protocol
 import safety
@@ -57,7 +58,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "store.show": action_not_implemented("store.show"),
     "search": search_module.action_search,
     "item": action_not_implemented("item"),
-    "cart.show": action_not_implemented("cart.show"),
+    "cart.show": cart_module.action_cart_show,
     "cart.add": action_not_implemented("cart.add"),
     "cart.increment": action_not_implemented("cart.increment"),
     "cart.decrement": action_not_implemented("cart.decrement"),
