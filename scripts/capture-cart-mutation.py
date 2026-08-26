@@ -18,7 +18,7 @@ nothing, and browser-level events later recorded all four with from_worker
 false. Silence from an instrument is a fact about the instrument.
 
 NOTHING HERE DRIVES THE BROWSER. The human clicks; we watch. That is the whole
-design: a mutation we have never observed must not be guessed at, and the
+design: a response we have never observed must not be guessed at, and the
 safest way to observe one is to let the person whose cart it is perform it --
 one quantity change, to a line already in their cart, of their choosing.
 

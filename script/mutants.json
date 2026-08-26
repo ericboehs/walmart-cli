@@ -1636,5 +1636,13 @@
     "file": "test/walmart/documentation_parity_test.rb",
     "from": "      scripts/capture-cart-mutation.py\n      pyworker/cart_mutate.py\n",
     "to": ""
+  },
+  {
+    "label": "the help text names the wrong unknown",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "design: a response we have never observed must not be guessed at",
+    "to": "design: a mutation we have never observed must not be guessed at",
+    "prose": true,
+    "why": "a docstring is --help text; the documentation parity test reads it from Ruby"
   }
 ]

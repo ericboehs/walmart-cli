@@ -50,7 +50,11 @@ module Walmart
       /runs off the main thread/ => "the requests were observed with from_worker false",
       /issued from a Web Worker/ => "the requests come from the page",
       /there is no cart mutation code/ => "pyworker/cart_mutate.py exists",
-      /not_implemented stub/ => "cart.add and cart.remove are implemented and gated"
+      /not_implemented stub/ => "cart.add and cart.remove are implemented and gated",
+      # The request has been observed four times. Calling the mutation
+      # unobserved names the wrong unknown, and reads as a present claim even
+      # in a file whose first line says the request is known.
+      /mutation.{0,40}never.{0,20}observ/ => "the request is observed; the response is the unknown"
     }.freeze
 
     # A retracted claim may be quoted, but only by a sentence that says it is
