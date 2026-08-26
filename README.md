@@ -17,21 +17,31 @@ happen in Walmart's app, where they belong.
 
 ```text
 walmart version
-walmart doctor                 check the local environment, never the network
+walmart doctor            check the local environment, never the network
 walmart config show|path|init
-walmart login [--manual] [--force] [--wait SECONDS]
+walmart login             sign in with a visible browser
 walmart logout
 
-walmart search QUERY            search Walmart's catalog
-walmart item ID_OR_URL          one item, including who actually sells it
-walmart cart show               read the shared cart, never change it
+walmart search QUERY      search Walmart's catalog
+walmart item ID_OR_URL    one item, including who actually sells it
+walmart cart show         read the shared cart, never change it
 
-walmart order sync [--year Y] [--all] [--full]
-                                archive orders and in-store receipts locally
-walmart order list [--year Y] [--limit N]
-walmart order show ORDER_ID
-walmart order search TERM       all offline: the archive answers these
+walmart order sync        archive orders and in-store receipts locally
+walmart order list        list what has been archived
+walmart order show ID     one archived order
+walmart order search TERM all offline: the archive answers these
 ```
+
+Flags are not listed here on purpose. `walmart help <command>` prints them, and
+that table is compared against the argument parser by a test, so it cannot drift.
+This file has no such check, and it was already wrong -- it omitted
+`search --marketplace` and `order list --all` while listing flags for two other
+commands, which reads as a complete list rather than a summary.
+
+The one flag worth stating in prose, because it is a policy rather than a
+reference: **`order sync` archives the last two years by default.** `--all` asks
+for everything Walmart still shows, which is a much longer unattended session
+against their site.
 
 The `order` reads never touch the network. Once a sync has run, "when did we
 last buy oat milk" is answerable on a bad connection. When the archive is

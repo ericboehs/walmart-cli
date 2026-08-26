@@ -71,6 +71,35 @@ module Walmart
       end
     end
 
+    # There were three flag tables and only two were compared: help against
+    # parse_flags, and the README against nothing. It had already drifted --
+    # listing flags for login and order sync while omitting search
+    # --marketplace and order list --all, which reads as complete rather than
+    # partial. Rather than write a third comparison, the README stopped listing
+    # flags and points at `walmart help <command>`, and this keeps it that way.
+    #
+    # Only the command block is checked. Prose elsewhere may name a flag when
+    # the flag is a policy a reader needs before running anything -- order
+    # sync's default two-year window being the one that qualifies.
+    def test_the_readme_command_list_does_not_repeat_the_flag_tables
+      block = readme[/## What works today\n+```text\n(.*?)```/m, 1]
+
+      refute_nil block, "the README command block moved; this test is looking for it by heading"
+      assert_empty block.scan(/--[a-z][a-z-]*/),
+                   "the README is listing flags again. `walmart help <command>` prints them and " \
+                   "is checked against the parser; this file is not."
+    end
+
+    # The pointer has to be real, and `walmart help order sync` is a different
+    # code path from `walmart order sync --help`.
+    def test_the_form_the_readme_recommends_actually_works
+      assert_includes readme, "walmart help <command>"
+
+      out, = run_cli(%w[help order sync])
+
+      assert_includes out, "--year"
+    end
+
     # The table above is hand-written, and the first draft of it invented two
     # flags that do not exist (`config init --force`, `order list --reverse`)
     # and omitted five that do. Written from plausibility rather than from the
@@ -107,6 +136,8 @@ module Walmart
       source = File.read(File.expand_path("../../#{file}", __dir__))
       source.scan(/(?:valued|boolean):\s*%w\[([^\]]*)\]/).flatten.flat_map(&:split).uniq
     end
+
+    def readme = File.read(File.expand_path("../../README.md", __dir__))
 
     def run_cli(argv)
       out = StringIO.new
