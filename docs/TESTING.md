@@ -3,8 +3,8 @@
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
 The layout of the suite is not arbitrary. It is the residue of twenty-one defects
-found in two days, eleven of which were sitting inside checks that were passing
-at the time — including one found while writing the fix for another, in this
+found in two days, over half of which were sitting inside checks that were
+passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
 were not careless ones and will be made again by anyone who only reads the code.
 
@@ -128,7 +128,7 @@ notices**. A check that fires for the right reason and one that fires for any
 reason are indistinguishable from a single green run.
 
 The second half requires acting against a green suite with nothing prompting
-you, which is exactly why seven defects were sitting in checks that passed. Two
+you, which is exactly why so many of these were sitting in checks that passed. Two
 practices make it survive: record the mutants and their failures in the commit
 message, and prefer assertions that name the specific thing — an error code, not
 "some JSON came out"; an exit status, not "it printed something".
@@ -156,12 +156,51 @@ unless the file actually changed, and refuses an ambiguous pattern rather than
 guessing which occurrence was meant. `script/mutants.json` holds the standing
 set; `rake mutants` runs it.
 
+It rewrites tracked files in place and restores them, so it refuses to start if
+a file in the plan has uncommitted changes, and says on stderr that the tree is
+dirty while it runs. Both are for the bystander as much as for the author: a
+second person running `git status` mid-run sees a modified source file with no
+way to tell a mutation from someone's edit. That happened here, on
+`lib/walmart/secrets.rb`, and the reviewer did the right thing — refused to
+inspect or reset a file they had not modified, and stopped to ask.
+
+## Independent review is part of the method
+
+The implementation author and the reviewer should not do the same job twice.
+The author knows the intended contract and can inspect the places a guard must
+reach. The reviewer should distrust the summary, run the public command, read
+stdout, stderr, and status, and hand the check a different failure. Neither view
+substitutes for the other: the author can find a serializer bypass inside a
+class the reviewer cannot safely inspect; the reviewer can find a correct guard
+wired to the wrong stream, process, tab, or exit path.
+
+This is adversarial only in the useful sense. Reproduce claims instead of
+accepting them, and report the boundary of what was not independently checked.
+A passing suite produced by the person who wrote both the behaviour and its
+fixture is evidence, not independent evidence. Review becomes stronger when a
+second person can run the same command or mutant and read the verdict directly.
+
+New operating modes especially need that split. CDP attachment preserved the
+own-tab invariant for navigation and violated it for response observation; the
+same author wrote both the mode and its passing ownership tests. The defect was
+visible only after a reviewer re-asked the old invariant across every operation,
+not just the operation named in the test.
+
 ## A test that prevents, not one that verifies
 
-Sixteen defects, and exactly one check fired *before* the mistake was committed:
-the help-table completeness test, which named four commands missing from the
-table while the table was still being written. Everything else here catches a
-defect after it exists.
+Most checks here catch a defect after it exists. A few fire *before* the mistake
+is committed, and they are all the same shape: a completeness test that compares
+one artifact against a list maintained somewhere else.
+
+The help-table test named four commands missing from the table while the table
+was still being written. Adding `browser start` tripped three at once, unasked —
+help entries, exit-code coverage, and flag units — none of which I had thought
+about while writing the command. Editing a validation line broke the pattern of
+the mutant guarding it, and the mutation-plan audit said so rather than letting
+the mutant quietly stop applying.
+
+That is the return on this shape, and it is why the count of them matters more
+than the count of any other kind of test here.
 
 The difference is not effort, it is what the check compares against. A test that
 compares behaviour to a fixture we wrote can only confirm we did what we meant.

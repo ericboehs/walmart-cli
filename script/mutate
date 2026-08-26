@@ -159,10 +159,36 @@ def mutations_from(flags)
   end
 end
 
+# Files this run will edit in place, which must be committed or stashed first.
+#
+# Mutation testing rewrites tracked source and restores it afterwards. Two
+# things follow. Uncommitted work in a file the plan touches would be captured
+# as the "original" and, if this process is killed rather than raising, left
+# mutated with no clean copy to compare against. And a second person -- or a
+# second agent -- running `git status` mid-run sees a modified tracked file and
+# has no way to tell a mutation from someone's edit. That happened: a peer
+# reviewing this repo found lib/walmart/secrets.rb modified, correctly refused
+# to touch it, and stopped. It was a mutant, mid-flight.
+def assert_planned_files_are_clean(mutations)
+  files = mutations.map(&:file).uniq
+  dirty = files.reject do |file|
+    `git status --porcelain -- #{file}`.strip.empty?
+  end
+  return if dirty.empty?
+
+  raise "uncommitted changes in #{dirty.join(", ")}; commit or stash before mutating, " \
+        "so a restore cannot lose them and a bystander cannot mistake a mutant for your work"
+end
+
 def main(argv)
   flags, command = parse_argv(argv)
   mutations = mutations_from(flags)
   runner = Runner.new(command, verbose: flags[:verbose])
+
+  assert_planned_files_are_clean(mutations)
+  # Says so on stderr, so anyone reading this tree while it runs knows why a
+  # tracked file is modified.
+  warn "mutating tracked files in place; the tree is dirty until this finishes"
 
   puts "checking the suite passes untouched first"
   return 1 unless runner.baseline(mutations.map(&:command).uniq)
