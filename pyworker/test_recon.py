@@ -876,15 +876,15 @@ def test_the_document_carries_the_responses(tmp_path):
 
 def test_the_shape_keeps_the_structure_and_none_of_the_values(tmp_path):
     shape_of = _capture_module().shape_of
-    shape = shape_of({"data": {"updateItems": {"id": "SECRET", "total": 12.5}}})
-    assert shape == {"data": {"updateItems": {"id": "str", "total": "float"}}}
+    shape = shape_of({"data": {"updateItems": {"name": "SECRET", "quantity": 12.5}}})
+    assert shape == {"data": {"updateItems": {"name": "str", "quantity": "float"}}}
 
 
 def test_the_shape_names_booleans_apart_from_numbers():
     """bool is an int in Python, and that has already caused two defects here."""
     shape_of = _capture_module().shape_of
-    assert shape_of({"success": True}) == {"success": "boolean"}
-    assert shape_of({"success": 1}) == {"success": "int"}
+    assert shape_of({"data": {"isQSRItem": True}}) == {"data": {"isQSRItem": "boolean"}}
+    assert shape_of({"data": {"isQSRItem": 1}}) == {"data": {"isQSRItem": "int"}}
 
 
 def test_an_empty_list_is_a_different_observation_from_a_full_one():
@@ -964,8 +964,8 @@ def test_the_structure_survives_even_though_the_values_do_not(tmp_path):
     """Dropping the body must not drop the contract, which is the point of the run."""
     recorder = _recorder(tmp_path)
     request = _cleared_request(recorder)
-    recorder.on_response(CaptureResponse(request.url, request, text='{"data":{"updateItems":{"id":"x"}}}'))
-    assert recorder.responses[0]["body_shape"] == {"data": {"updateItems": {"id": "str"}}}
+    recorder.on_response(CaptureResponse(request.url, request, text='{"data":{"updateItems":{"name":"x"}}}'))
+    assert recorder.responses[0]["body_shape"] == {"data": {"updateItems": {"name": "str"}}}
 
 
 # --- what the run amounted to ---------------------------------------------------------
@@ -1001,13 +1001,37 @@ def test_getting_what_it_came_for_says_nothing():
 # secret in the key position, where nothing was looking.
 
 
+def test_a_key_that_looks_perfectly_like_a_field_name_is_still_collapsed():
+    """The hole the pattern left: a first name is identifier-shaped and short.
+
+    `Eric`, `ashley` and a short opaque token all satisfy "looks like a GraphQL
+    field", which is why the gate is a list of observed field names rather than
+    a description of what one looks like. The earlier canaries used an email
+    and a UUID, both of which fail a pattern for reasons unrelated to the claim.
+    """
+    module = _capture_module()
+    shaped = module.shape_of(
+        {
+            "data": {
+                "Eric": {"quantity": 1},
+                "ashley": {"quantity": 2},
+                "a7Kd93Lm2Qr8Xz01BvNt": {"quantity": 3},
+            }
+        }
+    )
+    rendered = json.dumps(shaped)
+    for identifier in ("Eric", "ashley", "a7Kd93Lm2Qr8Xz01BvNt"):
+        assert identifier not in rendered, identifier
+    assert shaped["data"][module.DYNAMIC_KEYS]["count"] == 3
+
+
 def test_a_secret_used_as_an_object_key_does_not_survive(tmp_path):
     shape_of = _capture_module().shape_of
     shaped = shape_of(
         {
-            "cartsByEmail": {
-                "someone@example.test": {"total": 1},
-                "cart-id-canary-0000-not-a-real-cart": {"total": 2},
+            "data": {
+                "someone@example.test": {"quantity": 1},
+                "cart-id-canary-0000-not-a-real-cart": {"quantity": 2},
             }
         }
     )
@@ -1019,29 +1043,97 @@ def test_a_secret_used_as_an_object_key_does_not_survive(tmp_path):
 def test_dynamic_keys_are_counted_without_being_quoted():
     """A map keyed by id is itself a shape, so the count is worth keeping."""
     module = _capture_module()
-    shaped = module.shape_of({"m": {"a@b.test": {"n": 1}, "c@d.test": {"n": 2}}})
-    dynamic = shaped["m"][module.DYNAMIC_KEYS]
+    shaped = module.shape_of({"data": {"a@b.test": {"name": 1}, "c@d.test": {"name": 2}}})
+    dynamic = shaped["data"][module.DYNAMIC_KEYS]
     assert dynamic["count"] == 2
-    assert dynamic["of"] == {"n": "int"}
+    assert dynamic["of"] == {"name": "int"}
 
 
-def test_schema_keys_are_kept_beside_dynamic_ones():
+def test_known_keys_are_kept_beside_unknown_ones():
     module = _capture_module()
-    shaped = module.shape_of({"updateItems": {"ok": True}, "9f8e@x.test": {"ok": False}})
-    assert shaped["updateItems"] == {"ok": "boolean"}
+    shaped = module.shape_of({"updateItems": {"quantity": 1}, "9f8e@x.test": {"quantity": 2}})
+    assert shaped["updateItems"] == {"quantity": "int"}
     assert module.DYNAMIC_KEYS in shaped
 
 
-def test_a_long_identifier_is_not_mistaken_for_a_field_name():
-    """A persisted-query hash is letters and digits too, so length has to count."""
+def test_the_allowlist_holds_field_names_and_nothing_that_could_be_a_person():
+    """Provenance check: every entry is an envelope key or an observed field."""
     module = _capture_module()
-    assert module.is_schema_key("updateItems")
-    assert module.is_schema_key("_typename")
-    assert not module.is_schema_key("a" * (module.MAX_KEY_LENGTH + 1))
-    assert not module.is_schema_key("45fca98d0f0fb2ffc2ccf8a3290b891445fca98d0f0fb2ffc2ccf8a3290b8914")
-    assert not module.is_schema_key("someone@example.test")
-    assert not module.is_schema_key("6f1b2c3d-4e5f-6789-abcd-ef0123456789")
-    assert not module.is_schema_key(12)
+    assert module.is_known_key("data")
+    assert module.is_known_key("updateItems")
+    assert module.is_known_key("quantity")
+    for not_a_field in (
+        "Eric",
+        "ashley",
+        "household1",
+        "a7Kd93Lm2Qr8Xz01BvNt",
+        "someone@example.test",
+        "45fca98d0f0fb2ffc2ccf8a3290b891445fca98d0f0fb2ffc2ccf8a3290b8914",
+        "6f1b2c3d-4e5f-6789-abcd-ef0123456789",
+        12,
+    ):
+        assert not module.is_known_key(not_a_field), not_a_field
+
+
+def test_an_unknown_key_count_is_what_tells_us_to_look_again():
+    """A high count is not a failed capture; it is the capture asking for a second one."""
+    module = _capture_module()
+    shaped = module.shape_of({"data": {f"unknown{i}": i for i in range(7)}})
+    assert shaped["data"][module.DYNAMIC_KEYS]["count"] == 7
+
+
+# --- breadth is bounded too -----------------------------------------------------------
+#
+# The comment said depth, breadth and length were capped. Only depth and length
+# were: every dict entry was walked and stored, so a huge object could still
+# grow the file or hang the walk.
+
+
+def test_a_wide_object_of_known_keys_is_capped_and_says_so():
+    module = _capture_module()
+    known = sorted(module.ALLOWED_SHAPE_KEYS)
+    wide = {key: 1 for key in known}
+    original = module.MAX_DICT_ITEMS
+    try:
+        module.MAX_DICT_ITEMS = 3
+        shaped = module.shape_of(wide)
+    finally:
+        module.MAX_DICT_ITEMS = original
+    assert len([k for k in shaped if not k.startswith("<")]) == 3
+    assert shaped[module.TRUNCATED] == {"total": len(known)}
+
+
+def test_a_wide_object_of_unknown_keys_is_capped_without_quoting_any():
+    module = _capture_module()
+    wide = {f"person{i}": {"n": i} for i in range(module.MAX_DICT_ITEMS + 20)}
+    shaped = module.shape_of(wide)
+    rendered = json.dumps(shaped)
+    assert "person" not in rendered
+    assert shaped[module.DYNAMIC_KEYS]["count"] == module.MAX_DICT_ITEMS + 20
+    assert shaped[module.TRUNCATED]["total"] == module.MAX_DICT_ITEMS + 20
+
+
+def test_the_cap_bounds_the_work_not_only_the_output():
+    """Shaping everything and collapsing afterwards is the cost we are avoiding."""
+    module = _capture_module()
+    depth_reached = 0
+
+    class Counted(dict):
+        def items(self):
+            nonlocal depth_reached
+            depth_reached += 1
+            return super().items()
+
+    wide = {f"k{i}": Counted({"quantity": i}) for i in range(module.MAX_DICT_ITEMS + 30)}
+    module.shape_of(wide)
+    assert depth_reached <= module.MAX_DICT_ITEMS
+
+
+def test_the_markers_cannot_collide_with_a_real_field_name():
+    module = _capture_module()
+    for marker in (module.DYNAMIC_KEYS, module.TRUNCATED):
+        assert not module.is_known_key(marker)
+        assert marker.startswith("<")
 
 
 # --- a list is not its first element --------------------------------------------------
@@ -1052,28 +1144,32 @@ def test_a_long_identifier_is_not_mistaken_for_a_field_name():
 
 def test_a_later_element_with_a_different_structure_is_recorded():
     shape_of = _capture_module().shape_of
-    shaped = shape_of([{"a": 1}, {"b": "x", "c": True}])
+    shaped = shape_of([{"quantity": 1}, {"name": "x", "isQSRItem": True}])
     assert shaped["list"] == 2
     variants = shaped["variants"]
-    assert {"a": "int"} in variants
-    assert {"b": "str", "c": "boolean"} in variants
+    assert {"quantity": "int"} in variants
+    assert {"name": "str", "isQSRItem": "boolean"} in variants
 
 
 def test_a_uniform_list_is_described_once():
     shape_of = _capture_module().shape_of
-    assert shape_of([{"a": 1}, {"a": 2}, {"a": 3}]) == {"list": 3, "of": {"a": "int"}}
+    uniform = [{"quantity": 1}, {"quantity": 2}, {"quantity": 3}]
+    assert shape_of(uniform) == {"list": 3, "of": {"quantity": "int"}}
 
 
 def test_a_long_list_is_bounded_and_says_so():
     module = _capture_module()
-    shaped = module.shape_of([{"n": i} for i in range(module.MAX_LIST_ITEMS + 10)])
+    shaped = module.shape_of([{"quantity": i} for i in range(module.MAX_LIST_ITEMS + 10)])
     assert shaped["list"] == module.MAX_LIST_ITEMS + 10
     assert shaped["truncated"] is True
 
 
 def test_many_different_structures_are_capped_and_say_so():
     module = _capture_module()
-    shaped = module.shape_of([{f"k{i}": i} for i in range(module.MAX_VARIANTS + 3)])
+    # Distinct structures built from allowlisted keys, so the variety is real
+    # rather than every element collapsing to the same dynamic-key shape.
+    fields = sorted(module.ALLOWED_SHAPE_KEYS)[: module.MAX_VARIANTS + 3]
+    shaped = module.shape_of([{field: 1} for field in fields])
     assert len(shaped["variants"]) == module.MAX_VARIANTS
     assert shaped["truncated"] is True
 
@@ -1081,7 +1177,7 @@ def test_many_different_structures_are_capped_and_say_so():
 def test_the_error_shape_a_rejection_would_carry_survives_the_walk():
     """The shape most likely to arrive first, and the one worth reading."""
     shape_of = _capture_module().shape_of
-    shaped = shape_of({"errors": [{"message": "x", "path": ["updateItems"]}], "data": None})
+    shaped = shape_of({"errors": [{"message": "x", "path": ["updateItems"]}], "data": None})  # noqa: E501
     assert shaped["data"] == "null"
     assert shaped["errors"]["of"]["message"] == "str"
 

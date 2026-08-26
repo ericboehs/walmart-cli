@@ -26,7 +26,6 @@ import contextlib
 import datetime as dt
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -89,23 +88,68 @@ def is_update_items_body(body: object) -> bool:
 # capture or to write a file the size of the cart.
 MAX_SHAPE_DEPTH = 12
 MAX_LIST_ITEMS = 25
+MAX_DICT_ITEMS = 50
 MAX_VARIANTS = 5
-MAX_KEY_LENGTH = 40
 
-# A key that looks like it came from a schema rather than from data. Keys are
-# the one part of a shape that is copied verbatim, so they have to earn it:
-# GraphQL field names are short identifiers, while an email, a UUID, an order
-# number or a hash is not. The length cap matters as much as the pattern -- a
-# 64-character persisted-query hash is letters and digits too.
-SCHEMA_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+# Keys are the only part of a shape copied verbatim, so for the first
+# value-free run they come from a list, not from a pattern.
+#
+# A pattern was not enough. "Identifier-shaped and short" describes a GraphQL
+# field, and it equally describes `Eric`, `ashley`, `household1` and any short
+# opaque token, so a map keyed by a first name would have been written out in
+# full. The earlier canaries used an email and a UUID, both of which fail the
+# pattern for reasons that have nothing to do with the claim being tested.
+#
+# Everything here is a key we have already seen, and nothing here can be a
+# person, a household or an id. Anything else -- however well-formed -- is
+# collapsed and counted. A high unknown count is not a failure of the capture;
+# it is the capture telling us a second, targeted observation is needed.
+ALLOWED_SHAPE_KEYS = frozenset(
+    (
+        # The GraphQL envelope, which is the specification, not Walmart's data.
+        "data",
+        "errors",
+        "extensions",
+        "message",
+        "path",
+        "locations",
+        "line",
+        "column",
+        "code",
+        "__typename",
+        # The operation this capture exists for.
+        "updateItems",
+        # Keys observed in the captured updateItems request. Field names only:
+        # the value behind every one of these is still replaced by its type.
+        "variables",
+        "input",
+        "cart",
+        "cartId",
+        "items",
+        "offerId",
+        "quantity",
+        "usItemId",
+        "name",
+        "isPharmacyPrescription",
+        "isQSRItem",
+        "features",
+        "skipPolicyCheck",
+        "cartLeanMode",
+        "enableCartSplitClarity",
+        "enableLiquorBox",
+    )
+)
 
-# What a key that did not earn it becomes. The text is dropped, the fact that
-# there were some is kept, because a map keyed by id is itself a shape.
+# What a key that is not on the list becomes. The text is dropped, the fact
+# that there were some is kept, because a map keyed by id is itself a shape.
 DYNAMIC_KEYS = "<dynamic keys>"
 
+# Neither can collide with a real key: no observed field name is bracketed.
+TRUNCATED = "<truncated>"
 
-def is_schema_key(key: object) -> bool:
-    return isinstance(key, str) and len(key) <= MAX_KEY_LENGTH and bool(SCHEMA_KEY.match(key))
+
+def is_known_key(key: object) -> bool:
+    return isinstance(key, str) and key in ALLOWED_SHAPE_KEYS
 
 
 def _distinct(shapes: list[Any]) -> tuple[list[Any], bool]:
@@ -149,10 +193,12 @@ def shape_of(value: Any, depth: int = 0) -> Any:
     something nobody thought to add to a list of key names. It is the form the
     contract can be written down in.
 
-    Keys are the exception that had to be closed: an earlier version kept every
-    key, which is only value-free until a response contains a map keyed by
-    email or by order id. Keys now have to look like schema identifiers, and
-    the rest collapse into one marker that counts them without quoting them.
+    Keys are the exception that had to be closed twice. An earlier version kept
+    every key, which is only value-free until a response is keyed by email or
+    order id. The version after that kept identifier-shaped keys, which is only
+    value-free until one is keyed by a first name. Keys now come from a list of
+    field names already observed, and everything else collapses into one marker
+    that counts them without quoting them.
 
     Booleans are named apart from numbers, because bool is an int in Python and
     that distinction has already caused two defects here.
@@ -166,13 +212,27 @@ def shape_of(value: Any, depth: int = 0) -> Any:
     if isinstance(value, dict):
         described: dict[str, Any] = {}
         dynamic: list[Any] = []
+        dynamic_count = 0
+        truncated = False
         for key, item in value.items():
-            if is_schema_key(key):
+            if is_known_key(key):
+                if len(described) >= MAX_DICT_ITEMS:
+                    truncated = True
+                    continue
                 described[key] = shape_of(item, depth + 1)
             else:
-                dynamic.append(shape_of(item, depth + 1))
-        if dynamic:
-            described[DYNAMIC_KEYS] = _collapse(dynamic, len(dynamic), "count")
+                dynamic_count += 1
+                # Bounded before the recursion, not after: shaping every value
+                # of a huge object first and collapsing the result afterwards
+                # is the cost we were trying to avoid.
+                if len(dynamic) < MAX_DICT_ITEMS:
+                    dynamic.append(shape_of(item, depth + 1))
+                else:
+                    truncated = True
+        if dynamic_count:
+            described[DYNAMIC_KEYS] = _collapse(dynamic, dynamic_count, "count")
+        if truncated:
+            described[TRUNCATED] = {"total": len(value)}
         return described
     if isinstance(value, list):
         # An empty list needs no special case: _collapse describes nothing as
@@ -375,7 +435,7 @@ class Recorder:
         if isinstance(data, dict):
             # Schema keys only, for the same reason the shape filters them: a
             # key can be an id, and this goes to a terminal and a scrollback.
-            named = sorted(key for key in data if is_schema_key(key))
+            named = sorted(key for key in data if is_known_key(key))
             parts.append(f"data keys: {', '.join(named) or 'none'}")
         elif "data" in payload:
             parts.append("data is not an object")

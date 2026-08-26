@@ -284,3 +284,30 @@ failed restore. The result was negative — no request was visible — which is 
 this section here.
 
 A remove-and-restore has none of those safety properties and was refused.
+
+## What the first response capture can and cannot tell us
+
+The response to `updateItems` has never been observed. The capture keeps its
+shape and not its body, and the shape keeps only keys from a list of field
+names already seen -- the GraphQL envelope, the operation, and the fields
+observed in the request.
+
+This is a deliberate trade, and it costs discovery. A response whose interesting
+field is named something nobody has seen will arrive as a count of unknown keys
+rather than as a name. That is the intended outcome, not a failed run: the count
+says a second, narrower observation is needed, and the second one names the
+paths it will keep in advance.
+
+The alternative was to keep any key that looks like a field name. It does not
+work, and it is worth writing down why, because the reasoning is not obvious.
+"Short and identifier-shaped" describes `quantity`, and it equally describes
+`Eric`, `ashley`, `household1` and any short opaque token. A response keyed by
+customer or by household would have written those out in full, in a file
+described in its own docstring as carrying none of the contents. A pattern
+cannot tell a field name from data that happens to look like one; only a list
+of names we have already seen can.
+
+So the artefact stays value-free and the discovery is incremental. Anything
+wider than this needs an explicit decision from the person whose data it is,
+made in advance and in those terms -- not inherited from a capture that was
+approved as value-free.

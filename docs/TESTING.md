@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of sixty-six defects
+The layout of the suite is not arbitrary. It is the residue of sixty-eight defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -29,6 +29,8 @@ Each of these was written deliberately, read fine, and passed:
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
+| breadth uncapped while claiming otherwise | the comment said depth, breadth and length were bounded; only depth and length were |
 | a shape that kept every key | "carries the contract and none of the contents" was false: a map keyed by email or cart id puts the secret in the key position, where nothing was looking |
 | a list described by element zero | the line we care about may not be first, and an errors array is heterogeneous by nature |
 | a prompt that promised to abort | a forbidden operation is counted and the run continues; telling someone the tool will stop them is worse than telling them nothing |
@@ -279,6 +281,9 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A pattern cannot separate a field name from data shaped like one.** Only a
+  list of names already seen can. The gate is an allowlist; unknown keys become
+  a count, and the count is what asks for a second look.
 - **Keys are values.** Anything copied verbatim out of an unseen document has
   to earn it -- schema-shaped and short -- and the rest collapse into a marker
   that counts them without quoting them.

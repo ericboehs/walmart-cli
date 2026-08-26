@@ -1370,22 +1370,8 @@
   {
     "label": "a dynamic key is copied verbatim into the shape",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "            if is_schema_key(key):",
+    "from": "            if is_known_key(key):",
     "to": "            if True:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_recon.py"
-    ]
-  },
-  {
-    "label": "a long identifier counts as a field name",
-    "file": "scripts/capture-cart-mutation.py",
-    "from": "    return isinstance(key, str) and len(key) <= MAX_KEY_LENGTH and bool(SCHEMA_KEY.match(key))",
-    "to": "    return isinstance(key, str) and bool(SCHEMA_KEY.match(key))",
     "command": [
       "uv",
       "run",
@@ -1440,7 +1426,7 @@
   {
     "label": "the summary prints dynamic keys to the terminal",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "            named = sorted(key for key in data if is_schema_key(key))",
+    "from": "            named = sorted(key for key in data if is_known_key(key))",
     "to": "            named = sorted(data)",
     "command": [
       "uv",
@@ -1456,6 +1442,62 @@
     "file": "scripts/capture-cart-mutation.py",
     "from": "    print(\"It never navigates and never clicks. An order flow is not recorded:\")",
     "to": "    print(\"It never navigates and never clicks. Anything forbidden aborts it.\")",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the key allowlist becomes a pattern again",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return isinstance(key, str) and key in ALLOWED_SHAPE_KEYS",
+    "to": "    return isinstance(key, str) and key.isidentifier() and len(key) <= 40",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "dict breadth is unbounded for known keys",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "                if len(described) >= MAX_DICT_ITEMS:\n                    truncated = True\n                    continue\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "dict breadth is unbounded for unknown keys",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "                if len(dynamic) < MAX_DICT_ITEMS:\n                    dynamic.append(shape_of(item, depth + 1))\n                else:\n                    truncated = True",
+    "to": "                dynamic.append(shape_of(item, depth + 1))",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a capped object does not admit it was capped",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if truncated:\n            described[TRUNCATED] = {\"total\": len(value)}\n",
+    "to": "",
     "command": [
       "uv",
       "run",
