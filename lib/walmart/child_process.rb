@@ -16,6 +16,17 @@ module Walmart
     # reason to leave one half-closed.
     EXIT_GRACE_SECONDS = 2
 
+    # Both graces are real waits, and the tests that prove the escalation works
+    # have to sit through them: eight tests were spending seventeen seconds
+    # doing nothing, which a mutation run then pays for once per mutant.
+    #
+    # Overridable so those tests can use a short grace and still exercise the
+    # real signal path -- shortening a wait is not the same as skipping it.
+    # Nothing in production sets these; the defaults above are the contract.
+    def kill_grace_seconds = KILL_GRACE_SECONDS
+
+    def exit_grace_seconds = EXIT_GRACE_SECONDS
+
     private
 
     # The budget has to cover the child's exit, not just its output. A worker
@@ -40,7 +51,7 @@ module Walmart
     # being one millisecond late is not a reason to leave a browser half-closed.
     def exit_budget(deadline)
       remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      [remaining, EXIT_GRACE_SECONDS].max
+      [remaining, exit_grace_seconds].max
     end
 
     # TERM first so the worker can close the browser cleanly, then KILL if it
@@ -60,11 +71,11 @@ module Walmart
       return if target.nil?
 
       Process.kill("TERM", target)
-      return unless wait_thread.join(KILL_GRACE_SECONDS).nil?
+      return unless wait_thread.join(kill_grace_seconds).nil?
 
       @logger&.call(:warn, "worker ignored TERM; sending KILL")
       Process.kill("KILL", target)
-      return unless wait_thread.join(KILL_GRACE_SECONDS).nil?
+      return unless wait_thread.join(kill_grace_seconds).nil?
 
       warn_survivor(target, "survived KILL")
     rescue Errno::ESRCH

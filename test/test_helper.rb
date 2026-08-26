@@ -138,3 +138,27 @@ module Walmart
     end
   end
 end
+
+# Abort the suite at the first failure.
+#
+# Only ever set by script/mutate. A mutation run asks one question -- does
+# anything notice? -- and the answer arrives with the first red test, so running
+# the remaining five hundred is pure waiting. Across a full plan that was the
+# difference between ten minutes and one.
+#
+# Deliberately opt-in: an ordinary run must report every failure, because a
+# person fixing code wants the whole list.
+if ENV["MUTATE_FAIL_FAST"]
+  module FailFast
+    def record(result)
+      super
+      return if result.passed? || result.skipped?
+
+      io.puts "\nfail-fast: #{result.klass}##{result.name}"
+      # exit! rather than exit: at_exit would run the rest of the reporting
+      # machinery to describe a suite we deliberately cut short.
+      exit!(1)
+    end
+  end
+  Minitest::StatisticsReporter.prepend(FailFast)
+end

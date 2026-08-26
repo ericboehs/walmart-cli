@@ -10,12 +10,24 @@ module Walmart
   # running, and whether an interrupted cart change is reported as "failed"
   # (safe to retry) or "unverified" (check before retrying).
   class WorkerLifecycleTest < TestCase
+    # A short grace, not no grace. These tests prove TERM is followed by KILL
+    # and that the wait between them is real; at the production five seconds
+    # they spent seventeen seconds of every suite run sitting still, which a
+    # mutation run pays for once per mutant. 0.3s is long enough that a process
+    # honouring TERM still wins the race on a loaded machine.
+    FAST_GRACE = 0.3
+
+    # The children here sleep for thirty seconds or more, so any budget short
+    # of that times out; the number only decides how long the test waits to
+    # watch it happen.
+    FAST_TIMEOUT = 0.3
+
     def test_timeout_is_reported_as_unverified_rather_than_hanging
       worker = build_worker(<<~RUBY)
         sleep 30
       RUBY
 
-      error = assert_raises(WorkerError) { worker.run("probe", timeout: 1) }
+      error = assert_raises(WorkerError) { worker.run("probe", timeout: FAST_TIMEOUT) }
 
       assert_equal "timeout", error.code
       assert_equal ExitCodes::UNVERIFIED, error.exit_code
@@ -29,7 +41,7 @@ module Walmart
         sleep 30
       RUBY
 
-      error = assert_raises(UnverifiedError) { worker.run("cart.add", mutation: true, timeout: 1) }
+      error = assert_raises(UnverifiedError) { worker.run("cart.add", mutation: true, timeout: FAST_TIMEOUT) }
 
       assert_equal "timeout", error.code
       assert_equal ExitCodes::UNVERIFIED, error.exit_code
@@ -43,7 +55,7 @@ module Walmart
         sleep 30
       RUBY
 
-      assert_raises(WorkerError) { worker.run("probe", timeout: 1) }
+      assert_raises(WorkerError) { worker.run("probe", timeout: FAST_TIMEOUT) }
 
       assert_dead(File.read(marker).to_i)
     end
@@ -66,7 +78,7 @@ module Walmart
         sleep 120
       RUBY
 
-      assert_raises(WorkerError) { worker.run("probe", timeout: 1) }
+      assert_raises(WorkerError) { worker.run("probe", timeout: FAST_TIMEOUT) }
       wait_for_file(child_marker)
 
       assert_dead(File.read(parent_marker).to_i)
@@ -98,7 +110,7 @@ module Walmart
         sleep 60
       RUBY
 
-      assert_raises(WorkerError) { worker.run("probe", timeout: 1) }
+      assert_raises(WorkerError) { worker.run("probe", timeout: FAST_TIMEOUT) }
 
       assert_dead(File.read(marker).to_i)
     end
@@ -176,7 +188,7 @@ module Walmart
 
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       result = nil
-      Timeout.timeout(30) { result = worker.run("cart.show", timeout: 1) }
+      Timeout.timeout(30) { result = worker.run("cart.show", timeout: FAST_TIMEOUT) }
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
       # The result was delivered, so it still counts; only the wedged cleanup
@@ -197,7 +209,7 @@ module Walmart
         sleep 60
       RUBY
 
-      Timeout.timeout(30) { worker.run("cart.show", timeout: 1) }
+      Timeout.timeout(30) { worker.run("cart.show", timeout: FAST_TIMEOUT) }
 
       assert_dead(File.read(marker).to_i)
     end
@@ -207,8 +219,11 @@ module Walmart
     def build_worker(body, logger: nil)
       script = File.join(tmp, "fake_worker.rb")
       File.write(script, "require 'json'\n#{body}")
-      Worker.new(paths: paths, config: config, env: env, logger: logger,
-                 python_command: [RbConfig.ruby], script: script)
+      worker = Worker.new(paths: paths, config: config, env: env, logger: logger,
+                          python_command: [RbConfig.ruby], script: script)
+      worker.define_singleton_method(:kill_grace_seconds) { FAST_GRACE }
+      worker.define_singleton_method(:exit_grace_seconds) { FAST_GRACE }
+      worker
     end
 
     def wait_for_file(path, timeout: 10)

@@ -57,8 +57,20 @@ class Mutation
   # Returns the original text, or raises. The raise is the whole point: an
   # absent pattern is a broken mutant, not a surviving one, and the two mean
   # opposite things about the code under test.
+  # Written before the file is touched and removed once it is put back. The
+  # ensure in caught? covers exceptions, Interrupt included, but a run killed
+  # with TERM or KILL runs no ensure at all -- and then the only clean copy of
+  # a *committed* file was in memory too. That happened: a cancelled run left a
+  # guard deleted from archive.rb, and nothing on disk said so.
+  #
+  # git can restore a committed file, but only if someone knows to look. This
+  # makes the next run say it.
+  def rescue_path = File.join(BACKUP_DIR, "inflight_#{file.tr("/", "_")}")
+
   def apply
     original = File.read(file)
+    FileUtils.mkdir_p(BACKUP_DIR)
+    File.write(rescue_path, original)
     occurrences = original.scan(from).length
     raise "MUTATION DID NOT APPLY: #{from.inspect} not found in #{file}" if occurrences.zero?
 
@@ -73,6 +85,7 @@ class Mutation
 
   def restore(original)
     File.write(file, original)
+    FileUtils.rm_f(rescue_path)
   end
 end
 
@@ -88,7 +101,7 @@ class Runner
   def caught?(mutation)
     original = mutation.apply
     begin
-      out, status = run(mutation.command)
+      out, status = run(mutation.command, fail_fast: true)
       report(mutation, out, status)
       !status.success?
     ensure
@@ -114,8 +127,14 @@ class Runner
 
   private
 
-  def run(command = nil)
-    out, err, status = Open3.capture3(*(command || @command))
+  # MUTATE_FAIL_FAST stops the child suite at its first failure. A mutation run
+  # asks one question -- does anything notice? -- and the answer arrives with
+  # the first red test, so running the remaining five hundred is pure waiting.
+  #
+  # Not set for the baseline, which must see the whole suite pass.
+  def run(command = nil, fail_fast: false)
+    env = fail_fast ? { "MUTATE_FAIL_FAST" => "1" } : {}
+    out, err, status = Open3.capture3(env, *(command || @command))
     [out + err, status]
   end
 
@@ -148,6 +167,19 @@ def parse_argv(argv)
     flags[key.delete_prefix("--").to_sym] = boolean ? true : args.shift
   end
   [flags, argv[(split + 1)..]]
+end
+
+# --only narrows the run to labels containing a substring. Numbering stays tied
+# to the plan, so "mutant 12" means the same thing in a filtered run as a full
+# one -- a filtered run that renumbered would make its own output unquotable.
+def selected(mutations, only)
+  return mutations if only.nil?
+
+  chosen = mutations.select { |mutation| mutation.label.downcase.include?(only.downcase) }
+  raise "--only #{only.inspect} matched no mutant" if chosen.empty?
+
+  warn "running #{chosen.length} of #{mutations.length} mutants matching #{only.inspect}"
+  chosen
 end
 
 def mutations_from(flags)
@@ -209,6 +241,15 @@ def back_up(files)
   end
 end
 
+# Interrupt already unwinds through the ensure; TERM does not, and a cancelled
+# run is far more likely to arrive as TERM. Converting it to an exception means
+# the same restore path runs for both.
+def trap_termination
+  %w[TERM HUP].each do |signal|
+    Signal.trap(signal) { raise Interrupt, "received SIG#{signal}" }
+  end
+end
+
 # A backup left behind means a previous run did not finish. Say so before doing
 # anything else, because the next run's "original" would be the mutated file.
 def warn_about_abandoned_backups
@@ -218,19 +259,32 @@ def warn_about_abandoned_backups
   warn "a previous mutation run left backups behind; it may have been killed mid-run:"
   leftovers.each { |path| warn "  #{path}" }
   warn "compare them against your working tree before trusting this run"
+
+  # An inflight_ copy is stronger than a warning: that file was mid-mutation
+  # when the run died, so the working tree is wrong right now, not merely
+  # suspect. Name the restore rather than leaving it as an exercise.
+  inflight = leftovers.grep(/inflight_/)
+  return if inflight.empty?
+
+  warn "these were mid-mutation and the file on disk is still mutated:"
+  inflight.each { |path| warn "  cp #{path} #{File.basename(path).sub("inflight_", "").tr("_", "/")}" }
 end
 
-def main(argv)
-  flags, command = parse_argv(argv)
-  mutations = mutations_from(flags)
-  runner = Runner.new(command, verbose: flags[:verbose])
-
+def prepare(mutations, flags)
   warn_about_abandoned_backups
   guard_planned_files(mutations, allow_dirty: flags[:"allow-dirty"])
   # Says so on stderr, so anyone reading this tree while it runs knows why a
   # tracked file is modified.
   warn "mutating tracked files in place; the tree is dirty until this finishes"
+end
 
+def main(argv)
+  flags, command = parse_argv(argv)
+  mutations = selected(mutations_from(flags), flags[:only])
+  runner = Runner.new(command, verbose: flags[:verbose])
+
+  trap_termination
+  prepare(mutations, flags)
   puts "checking the suite passes untouched first"
   return 1 unless runner.baseline(mutations.map(&:command).uniq)
 
