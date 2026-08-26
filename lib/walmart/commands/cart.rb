@@ -16,7 +16,11 @@ module Walmart
     # number, but exposing that would let a stale count overwrite someone
     # else's edit; see pyworker/cart_mutate.py.
     class Cart < Base
+      # item_id is first because it is the handle every other cart command
+      # takes. Without it, `cart show` told people to pass an id it did not
+      # print, and the only way to find one was --json.
       COLUMNS = [
+        [:item_id, "id", :left],
         [:quantity, "qty", :right],
         [:line_price, "line", :right],
         [:each, "each", :right],
@@ -147,6 +151,7 @@ module Walmart
 
       def row(line)
         {
+          item_id: line["item_id"],
           quantity: line["quantity_label"] || line["quantity"],
           line_price: money(line["line_price"]),
           each: money(line["item_price"]),

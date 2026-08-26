@@ -108,10 +108,19 @@ earlier. Nothing outside `cart_mutate.py` can set a quantity outright.
 being recognised every mutation fails the same way, reported as `contract_stale`
 rather than as a mystery.
 
-**The response shape is UNOBSERVED.** The capture recorded requests only. So a
-response is treated as an acknowledgement, never as evidence of the new state: success
-requires both an acknowledged response *and* a fresh cart read showing the target.
-An empty `data` object is deliberately not read as agreement.
+**The response shape is UNOBSERVED, and that gates the feature.** The capture recorded
+requests only. There is therefore no honest definition of "Walmart accepted this", so
+`ACCEPTED_RESPONSE_SHAPE` is `None`, `acknowledgement()` can never return accepted, and
+the action refuses before opening a browser. Filling that constant in requires a
+captured response, not a decision.
+
+Even once it is known, a response is an acknowledgement and never evidence of the new
+state: success will still require a fresh cart read showing the target.
+
+**Cart-level `fulfillment.intent` is all we have for delivery eligibility.** There is
+no observed per-line delivery signal, so the guard checks the cart's intent and the
+cart's `storeId` against the pinned store. That is a weaker claim than "this line can
+be delivered", and it is one reason mutation stays gated.
 
 ## Cart (read)
 

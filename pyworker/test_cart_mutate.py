@@ -21,6 +21,22 @@ REJECTED = cart_mutate.REJECTED
 UNVERIFIED = cart_mutate.UNVERIFIED
 CONTRACT_STALE = cart_mutate.CONTRACT_STALE
 
+# A success shape nobody has observed. Tests need one to exercise everything
+# downstream of "Walmart said yes", but it is a hypothesis and is labelled as
+# one: it is injected here, never defined in the module, and the module ships
+# with ACCEPTED_RESPONSE_SHAPE = None so that no real run can reach APPLIED.
+HYPOTHETICAL_SHAPE = {"updateItems": {}}
+
+
+@pytest.fixture
+def assuming_a_success_contract(monkeypatch):
+    """Pretend, for one test, that a successful response has been observed."""
+    monkeypatch.setattr(cart_mutate, "ACCEPTED_RESPONSE_SHAPE", HYPOTHETICAL_SHAPE)
+    return HYPOTHETICAL_SHAPE
+
+
+CART_ID = "cart-id-canary-0000-not-a-real-cart"
+
 OK = cart_mutate.Acknowledgement(True)
 NO = cart_mutate.Acknowledgement(False, "rejected", "out of stock")
 STALE = cart_mutate.Acknowledgement(False, CONTRACT_STALE, "rotated")
@@ -101,7 +117,23 @@ def test_every_outcome_but_success_explains_itself():
 def test_a_200_carrying_errors_is_not_accepted():
     ack = cart_mutate.acknowledgement(200, {"data": None, "errors": [{"message": "nope"}]})
     assert not ack.accepted
-    assert ack.detail == "nope"
+
+
+# A GraphQL error can echo the variables that caused it, and those variables
+# carry the cart id. Repeating the server's words would be a side door around
+# every canary watching the front one.
+def test_the_servers_own_error_text_is_never_repeated():
+    leaky = {"errors": [{"message": f"invalid input cartId={CART_ID} for updateItems"}]}
+    ack = cart_mutate.acknowledgement(200, leaky)
+    assert CART_ID not in (ack.detail or "")
+    assert ack.detail == cart_mutate.GENERIC_REJECTION
+
+
+def test_a_stale_contract_is_still_detected_in_text_it_does_not_repeat():
+    leaky = {"errors": [{"message": f"PersistedQueryNotFound cartId={CART_ID}"}]}
+    ack = cart_mutate.acknowledgement(200, leaky)
+    assert ack.reason == CONTRACT_STALE
+    assert CART_ID not in (ack.detail or "")
 
 
 def test_a_rotated_persisted_query_is_named_as_such():
@@ -120,13 +152,48 @@ def test_the_stale_contract_message_does_not_blame_the_user():
     assert "was not changed" in ack.detail
 
 
-def test_silence_is_not_agreement():
-    """No errors and no data. Never observed; deliberately not read as yes."""
+# --- the success contract is unproven, and that fails closed ----------------------
+#
+# The first version of this accepted any non-empty `data` object, so
+# {"data": {"anything": false}} was a success. That is a guess that fails open.
+# Until a real response is captured there is no honest definition of accepted,
+# and the module says so by shipping ACCEPTED_RESPONSE_SHAPE = None.
+
+
+def test_the_success_contract_is_not_yet_known():
+    """If this ever fails, a shape was filled in -- check it came from a capture."""
+    assert cart_mutate.ACCEPTED_RESPONSE_SHAPE is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"data": None},
+        {"data": {}},
+        {"errors": []},
+        {"data": {"anything": False}},
+        {"data": {"updateItems": {"id": "x"}}},
+        {"data": {"somethingElse": {"id": "x"}}},
+    ],
+)
+def test_nothing_is_accepted_while_the_contract_is_unproven(payload):
+    ack = cart_mutate.acknowledgement(200, payload)
+    assert not ack.accepted
+    assert ack.reason == cart_mutate.CONTRACT_UNPROVEN
+
+
+def test_silence_is_not_agreement(assuming_a_success_contract):
+    """Even given a contract, absence of the shape is not agreement."""
     for payload in ({}, {"data": None}, {"data": {}}, {"errors": []}):
         assert not cart_mutate.acknowledgement(200, payload).accepted
 
 
-def test_a_plausible_success_is_accepted():
+def test_an_unrelated_data_object_is_not_agreement(assuming_a_success_contract):
+    assert not cart_mutate.acknowledgement(200, {"data": {"anything": False}}).accepted
+
+
+def test_the_known_shape_is_accepted(assuming_a_success_contract):
     assert cart_mutate.acknowledgement(200, {"data": {"updateItems": {"id": "x"}}}).accepted
 
 
@@ -245,9 +312,14 @@ def test_item_ids_are_compared_as_strings():
 # the value in every direction it could escape -- the result document, the
 # NDJSON events, and stderr. A narrowed invariant with no test is a deleted one.
 
-CART_ID = "cart-id-canary-0000-not-a-real-cart"
-OPTIONS = {"profile_dir": "/tmp/profile", "profile_lock": "/tmp/profile.lock"}
+STORE = "5260"
+OPTIONS = {
+    "profile_dir": "/tmp/profile",
+    "profile_lock": "/tmp/profile.lock",
+    "pinned_store": STORE,
+}
 ITEM_ID = "33282303"
+DELIVERABLE = {"intent": "DELIVERY", "store_id": STORE}
 MARKETPLACE_LINE = {
     "item_id": ITEM_ID,
     "quantity": 1,
@@ -278,6 +350,7 @@ def _live_payload(quantity):
                     }
                 ],
                 "priceDetails": {"subTotal": {"value": 6.78}, "grandTotal": {"value": 6.78}},
+                "fulfillment": {"intent": "DELIVERY", "storeId": STORE},
             }
         }
     }
@@ -320,11 +393,12 @@ _GETCART = "https://www.walmart.com/orchestra/home/graphql/getCart/"
 def mutation_run(monkeypatch):
     """Run the real action against a fake session, capturing every output."""
 
-    def run(session, params):
+    def run(session, params, options=None):
         monkeypatch.setattr("browser.open_session", lambda _o: _nullcontext(session))
         events = []
         monkeypatch.setattr("protocol.progress", lambda text, **k: events.append(text))
-        request = {"params": params, "options": OPTIONS}
+        action = "cart.remove" if params.get("remove") else "cart.add"
+        request = {"action": action, "params": params, "options": options or OPTIONS}
         return cart_mutate.action_cart_change(request), events
 
     return run
@@ -341,7 +415,7 @@ class _nullcontext:
         return False
 
 
-def test_the_cart_id_is_sent_to_walmart_but_never_returned(mutation_run):
+def test_the_cart_id_is_sent_to_walmart_but_never_returned(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=2)
     result, events = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
 
@@ -352,7 +426,7 @@ def test_the_cart_id_is_sent_to_walmart_but_never_returned(mutation_run):
     assert CART_ID not in json.dumps(events)
 
 
-def test_the_cart_id_is_absent_from_a_failed_run(mutation_run, capsys):
+def test_the_cart_id_is_absent_from_a_failed_run(mutation_run, capsys, assuming_a_success_contract):
     session = MutatingSession(before=1, after=1, status=500)
     result, events = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     captured = capsys.readouterr()
@@ -361,13 +435,15 @@ def test_the_cart_id_is_absent_from_a_failed_run(mutation_run, capsys):
         assert CART_ID not in text
 
 
-def test_the_cart_id_is_absent_when_the_response_is_unreadable(mutation_run, capsys):
+def test_the_cart_id_is_absent_when_the_response_is_unreadable(
+    mutation_run, capsys, assuming_a_success_contract
+):
     session = MutatingSession(before=1, after=2, response="not json")
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert CART_ID not in json.dumps(result) + capsys.readouterr().err
 
 
-def test_the_result_document_carries_no_unexpected_keys(mutation_run):
+def test_the_result_document_carries_no_unexpected_keys(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=2)
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert set(result) == {
@@ -384,7 +460,7 @@ def test_the_result_document_carries_no_unexpected_keys(mutation_run):
 # --- the action, end to end ---------------------------------------------------------
 
 
-def test_a_confirmed_increment_reports_applied(mutation_run):
+def test_a_confirmed_increment_reports_applied(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=2)
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert result["outcome"] == APPLIED
@@ -392,32 +468,36 @@ def test_a_confirmed_increment_reports_applied(mutation_run):
     assert result["changed"] is True
 
 
-def test_the_quantity_sent_is_derived_from_the_read_not_the_request(mutation_run):
+def test_the_quantity_sent_is_derived_from_the_read_not_the_request(
+    mutation_run, assuming_a_success_contract
+):
     """The delta is relative to what the cart holds now, not to anything cached."""
     session = MutatingSession(before=4, after=5)
     mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert session.sent[0]["body"]["variables"]["input"]["items"][0]["quantity"] == 5
 
 
-def test_removal_sends_zero(mutation_run):
+def test_removal_sends_zero(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=2, after=0)
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "remove": True})
     assert session.sent[0]["body"]["variables"]["input"]["items"][0]["quantity"] == 0
     assert result["outcome"] == APPLIED
 
 
-def test_a_cart_that_did_not_move_is_never_reported_as_applied(mutation_run):
+def test_a_cart_that_did_not_move_is_never_reported_as_applied(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=1)
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert result["outcome"] == UNVERIFIED
     assert result["changed"] is False
 
 
-def test_a_marketplace_line_is_refused_before_anything_is_sent(mutation_run, monkeypatch):
+def test_a_marketplace_line_is_refused_before_anything_is_sent(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
     session = MutatingSession(before=1)
     monkeypatch.setattr(
         "cart_parse.parse_cart",
-        lambda _p: {"lines": [dict(MARKETPLACE_LINE)], "totals": {}},
+        lambda _p: {"lines": [dict(MARKETPLACE_LINE)], "totals": {}, "fulfillment": DELIVERABLE},
     )
     with pytest.raises(cart_mutate.CartMutationRefused) as raised:
         mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
@@ -425,14 +505,16 @@ def test_a_marketplace_line_is_refused_before_anything_is_sent(mutation_run, mon
     assert session.sent == []
 
 
-def test_an_item_not_in_the_cart_is_refused_before_anything_is_sent(mutation_run):
+def test_an_item_not_in_the_cart_is_refused_before_anything_is_sent(
+    mutation_run, assuming_a_success_contract
+):
     session = MutatingSession(before=1)
     with pytest.raises(cart_mutate.CartMutationRefused):
         mutation_run(session, {"item_id": "not-here", "delta": 1})
     assert session.sent == []
 
 
-def test_a_delta_of_zero_is_refused_as_a_usage_error(mutation_run):
+def test_a_delta_of_zero_is_refused_as_a_usage_error(mutation_run, assuming_a_success_contract):
     """Not a no-op success: asking for no change is asking for nothing."""
     session = MutatingSession(before=2, after=2)
     with pytest.raises(ValueError):
@@ -440,23 +522,30 @@ def test_a_delta_of_zero_is_refused_as_a_usage_error(mutation_run):
     assert session.sent == []
 
 
-def test_removing_a_line_already_at_zero_sends_nothing(mutation_run, monkeypatch):
+def test_removing_a_line_already_at_zero_sends_nothing(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
     """The one path where the target equals the current quantity."""
     session = MutatingSession(before=0, after=0)
     empty = dict(MARKETPLACE_LINE, quantity=0, seller_type="INTERNAL", seller_name="Walmart.com")
-    monkeypatch.setattr("cart_parse.parse_cart", lambda _p: {"lines": [empty], "totals": {}})
+    monkeypatch.setattr(
+        "cart_parse.parse_cart",
+        lambda _p: {"lines": [empty], "totals": {}, "fulfillment": DELIVERABLE},
+    )
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "remove": True})
     assert session.sent == []
     assert result["changed"] is False
 
 
-def test_the_cart_is_read_again_after_the_change(mutation_run):
+def test_the_cart_is_read_again_after_the_change(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=2)
     _, events = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert events == ["reading the cart", "updating the cart", "checking the cart"]
 
 
-def test_an_unreadable_post_state_is_unverified_not_failed(mutation_run, monkeypatch):
+def test_an_unreadable_post_state_is_unverified_not_failed(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
     session = MutatingSession(before=1, after=2)
     calls = {"n": 0}
     real = cart_parse.parse_cart
@@ -471,3 +560,180 @@ def test_an_unreadable_post_state_is_unverified_not_failed(mutation_run, monkeyp
     result, _ = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
     assert result["outcome"] == UNVERIFIED
     assert "could not be read afterwards" in result["message"]
+
+
+# --- the readiness gate --------------------------------------------------------------
+
+
+def test_a_change_refuses_before_opening_a_browser_while_unproven(monkeypatch):
+    """Not merely fails: never starts. The gate is checked before the session."""
+    opened = []
+    monkeypatch.setattr("browser.open_session", lambda _o: opened.append(1))
+    with pytest.raises(cart_mutate.CartMutationRefused) as raised:
+        cart_mutate.action_cart_change(
+            {"action": "cart.add", "params": {"item_id": ITEM_ID, "delta": 1}, "options": OPTIONS}
+        )
+    assert "not enabled yet" in str(raised.value)
+    assert opened == []
+
+
+# --- store and delivery ---------------------------------------------------------------
+#
+# A change made against a pickup cart, or another store's cart, is a change to
+# something nobody asked about. None of it can be inferred from silence, so a
+# missing value refuses exactly as a wrong one does.
+
+BAD_CARTS = {
+    "no store pinned": ({"intent": "DELIVERY", "store_id": STORE}, None, "no store is pinned"),
+    "cart names no store": ({"intent": "DELIVERY", "store_id": ""}, STORE, "which store"),
+    "a different store": ({"intent": "DELIVERY", "store_id": "1234"}, STORE, "belongs to store"),
+    "no intent at all": ({"intent": "", "store_id": STORE}, STORE, "delivery or pickup"),
+    "a pickup cart": ({"intent": "PICKUP", "store_id": STORE}, STORE, "only changes delivery"),
+    "shipping": ({"intent": "SHIPPING", "store_id": STORE}, STORE, "only changes delivery"),
+    "no fulfillment block": ({}, STORE, "which store"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(BAD_CARTS))
+def test_a_cart_we_cannot_vouch_for_is_refused(case):
+    fulfillment, pinned, expected = BAD_CARTS[case]
+    with pytest.raises(cart_mutate.CartMutationRefused) as raised:
+        cart_mutate.assert_deliverable_from_the_pinned_store({"fulfillment": fulfillment}, pinned)
+    assert expected in str(raised.value), case
+
+
+def test_the_pinned_delivery_cart_is_allowed():
+    cart_mutate.assert_deliverable_from_the_pinned_store({"fulfillment": DELIVERABLE}, STORE)
+
+
+def test_the_store_guard_runs_before_anything_is_sent(mutation_run, assuming_a_success_contract):
+    session = MutatingSession(before=1, after=2)
+    with pytest.raises(cart_mutate.CartMutationRefused):
+        mutation_run(session, {"item_id": ITEM_ID, "delta": 1}, options=dict(OPTIONS, pinned_store=""))
+    assert session.sent == []
+
+
+# --- ambiguity is not a tie to be broken ----------------------------------------------
+
+
+def test_two_lines_for_one_item_is_refused_not_guessed():
+    cart = {
+        "lines": [
+            {"item_id": ITEM_ID, "quantity": 1, "name": "one"},
+            {"item_id": ITEM_ID, "quantity": 9, "name": "another"},
+        ]
+    }
+    with pytest.raises(cart_mutate.CartMutationRefused) as raised:
+        cart_mutate.find_line(cart, ITEM_ID)
+    assert "will not guess" in str(raised.value)
+
+
+@pytest.mark.parametrize("missing", ["item_id", "offer_id"])
+def test_a_line_missing_an_identifier_is_refused(missing):
+    line = {"item_id": ITEM_ID, "offer_id": "X"} | {missing: ""}
+    with pytest.raises(cart_mutate.CartMutationRefused):
+        cart_mutate.assert_line_is_addressable(line)
+
+
+# --- the request is validated at the boundary that executes ---------------------------
+#
+# The protocol is directly invocable, so the worker validates the request
+# rather than trusting that Ruby built it.
+
+BAD_REQUESTS = {
+    "remove as a string": ("cart.remove", {"item_id": ITEM_ID, "remove": "false"}),
+    "remove as a number": ("cart.add", {"item_id": ITEM_ID, "remove": 1, "delta": 1}),
+    "add asking to remove": ("cart.add", {"item_id": ITEM_ID, "remove": True}),
+    "remove not asking to": ("cart.remove", {"item_id": ITEM_ID, "remove": False}),
+    "removal with a delta": ("cart.remove", {"item_id": ITEM_ID, "remove": True, "delta": 2}),
+    "delta as a string": ("cart.add", {"item_id": ITEM_ID, "delta": "2"}),
+    "delta as a float": ("cart.add", {"item_id": ITEM_ID, "delta": 1.5}),
+    "delta as a bool": ("cart.add", {"item_id": ITEM_ID, "delta": True}),
+    "no delta at all": ("cart.add", {"item_id": ITEM_ID}),
+    "delta of zero": ("cart.add", {"item_id": ITEM_ID, "delta": 0}),
+    "no item": ("cart.add", {"delta": 1}),
+    "blank item": ("cart.add", {"item_id": "   ", "delta": 1}),
+    "params not an object": ("cart.add", []),
+}
+
+
+@pytest.mark.parametrize("case", sorted(BAD_REQUESTS))
+def test_a_malformed_request_is_refused(case):
+    action, params = BAD_REQUESTS[case]
+    with pytest.raises(ValueError):
+        cart_mutate._requested({"action": action, "params": params})
+
+
+def test_the_string_false_is_not_a_removal():
+    """bool("false") is True, which is how a typo deletes a cart line."""
+    with pytest.raises(ValueError):
+        cart_mutate._requested({"action": "cart.add", "params": {"item_id": "1", "remove": "false"}})
+
+
+def test_a_well_formed_request_is_accepted():
+    assert cart_mutate._requested({"action": "cart.add", "params": {"item_id": " 1 ", "delta": -2}}) == (
+        "1",
+        -2,
+        False,
+    )
+    assert cart_mutate._requested({"action": "cart.remove", "params": {"item_id": "1", "remove": True}}) == (
+        "1",
+        None,
+        True,
+    )
+
+
+# --- a failure before the send is not a maybe ------------------------------------------
+
+
+def test_a_failure_before_sending_is_not_reported_as_unverified(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
+    session = MutatingSession(before=1, after=2)
+    monkeypatch.setattr("cart_parse.parse_cart", lambda _p: (_ for _ in ()).throw(RuntimeError("blocked")))
+    with pytest.raises(cart_mutate.PreflightFailed):
+        mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
+    assert session.sent == []
+
+
+def test_a_preflight_failure_keeps_the_original_error_name(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
+    blocked = RuntimeError("press and hold")
+    blocked.code = "challenge_detected"
+    monkeypatch.setattr("cart_parse.parse_cart", lambda _p: (_ for _ in ()).throw(blocked))
+    with pytest.raises(cart_mutate.PreflightFailed) as raised:
+        mutation_run(MutatingSession(before=1), {"item_id": ITEM_ID, "delta": 1})
+    assert raised.value.code == "challenge_detected"
+
+
+def test_a_failure_after_sending_stays_unverified(mutation_run, monkeypatch, assuming_a_success_contract):
+    """The post-send half must not be converted into a clean failure."""
+    session = MutatingSession(before=1, after=2)
+    monkeypatch.setattr(
+        cart_mutate, "acknowledgement", lambda *_a: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    with pytest.raises(RuntimeError) as raised:
+        mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
+    assert not isinstance(raised.value, cart_mutate.PreflightFailed)
+    assert session.sent != []
+
+
+def test_a_server_error_echoing_the_cart_id_does_not_leak_it(
+    mutation_run, capsys, assuming_a_success_contract
+):
+    """The leak that the original canaries could not have caught.
+
+    They used errors that did not contain the id, so they proved only that
+    happy-path values stay in. Walmart echoing the offending variables is the
+    realistic way this escapes, and it reaches the result document through
+    ack.detail -> message.
+    """
+    echoed = {"errors": [{"message": f"invalid variables: cartId={CART_ID}, quantity=2"}]}
+    session = MutatingSession(before=1, after=1, response=echoed)
+    result, events = mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
+    captured = capsys.readouterr()
+
+    assert result["outcome"] == REJECTED
+    for text in (json.dumps(result), json.dumps(events), captured.out, captured.err):
+        assert CART_ID not in text

@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of forty-nine defects
+The layout of the suite is not arbitrary. It is the residue of fifty-five defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -29,6 +29,12 @@ Each of these was written deliberately, read fine, and passed:
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| a success we invented | `acknowledgement` accepted any non-empty `data`, so `{"data":{"anything":false}}` was a success — fail-open, for a shape never observed |
+| the error text side door | GraphQL errors were passed through verbatim into the result, and a server echoing its input would have carried the cart id past every canary |
+| guards for a store nobody pinned | the mutation ignored `pinned_store` and the cart's own `store_id`/`intent`, so it would change a pickup cart or another store's cart |
+| the first duplicate wins | `find_line` returned the first match, quietly making "exact variant" mean "first line with this id" |
+| `bool("false")` | remove was read with `bool()`, so the string `"false"` deleted a line; and `cart.add` with `remove:true` removed one |
+| a maybe that was a no | failures before the request was sent were reported as unverified, sending someone to check a cart that provably never changed |
 | tests under `private` | twenty new tests were inserted after a `private` keyword; minitest collected none of them and the suite count did not move enough to notice |
 | invented key names | the mutation module read `cart["items"]` and `line["first_party"]`, neither of which the cart parser produces — written from memory instead of from the parser's output |
 | a grep that matched its own excuse | a test asserting no absolute-quantity flag existed grepped the source for "absolute" and matched the comment explaining why absolutes are forbidden |
@@ -264,6 +270,22 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **An unobserved contract is a gate, not a caveat.** Writing "the response
+  shape is unobserved" in a docstring and then accepting any non-empty `data`
+  is the same bug as not knowing: the honest encoding is a constant that is
+  `None`, a check that fails closed, and a feature that refuses to run. The
+  tests inject a hypothetical shape through a fixture whose name says it is a
+  hypothesis, so nothing reads as evidence.
+- **A canary only proves what it was given.** The cart-id tests used errors
+  that never contained the id, so they proved happy-path values stay in. The
+  realistic leak is Walmart echoing the offending variables back; the canary
+  now arrives inside a server error.
+- **Refuse ambiguity rather than resolving it.** Two cart lines with one item
+  id is not a tie to be broken by order.
+- **A declared action is a reachable action.** `cart.increment` and
+  `cart.decrement` sat on the worker surface, implemented nowhere and exposed
+  by no command. The protocol is invocable directly, so that is a way in
+  rather than a placeholder.
 - **A decision table belongs in the test as data.** Fourteen rows of
   (acknowledgement, before, after, target) caught a case reasoning had missed:
   a refusal with no usable pre-read was being reported as a clean failure, when

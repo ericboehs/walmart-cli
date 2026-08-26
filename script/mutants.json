@@ -802,9 +802,9 @@
     ]
   },
   {
-    "label": "an empty response body counts as agreement",
+    "label": "an unrelated data object counts as agreement",
     "file": "pyworker/cart_mutate.py",
-    "from": "    if not isinstance(data, dict) or not data:",
+    "from": "    if not _matches(payload.get(\"data\"), ACCEPTED_RESPONSE_SHAPE):",
     "to": "    if False:",
     "command": [
       "uv",
@@ -943,6 +943,138 @@
     "label": "a cart change stops asking for confirmation",
     "file": "lib/walmart/commands/cart.rb",
     "from": "        confirm!(question_for(subcommand, item_id, delta))\n",
+    "to": ""
+  },
+  {
+    "label": "the unproven success contract is quietly filled in",
+    "file": "pyworker/cart_mutate.py",
+    "from": "ACCEPTED_RESPONSE_SHAPE: dict[str, Any] | None = None",
+    "to": "ACCEPTED_RESPONSE_SHAPE: dict[str, Any] | None = {\"updateItems\": {}}",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the readiness gate opens",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if ACCEPTED_RESPONSE_SHAPE is None:\n        raise CartMutationRefused(NOT_READY_MESSAGE)\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the server's error text is passed through to the user",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        return Acknowledgement(False, \"rejected\", GENERIC_REJECTION)",
+    "to": "        return Acknowledgement(False, \"rejected\", str(errors[0]))",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the pinned store is not checked against the cart",
+    "file": "pyworker/cart_mutate.py",
+    "from": "            assert_deliverable_from_the_pinned_store(before_cart, pinned_store)\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a pickup cart is treated as a delivery cart",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if intent not in DELIVERY_INTENTS:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a duplicate item id picks the first line",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if len(found) > 1:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "remove is read with bool() again",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    remove = _boolean(params.get(\"remove\"), \"remove\")",
+    "to": "    remove = bool(params.get(\"remove\"))",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the action and its parameters need not agree",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if action in CHANGING_ACTIONS and remove:\n        raise ValueError(f\"{action} cannot remove a line; use cart.remove\")\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a failure before sending is reported as unverified",
+    "file": "pyworker/cart_mutate.py",
+    "from": "        if sent:\n            raise\n        raise PreflightFailed(exc) from exc",
+    "to": "        raise",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "cart show stops printing the id other commands need",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        [:item_id, \"id\", :left],\n",
     "to": ""
   }
 ]

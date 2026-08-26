@@ -50,8 +50,6 @@ module Walmart
       item
       cart.show
       cart.add
-      cart.increment
-      cart.decrement
       cart.remove
       my_items.list
       order.sync

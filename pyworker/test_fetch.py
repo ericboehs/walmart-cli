@@ -148,12 +148,18 @@ def test_action_registry_contains_nothing_forbidden():
 
 
 def test_mutating_actions_are_exactly_the_cart_writes():
-    assert {
-        "cart.add",
-        "cart.increment",
-        "cart.decrement",
-        "cart.remove",
-    } == fetch.MUTATING_ACTIONS
+    # increment and decrement were registered here and implemented nowhere,
+    # while the CLI exposed neither. A declared action is a reachable one --
+    # the protocol is invocable directly -- so an undeveloped name on this
+    # surface is a way in, not a placeholder.
+    assert {"cart.add", "cart.remove"} == fetch.MUTATING_ACTIONS
+
+
+def test_every_mutating_action_is_implemented():
+    for name in fetch.MUTATING_ACTIONS:
+        handler = fetch.ACTIONS[name]
+        assert handler is not None
+        assert "not_implemented" not in getattr(handler, "__qualname__", "")
 
 
 def test_refuses_to_start_if_a_forbidden_action_is_registered(monkeypatch):

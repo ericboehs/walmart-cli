@@ -63,8 +63,6 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "item": item_module.action_item,
     "cart.show": cart_module.action_cart_show,
     "cart.add": cart_mutate.action_cart_change,
-    "cart.increment": cart_mutate.action_cart_change,
-    "cart.decrement": cart_mutate.action_cart_change,
     "cart.remove": cart_mutate.action_cart_change,
     "my_items.list": action_not_implemented("my_items.list"),
     "order.sync": orders_module.action_order_sync,
@@ -75,7 +73,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 
 # Actions that can change the shared cart. A crash inside one of these is
 # reported as unverified (exit 3), never as a clean failure.
-MUTATING_ACTIONS = {"cart.add", "cart.increment", "cart.decrement", "cart.remove"}
+MUTATING_ACTIONS = {"cart.add", "cart.remove"}
 
 
 class UnknownAction(Exception):
@@ -132,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
         # amount of staring at Walmart's markup will explain that.
         protocol.error("browser_closed", str(exc), unverified=mutating)
         return 3 if mutating else 1
+    except cart_mutate.PreflightFailed as exc:
+        # Nothing was sent, so this is a clean failure however alarming the
+        # cause. Reported before the generic mutating handler, which would
+        # otherwise call a provably untouched cart "unverified".
+        protocol.error(exc.code, str(exc))
+        return 1
     except cart_mutate.CartMutationRefused as exc:
         # Declined, not unverified. Every one of these is raised before a
         # request goes out, so the cart is provably untouched -- reporting it

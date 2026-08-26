@@ -183,6 +183,11 @@ and the write is the lost-update window: narrow, documented, and not zero.
 evidence -- a product-page add sends one for a line that does not exist yet, so
 it cannot encode a server-side revision.
 
+**The feature is gated.** No successful `updateItems` response has ever been
+observed, so there is no shape against which to define acceptance. Rather than
+guess one, the module ships `ACCEPTED_RESPONSE_SHAPE = None`, refuses before
+opening a browser, and says why. Lifting the gate requires a captured response.
+
 Success requires two independent things: Walmart acknowledged the request, and
 a fresh read of the cart shows the intended quantity. Neither alone is enough.
 A 200 carrying GraphQL errors is a failure wearing a success's status code, and

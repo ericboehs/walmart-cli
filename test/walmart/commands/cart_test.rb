@@ -213,6 +213,14 @@ module Walmart
         assert_match(/unexplained\s+-\$2\.00/, out.string)
       end
 
+      # The id is the handle every other cart command takes. Printing a usage
+      # error that says "get it from `walmart cart show`" while cart show did
+      # not show it made the whole flow unusable from human output.
+      def test_cart_show_prints_the_id_the_other_commands_need
+        run_cart(lines: [MILK])
+        assert_includes out.string, MILK["item_id"]
+      end
+
       # --- changing the cart ---------------------------------------------------
       #
       # The worker decides the outcome; this side decides what the outcome

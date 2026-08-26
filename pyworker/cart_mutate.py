@@ -72,6 +72,28 @@ OBSERVED_FEATURES = (
     "dynevgn",
 )
 
+# THE SUCCESS CONTRACT IS UNOBSERVED, AND THAT IS A GATE, NOT A CAVEAT.
+#
+# The capture recorded requests only. No successful updateItems response has
+# ever been seen, so there is no shape to check and no honest definition of
+# "Walmart accepted this". The first version of this module accepted any
+# non-empty `data` object, which is not evidence-first -- it is a guess that
+# fails open, and {"data": {"anything": false}} satisfied it.
+#
+# So this stays None until a response is captured, and while it is None:
+#   - acknowledgement() can never return accepted
+#   - the action refuses before sending anything
+#
+# Filling this in requires evidence, not a decision. See docs/CONTRACTS.md.
+ACCEPTED_RESPONSE_SHAPE: dict[str, Any] | None = None
+
+CONTRACT_UNPROVEN = "contract_unproven"
+NOT_READY_MESSAGE = (
+    "changing the cart is not enabled yet: no successful response from Walmart's "
+    "cart update has ever been recorded, so this tool cannot tell a change that "
+    "worked from one that silently did nothing. Nothing was sent."
+)
+
 # Outcomes. Deliberately four, not two: "we could not tell" is a real answer
 # about a shared cart and must not be rounded to either of its neighbours.
 APPLIED = "applied"
@@ -87,6 +109,22 @@ CONTRACT_STALE_MESSAGE = (
 
 class CartMutationRefused(Exception):
     """A change this tool will not attempt. Raised before anything is sent."""
+
+
+class PreflightFailed(Exception):
+    """Something went wrong before the request went out.
+
+    Carries the original error's code so the failure keeps its own name. The
+    distinction matters more than it looks: every mutating action reports
+    exceptions as unverified, which is right after a request has gone out and
+    wrong before one has. A browser that never opened cannot have changed the
+    cart, and telling someone their cart "may have changed" sends them to check
+    something that provably did not happen.
+    """
+
+    def __init__(self, cause: Exception):
+        super().__init__(str(cause))
+        self.code = getattr(cause, "code", None) or "preflight_failed"
 
 
 class Acknowledgement:
@@ -125,16 +163,40 @@ def acknowledgement(status: Any, payload: Any) -> Acknowledgement:
     if isinstance(errors, list) and errors:
         if _mentions_persisted_query(errors):
             return Acknowledgement(False, CONTRACT_STALE, CONTRACT_STALE_MESSAGE)
-        return Acknowledgement(False, "rejected", _first_error_message(errors))
+        # The server's own words are never repeated. A GraphQL error can echo
+        # the variables that caused it, and those variables contain the cart
+        # id -- so passing this text through to the result document would be a
+        # side door around every canary that watches the front one.
+        return Acknowledgement(False, "rejected", GENERIC_REJECTION)
 
-    data = payload.get("data")
-    if not isinstance(data, dict) or not data:
-        # No errors and no data is not agreement, it is silence. We have never
-        # observed a successful response body -- the capture recorded requests
-        # only -- so this deliberately refuses to read an empty object as yes.
-        return Acknowledgement(False, "unreadable", "the response carried no data")
+    if ACCEPTED_RESPONSE_SHAPE is None:
+        # Fail closed. Any success we declare here would be invented.
+        return Acknowledgement(False, CONTRACT_UNPROVEN, NOT_READY_MESSAGE)
+
+    if not _matches(payload.get("data"), ACCEPTED_RESPONSE_SHAPE):
+        return Acknowledgement(False, "unreadable", "the response did not match the known shape")
 
     return Acknowledgement(True)
+
+
+GENERIC_REJECTION = "Walmart did not accept the change"
+
+
+def _matches(data: Any, shape: dict[str, Any]) -> bool:
+    """Whether a response body carries the keys a success is known to carry.
+
+    Structural and shallow on purpose: enough to tell an acknowledgement from
+    an unrelated payload, without pretending to know more of the shape than was
+    observed.
+    """
+    if not isinstance(data, dict):
+        return False
+    for key, expected in shape.items():
+        if key not in data:
+            return False
+        if isinstance(expected, dict) and not _matches(data[key], expected):
+            return False
+    return True
 
 
 def _mentions_persisted_query(errors: list[Any]) -> bool:
@@ -154,15 +216,6 @@ def _extension_code(error: dict[str, Any]) -> str:
     if isinstance(extensions, dict):
         return str(extensions.get("code", ""))
     return ""
-
-
-def _first_error_message(errors: list[Any]) -> str:
-    for error in errors:
-        if isinstance(error, dict) and error.get("message"):
-            return str(error["message"])
-        if isinstance(error, str) and error:
-            return error
-    return "Walmart rejected the change without saying why"
 
 
 def classify(ack: Acknowledgement, before: Any, after: Any, target: int) -> tuple[str, str]:
@@ -269,12 +322,20 @@ def build_update_items_body(cart_id: str, line: dict[str, Any], quantity: int) -
 
 
 def find_line(cart: dict[str, Any], item_id: str) -> dict[str, Any] | None:
-    """The cart line for an item id, or None. Compared as strings, always."""
+    """The cart line for an item id, or None. Compared as strings, always.
+
+    Two lines with the same item id is ambiguity, not a tie to be broken.
+    Returning the first would mean "exact variant" quietly meant "first match",
+    and the wrong line would be changed with no sign anything was uncertain.
+    """
     wanted = str(item_id).strip()
-    for line in cart.get("lines") or []:
-        if str(line.get("item_id") or "").strip() == wanted:
-            return line
-    return None
+    found = [line for line in cart.get("lines") or [] if str(line.get("item_id") or "").strip() == wanted]
+    if len(found) > 1:
+        raise CartMutationRefused(
+            f"the cart holds {len(found)} separate lines for item {wanted}; "
+            "this tool will not guess which one you meant"
+        )
+    return found[0] if found else None
 
 
 def quantity_of(cart: dict[str, Any] | None, item_id: str) -> int | None:
@@ -346,19 +407,57 @@ def send_update(session, body: dict[str, Any]) -> tuple[Any, Any]:
     return result.get("status"), result.get("payload")
 
 
+# What each action is allowed to ask for. The protocol is directly invocable,
+# so the worker validates the request rather than trusting that Ruby built it:
+# a caller who sends cart.add with remove=true must not get a removal.
+REMOVING_ACTIONS = ("cart.remove",)
+CHANGING_ACTIONS = ("cart.add",)
+
+
+def _boolean(value: Any, field: str) -> bool:
+    """A boolean, and only a boolean.
+
+    bool(value) would read the string "false" as True, which is how a typo in a
+    JSON client becomes a deleted cart line. Note bool is a subclass of int in
+    Python, so the int branch below has to exclude it explicitly.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    raise ValueError(f"{field} must be true or false, got {value!r}")
+
+
+def _whole_number(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be a whole number, got {value!r}")
+    return value
+
+
 def _requested(request: dict[str, Any]) -> tuple[str, int | None, bool]:
+    action = str(request.get("action") or "")
     params = request.get("params") or {}
+    if not isinstance(params, dict):
+        raise ValueError("params must be an object")
+
     item_id = str(params.get("item_id") or "").strip()
     if not item_id:
         raise ValueError("an item id is required")
-    remove = bool(params.get("remove"))
-    raw = params.get("delta")
+
+    remove = _boolean(params.get("remove"), "remove")
+
+    # The action and the parameters must agree. Either alone can be wrong.
+    if action in REMOVING_ACTIONS and not remove:
+        raise ValueError(f"{action} requires remove=true")
+    if action in CHANGING_ACTIONS and remove:
+        raise ValueError(f"{action} cannot remove a line; use cart.remove")
+
     if remove:
+        if params.get("delta") is not None:
+            raise ValueError("a removal takes no delta")
         return item_id, None, True
-    try:
-        delta = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"expected a whole number to change by, got {raw!r}") from exc
+
+    delta = _whole_number(params.get("delta"), "delta")
     if delta == 0:
         raise ValueError("a change of zero is not a change")
     return item_id, delta, False
@@ -392,6 +491,54 @@ def _assert_first_party(line: dict[str, Any]) -> None:
         )
 
 
+# The cart-level fulfillment intent that means delivery. Copied from the
+# observed request, where the item carried preferredItemLevelIntent="DELIVERY".
+DELIVERY_INTENTS = ("delivery",)
+
+
+def assert_deliverable_from_the_pinned_store(cart: dict[str, Any], pinned_store: Any) -> None:
+    """Refuse unless the cart is the delivery cart for the store we pinned.
+
+    Three separate questions, and every one of them has to be answered from the
+    live cart rather than assumed:
+
+    - is a store pinned at all
+    - is this cart that store's cart
+    - is this cart a delivery cart
+
+    A change made against a pickup cart, or against a different store's cart,
+    is a change to something the person did not ask about. None of these can be
+    inferred from silence, so a missing value refuses just as a wrong one does.
+    """
+    pinned = str(pinned_store or "").strip()
+    if not pinned:
+        raise CartMutationRefused(
+            "no store is pinned, so this tool cannot tell which store's cart it is about to change"
+        )
+
+    fulfillment = cart.get("fulfillment") or {}
+    store_id = str(fulfillment.get("store_id") or "").strip()
+    if not store_id:
+        raise CartMutationRefused("the cart did not say which store it belongs to")
+    if store_id != pinned:
+        raise CartMutationRefused(f"the live cart belongs to store {store_id}, but store {pinned} is pinned")
+
+    intent = str(fulfillment.get("intent") or "").strip().lower()
+    if not intent:
+        raise CartMutationRefused("the cart did not say whether it is for delivery or pickup")
+    if intent not in DELIVERY_INTENTS:
+        raise CartMutationRefused(f"this is a {intent} cart, and this tool only changes delivery carts")
+
+
+def assert_line_is_addressable(line: dict[str, Any]) -> None:
+    """The observed request needs both ids, exactly, and neither may be blank."""
+    for field in ("item_id", "offer_id"):
+        if not str(line.get(field) or "").strip():
+            raise CartMutationRefused(
+                f"this cart line has no {field}, so the exact item cannot be identified"
+            )
+
+
 def action_cart_change(request: dict[str, Any]) -> dict[str, Any]:
     """Worker entry point for every cart quantity change.
 
@@ -400,44 +547,66 @@ def action_cart_change(request: dict[str, Any]) -> dict[str, Any]:
     skip a check.
     """
     item_id, delta, remove = _requested(request)
+
+    # Refuse before opening a browser. While the success contract is unproven
+    # there is no version of this that ends in a trustworthy answer, so the
+    # cheapest correct thing is to not start.
+    if ACCEPTED_RESPONSE_SHAPE is None:
+        raise CartMutationRefused(NOT_READY_MESSAGE)
+
     options = browser.BrowserOptions.from_request(request.get("options", {}))
+    pinned_store = (request.get("options") or {}).get("pinned_store")
 
-    with browser.open_session(options) as session:
-        # A cart read taken now, not one cached from an earlier command. The
-        # window between this read and the write below is the lost-update
-        # window, and it is narrow on purpose; it is not zero, and nothing here
-        # pretends otherwise.
-        protocol.progress("reading the cart")
-        payload = cart_module.capture_cart(session)
-        before_cart = cart_parse.parse_cart(payload)
+    sent = False
+    try:
+        with browser.open_session(options) as session:
+            # A cart read taken now, not one cached from an earlier command.
+            # The window between this read and the write below is the
+            # lost-update window: narrow on purpose, and not zero.
+            protocol.progress("reading the cart")
+            payload = cart_module.capture_cart(session)
+            before_cart = cart_parse.parse_cart(payload)
 
-        line = find_line(before_cart, item_id)
-        if line is None:
-            raise CartMutationRefused(
-                f"item {item_id} is not in the cart; "
-                "`walmart cart add` can only change lines that are already there"
-            )
-        _assert_first_party(line)
+            assert_deliverable_from_the_pinned_store(before_cart, pinned_store)
 
-        before = quantity_of(before_cart, item_id)
-        if before is None:
-            raise cart_parse.CartUnreadable(
-                "the cart did not report a quantity for this item, so no change can be derived"
-            )
-        target = target_quantity(before, delta, remove)
-        if target == before:
-            return _result(item_id, before, before, target, APPLIED, "", changed=False)
+            line = find_line(before_cart, item_id)
+            if line is None:
+                raise CartMutationRefused(
+                    f"item {item_id} is not in the cart; "
+                    "`walmart cart add` can only change lines that are already there"
+                )
+            _assert_first_party(line)
+            assert_line_is_addressable(line)
 
-        body = build_update_items_body(cart_id_of(payload), line, target)
+            before = quantity_of(before_cart, item_id)
+            if before is None:
+                raise CartMutationRefused(
+                    "the cart did not report a quantity for this item, so no change can be derived"
+                )
+            target = target_quantity(before, delta, remove)
+            if target == before:
+                return _result(item_id, before, before, target, APPLIED, "", changed=False)
 
-        protocol.progress("updating the cart")
-        status, response = send_update(session, body)
-        ack = acknowledgement(status, response)
+            body = build_update_items_body(cart_id_of(payload), line, target)
 
-        # Read the cart again from the site, never from the response. What we
-        # want to know is what the cart holds, and only the cart can say.
-        protocol.progress("checking the cart")
-        after = quantity_of(_reread(session), item_id)
+            protocol.progress("updating the cart")
+            sent = True
+            status, response = send_update(session, body)
+            ack = acknowledgement(status, response)
+
+            # Read the cart again from the site, never from the response. What
+            # we want to know is what the cart holds, and only the cart can say.
+            protocol.progress("checking the cart")
+            after = quantity_of(_reread(session), item_id)
+    except CartMutationRefused:
+        raise
+    except Exception as exc:
+        # Before the request went out, an error is a clean failure: nothing was
+        # sent, so nothing can have changed. Afterwards it is genuinely
+        # unverified and must stay that way.
+        if sent:
+            raise
+        raise PreflightFailed(exc) from exc
 
     outcome, message = classify(ack, before, after, target)
     return _result(item_id, before, after, target, outcome, message)
