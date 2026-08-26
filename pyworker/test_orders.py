@@ -415,3 +415,58 @@ def test_a_nonsense_page_count_is_refused_before_the_browser_opens(monkeypatch):
 def test_known_ids_must_be_a_list(monkeypatch):
     with pytest.raises(ValueError):
         orders.normalize_params({"params": {"known_ids": "200012345678901"}})
+
+
+# --- Constants that fail open -------------------------------------------------
+#
+# Audited with the same question as the denylists (docs/TESTING.md): which
+# direction does a wrong value fail in? Lowering MAX_PAGES stops the walk early
+# with page_limit and a resumable archive -- visible, documented, safe. Raising
+# it means an unbounded loop against someone else's site, unattended, which is
+# how a bug becomes abuse. Raising PAGE_SIZE asks Walmart for a page shape we
+# have never observed, with a 429 as the price of being wrong.
+#
+# Both are therefore pinned, and both survived mutation before these existed.
+
+
+def test_the_page_ceiling_is_what_we_agreed_to():
+    assert orders.MAX_PAGES == 200, (
+        "raising this lets an unattended sync walk further against Walmart than "
+        "anyone has agreed to; it is a ceiling, not a tuning knob"
+    )
+
+
+def test_the_page_size_stays_where_walmart_put_it():
+    assert orders.PAGE_SIZE == 5, (
+        "this is Walmart's own page size, observed, not chosen; raising it "
+        "hopefully is an experiment paid for with a 429"
+    )
+
+
+def test_a_request_cannot_ask_to_walk_past_the_ceiling():
+    """The ceiling was a default: any max_pages in the request was honoured.
+
+    Our CLI never sends one, so nothing was wrong in practice. The worker is a
+    separate process though, and a limit that the caller can raise is not a
+    limit.
+    """
+    walked = orders.normalize_params({"params": {"max_pages": 10_000}})
+
+    assert walked["max_pages"] == orders.MAX_PAGES
+
+
+def test_a_request_may_still_ask_for_fewer_pages():
+    # The other half of the clamp. Without this, "asked for 10,000, got 200"
+    # is equally satisfied by ignoring max_pages entirely -- which is exactly
+    # what the first draft of these two tests did, both of them green.
+    assert orders.normalize_params({"params": {"max_pages": 3}})["max_pages"] == 3
+
+
+def test_an_order_id_longer_than_the_bound_is_refused():
+    """The {1,64} bound had no test; only the character class did.
+
+    An id is Walmart's data on its way into a URL and a filename, and "any
+    length of otherwise-legal characters" is not the shape we validated.
+    """
+    assert orders.ORDER_ID.match("2" * 64)
+    assert not orders.ORDER_ID.match("2" * 65)

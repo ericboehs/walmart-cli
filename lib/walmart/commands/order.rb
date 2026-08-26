@@ -21,7 +21,20 @@ module Walmart
       DEFAULT_WINDOW_YEARS = 2
 
       # Reasons that mean nothing is missing from what we asked for.
+      #
+      # Two entries, and both earned it: COMPLETE is the end of history, CUTOFF
+      # is the end of the window the user asked for. Every other reason leaves
+      # history unread, so widening this list is how a truncated sync starts
+      # reporting success -- the exact failure this command exists to avoid.
+      # Pinned by a test for that reason; see test_order.rb.
       SETTLED = %w[complete cutoff].freeze
+
+      # Every reason the worker can produce, so a rename on that side fails
+      # here instead of silently degrading to the catch-all branch.
+      KNOWN_REASONS = %w[
+        complete cutoff page_limit no_next_page history_unreadable
+        order_unreadable rate_limited challenge_detected
+      ].freeze
 
       def run(path, args)
         subcommand = path[1] || "sync"

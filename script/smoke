@@ -219,7 +219,7 @@ class Smoke
     out, err, status = Open3.capture3(env(extra, fresh: kase.fresh), RbConfig.ruby, "-I#{ROOT}/lib",
                                       "#{ROOT}/bin/walmart", *kase.argv)
     @checked += 1
-    puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}" if VERBOSE
+    puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}--- stderr ---\n#{err}" if VERBOSE
 
     assert_exit(kase, status)
     return assert_canary_is_detectable(kase, out, err) if leak_probe
@@ -354,19 +354,30 @@ class Plan
   # Both states are here on purpose. One case cannot tell 3 from a constant 3,
   # and the mutation that mattered -- always report success -- is invisible
   # without the stopped case to contrast with the complete one.
+  # The reasons here are ones the worker can actually produce. This used to say
+  # page_changed, which appears nowhere in pyworker or lib -- so the only
+  # end-to-end stop case exercised the catch-all branch and proved nothing about
+  # any stop that can really happen. page_limit is what a two-year --all sync
+  # hits at MAX_PAGES; no_next_page is what a Walmart markup change looks like.
+  # Those are the two most likely real stops, and both were unexercised.
   def stop_cases
     [
-      Case.new(label: "sync stopped early (exit 3)", argv: %w[order sync], exit_code: 3,
-               expect: { stop: "page_changed", text: /stopped early/ }, fresh: "stopped"),
-      Case.new(label: "sync stopped early (json, exit 3)", argv: ["order", "sync", "--json"],
-               exit_code: 3, expect: { stop: "page_changed", json: true }, fresh: "stopped-json"),
+      Case.new(label: "sync stopped at the page ceiling (exit 3)", argv: %w[order sync],
+               exit_code: 3, expect: { stop: "page_limit", text: /page ceiling/ },
+               fresh: "stopped"),
+      Case.new(label: "sync stopped at the page ceiling (json, exit 3)",
+               argv: ["order", "sync", "--json"], exit_code: 3,
+               expect: { stop: "page_limit", json: true }, fresh: "stopped-json"),
+      Case.new(label: "sync stopped with no next-page control (exit 3)", argv: %w[order sync],
+               exit_code: 3, expect: { stop: "no_next_page", text: /stopped early/ },
+               fresh: "stopped-nonext"),
       Case.new(label: "sync complete (exit 0)", argv: %w[order sync], exit_code: 0,
                expect: /archived 1 order/, fresh: "complete"),
       # A stopped sync must leave an archive that knows it is partial, and it
       # has to survive the process that wrote it -- so this reads it back from
       # disk in a later run rather than trusting the writer.
       Case.new(label: "archive admits it is incomplete", argv: %w[order list], exit_code: 0,
-               expect: /archive is incomplete.+page_changed/m, fresh: "stopped")
+               expect: /archive is incomplete.+page_limit/m, fresh: "stopped")
     ]
   end
 

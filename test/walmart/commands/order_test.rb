@@ -152,6 +152,58 @@ module Walmart
         assert_raises(UsageError) { run_sync(path: %w[order purge]) }
       end
 
+      # SETTLED decides whether a sync reports success, and it is a list, and
+      # its wrong version fails open -- add a real stop reason and a truncated
+      # walk exits 0 with an archive that believes it is whole. Nothing else in
+      # either suite notices, which is how it sat here unpinned.
+      def test_only_finishing_and_reaching_the_window_edge_count_as_settled
+        assert_equal %w[complete cutoff], Order::SETTLED,
+                     "adding a reason here makes a truncated sync report success. " \
+                     "page_limit and no_next_page both leave history unread; if a " \
+                     "reason belongs here, argue it in DESIGN.md first."
+      end
+
+      # A reason renamed on the Python side degrades to the catch-all branch and
+      # to UNVERIFIED, which is safe. A reason *added* there and forgotten here
+      # is invisible, and it is the direction that eventually misclassifies one.
+      # Compared as text so the two definitions stay independent.
+      def test_ruby_knows_every_stop_reason_the_worker_can_produce
+        source = File.read(File.join(ROOT, "pyworker/orders.py"))
+        emitted = source.scan(/Stop\(\s*"([a-z_]+)"/).flatten
+        constants = source.scan(/^(COMPLETE|CUTOFF|PAGE_LIMIT|NO_NEXT_PAGE) = "([a-z_]+)"/)
+                          .map(&:last)
+        challenge = File.read(File.join(ROOT, "pyworker/challenge.py"))[/CHALLENGE_CODE = "([a-z_]+)"/, 1]
+        produced = (emitted + constants + [challenge]).compact.uniq.sort
+
+        assert_equal produced, Order::KNOWN_REASONS.sort,
+                     "the worker and this command disagree about what a stop can be called"
+      end
+
+      # Written out rather than computed as KNOWN_REASONS - SETTLED, which is
+      # the trap: derived that way, growing SETTLED shrinks the list being
+      # checked, so the test quietly stops looking at the reason that just
+      # became wrong. A literal cannot be talked out of an assertion.
+      MUST_NOT_REPORT_SUCCESS = %w[
+        page_limit no_next_page history_unreadable order_unreadable
+        rate_limited challenge_detected
+      ].freeze
+
+      def test_no_unsettled_reason_reports_success
+        MUST_NOT_REPORT_SUCCESS.each do |reason|
+          code = run_sync(stopped: { "reason" => reason })
+
+          assert_equal ExitCodes::UNVERIFIED, code,
+                       "#{reason} left history unread and still reported success"
+        end
+      end
+
+      # The two literals together have to account for every reason, or a new
+      # one could be added to neither and checked by nothing.
+      def test_every_known_reason_is_classified_one_way_or_the_other
+        assert_equal Order::KNOWN_REASONS.sort,
+                     (Order::SETTLED + MUST_NOT_REPORT_SUCCESS).sort
+      end
+
       private
 
       def sync_worker(orders, stopped: { "reason" => "complete" }, seen: nil)

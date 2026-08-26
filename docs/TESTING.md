@@ -2,9 +2,10 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of ten defects
-found in two days, eight of which were sitting inside checks that were passing
-at the time. This file records what those had in common, because the mistakes
+The layout of the suite is not arbitrary. It is the residue of thirteen defects
+found in two days, eleven of which were sitting inside checks that were passing
+at the time — including one found while writing the fix for another, in this
+file's own audit. This file records what those had in common, because the mistakes
 were not careless ones and will be made again by anyone who only reads the code.
 
 ## The failure mode: a check that cannot see what it is named after
@@ -21,6 +22,9 @@ Each of these was written deliberately, read fine, and passed:
 | smoke's worker-failure cases | the stub spoke the wrong protocol, so they hit a transport error that shares an exit code with the failure they named |
 | every test of `item` and `cart show` | they asserted on stdout and discarded the return value, while both commands returned `nil` and crashed at `Kernel#exit` |
 | the redaction tests | they pinned the *mechanism* — depth, lists, spelling — and nothing pinned the *membership*, so deleting `paymentMethods` from the denylist left the whole suite green while card details survived into the archive |
+| smoke's only stopped-sync case | it used the reason `page_changed`, which no worker can emit, so the one end-to-end stop test exercised the catch-all branch and said nothing about `page_limit` or `no_next_page` — the two most likely real stops |
+| `SETTLED`, the list deciding whether a sync reports success | nothing named its contents, so adding a real stop reason to it made a truncated sync exit 0 with all 405 checks green |
+| the first draft of the page-ceiling test | it asked for 10,000 pages and got 200, which is equally satisfied by ignoring the parameter — which is what the code did, because the test passed the wrong argument shape |
 
 The `item` and `cart show` one shipped, in two commands, on every JSON
 invocation.
@@ -91,6 +95,22 @@ message, and prefer assertions that name the specific thing — an error code, n
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A constant is a list of one, and the question is the same.** `MAX_PAGES`
+  lowered stops the walk early with a resumable archive; raised, it is an
+  unbounded loop against someone else's site, unattended. Pinned. Applying the
+  rule to constants also found that the ceiling was only a default — the request
+  could name any number and get it — which no caller exercised and no test could
+  have caught, because there was nothing to catch.
+- **Two checks can both be sound and still leave the gap between them.** The
+  stop-reason classification was pinned in Ruby and the exit code was proven end
+  to end, and neither could see the other's blind spot: the only end-to-end stop
+  used a reason that cannot happen. Ask what a pair of checks *jointly* fails to
+  cover, not whether each is correct.
+- **Never derive a test's inputs from the thing under test.** The check that
+  every unsettled reason exits non-zero first read `KNOWN_REASONS - SETTLED`, so
+  widening `SETTLED` shrank the list being checked and the test stopped looking
+  at the reason that had just become wrong. It is written out as a literal now,
+  with a completeness test tying the two literals back together.
 - **Ask which direction a list fails in before deciding it needs pinning.**
   Shrinking `DROP_KEYS` or growing `WALMART_SELLERS` fails *open* and silently,
   so both are pinned to a documented set. Shrinking `WALMART_SELLERS`, or losing

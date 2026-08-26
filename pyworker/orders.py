@@ -97,12 +97,21 @@ def normalize_params(request: dict[str, Any]) -> dict[str, Any]:
         # Ids the caller already has. Their detail pages are not fetched, which
         # is what makes a re-sync cheap.
         "known_ids": {str(value) for value in known},
-        "max_pages": _bounded(params.get("max_pages"), MAX_PAGES),
+        "max_pages": _bounded(params.get("max_pages"), MAX_PAGES, maximum=MAX_PAGES),
         "wait_seconds": _bounded(params.get("wait_seconds"), PAGE_WAIT_SECONDS),
     }
 
 
-def _bounded(value: Any, default: int) -> int:
+def _bounded(value: Any, default: int, maximum: int | None = None) -> int:
+    """A count from the request, clamped to something defensible.
+
+    MAX_PAGES is described as a ceiling, and it was only a default: the request
+    could name any number and get it. Our own CLI never sends max_pages, so
+    nothing was wrong in practice -- but the worker is a separate process and
+    its input contract should not depend on the only current caller being
+    well-behaved. Clamping rather than raising, because a ceiling that refuses
+    the request instead of honouring it as far as it can is a worse ceiling.
+    """
     if value is None:
         return default
     try:
@@ -111,7 +120,7 @@ def _bounded(value: Any, default: int) -> int:
         raise ValueError(f"expected a whole number, got {value!r}") from exc
     if number < 1:
         raise ValueError(f"{number} is not a usable count")
-    return number
+    return min(number, maximum) if maximum is not None else number
 
 
 def walk(session, params: dict[str, Any]) -> dict[str, Any]:
