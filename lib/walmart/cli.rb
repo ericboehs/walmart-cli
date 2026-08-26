@@ -7,6 +7,7 @@ require_relative "version"
 require_relative "commands/doctor"
 require_relative "commands/config_cmd"
 require_relative "commands/cart"
+require_relative "commands/item"
 require_relative "commands/login"
 require_relative "commands/order"
 require_relative "commands/search"
@@ -41,7 +42,8 @@ module Walmart
       %w[config init] => [Commands::ConfigCmd, "write a default config file"],
       %w[search] => [Commands::Search, "search Walmart's catalog"],
       %w[cart show] => [Commands::Cart, "read the live shared cart"],
-      %w[order sync] => [Commands::Order, "archive orders and receipts"]
+      %w[order sync] => [Commands::Order, "archive orders and receipts"],
+      %w[item] => [Commands::Item, "show one item by id or URL"]
     }.freeze
 
     # Declared now so `--help` tells the truth about where the project is,
@@ -49,7 +51,6 @@ module Walmart
     PLANNED = {
       %w[store show] => "compare the pinned store with Walmart's active store",
       %w[store pin] => "pin the active grocery store",
-      %w[item] => "show one item by id or URL",
       %w[cart add] => "add an exact item to the cart",
       %w[cart increment] => "increase a cart line's quantity",
       %w[cart decrement] => "decrease a cart line's quantity",

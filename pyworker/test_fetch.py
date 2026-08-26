@@ -92,7 +92,7 @@ def test_a_protocol_version_mismatch_is_a_bad_request(monkeypatch, capsys):
 
 
 def test_unimplemented_action_says_so_clearly(monkeypatch, capsys):
-    code, events = run_main({"action": "item"}, monkeypatch, capsys)
+    code, events = run_main({"action": "my_items.list"}, monkeypatch, capsys)
 
     assert code == 2
     assert events[-1]["code"] == "not_implemented"

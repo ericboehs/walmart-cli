@@ -16,6 +16,7 @@ from typing import Any
 
 import browser
 import cart as cart_module
+import item as item_module
 import login as login_module
 import orders as orders_module
 import protocol
@@ -58,7 +59,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "session.status": login_module.session_status,
     "store.show": action_not_implemented("store.show"),
     "search": search_module.action_search,
-    "item": action_not_implemented("item"),
+    "item": item_module.action_item,
     "cart.show": cart_module.action_cart_show,
     "cart.add": action_not_implemented("cart.add"),
     "cart.increment": action_not_implemented("cart.increment"),
