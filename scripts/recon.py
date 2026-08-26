@@ -76,6 +76,20 @@ def default_out_dir() -> Path:
     return REPO_ROOT / "pyworker" / "recon" / stamp
 
 
+def write_private(path: Path, text: str) -> Path:
+    """Write a file that is never more permissive than 0600, even for an instant.
+
+    Write-then-chmod leaves the file at the umask's mercy in between, and for a
+    capture that gap covers a whole response body. Opening with the mode closes
+    it; the chmod stays because open's mode is itself filtered by umask.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(text)
+    path.chmod(0o600)
+    return path
+
+
 def slugify(url: str) -> str:
     """A filename that describes the capture without leaking its query string.
 
@@ -118,6 +132,11 @@ class Recorder:
         # dropped is counted and reported.
         self.skipped: dict[str, int] = {}
         (self.out_dir / "bodies").mkdir(parents=True, exist_ok=True)
+        # A capture is somebody's session in text form. Owner-only, and private
+        # from the moment the directory exists rather than from whenever we
+        # remember to tighten it.
+        self.out_dir.chmod(0o700)
+        (self.out_dir / "bodies").chmod(0o700)
 
     def on_response(self, response) -> None:
         try:
@@ -153,7 +172,7 @@ class Recorder:
         # must not be silently missing from a capture we later trust.
         try:
             payload = text if self.keep_raw else scrub.scrub_document(text, self.literals)
-            (self.out_dir / "bodies" / name).write_text(payload)
+            write_private(self.out_dir / "bodies" / name, payload)
         except Exception as exc:  # noqa: BLE001
             self.counter -= 1
             self.entries.append(
@@ -226,7 +245,7 @@ class Recorder:
             "skipped_as_noise": dict(sorted(self.skipped.items())),
         }
         path = self.out_dir / "index.json"
-        path.write_text(json.dumps(index, indent=2, sort_keys=True))
+        write_private(path, json.dumps(index, indent=2, sort_keys=True))
         self.write_summary(plan)
         return path
 
@@ -261,7 +280,7 @@ class Recorder:
             lines += ["", "## skipped as third-party noise", ""]
             lines += [f"- {count}x `{fragment}`" for fragment, count in sorted(self.skipped.items())]
         lines += ["", "## findings", "", "_fill in before anything is promoted to a fixture_", ""]
-        (self.out_dir / "summary.md").write_text("\n".join(lines))
+        write_private(self.out_dir / "summary.md", "\n".join(lines))
 
 
 def _noise_fragment(url: str | None) -> str | None:

@@ -167,15 +167,28 @@ module Walmart
       write_json(paths.index_file, index)
     end
 
+    # Writes a file that is never, at any instant, more permissive than 0600.
+    #
+    # The obvious version -- write, then chmod -- leaves the file readable at
+    # whatever the umask allows for the moment between the two calls, and that
+    # moment contains the entire contents of an order. Creating it with the
+    # mode closes the window. The trailing chmod stays because File.open's mode
+    # is itself subject to umask, so this is certainty rather than nearly.
+    #
+    # EXCL also turns a leftover .tmp from a crashed run into an error instead
+    # of something we silently write through.
     def write_json(path, data)
       paths.ensure_private_dir!(File.dirname(path))
       tmp = "#{path}.tmp"
-      File.write(tmp, "#{JSON.pretty_generate(data)}\n")
+      body = "#{JSON.pretty_generate(data)}\n"
+      File.open(tmp, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |file| file.write(body) }
       File.chmod(0o600, tmp)
       # rename is atomic within a filesystem: a reader sees the old file or the
       # new one, never a partial write.
       File.rename(tmp, path)
       path
+    rescue Errno::EEXIST
+      raise ConfigError, "a previous write left #{tmp} behind; remove it and try again"
     end
   end
 end

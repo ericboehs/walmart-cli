@@ -104,7 +104,10 @@ module Walmart
       dir = File.dirname(paths.config_file)
       paths.ensure_private_dir!(dir)
       tmp = "#{paths.config_file}.tmp"
-      File.write(tmp, "#{JSON.pretty_generate(data)}\n")
+      # Created private rather than tightened afterwards: write-then-chmod
+      # leaves the file at the umask's mercy for the moment in between.
+      body = "#{JSON.pretty_generate(data)}\n"
+      File.open(tmp, File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |file| file.write(body) }
       File.chmod(0o600, tmp)
       File.rename(tmp, paths.config_file)
       self

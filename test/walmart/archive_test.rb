@@ -20,6 +20,18 @@ module Walmart
       "type" => "in-store"
     ).freeze
 
+    # Silences the belt-and-braces chmod so a test can observe the mode the
+    # file was *created* with. minitest/mock is not available here, so this
+    # swaps the real method and puts it back.
+    def without_chmod
+      File.singleton_class.alias_method(:real_chmod, :chmod)
+      File.singleton_class.define_method(:chmod) { |*_args| 0 }
+      yield
+    ensure
+      File.singleton_class.alias_method(:chmod, :real_chmod)
+      File.singleton_class.remove_method(:real_chmod)
+    end
+
     def archive(**kwargs)
       Archive.new(paths: paths, now: -> { Time.utc(2026, 8, 26, 3, 0, 0) }, **kwargs)
     end
@@ -79,6 +91,43 @@ module Walmart
       archive.write(ORDER)
 
       assert_equal "700", format("%o", File.stat(File.join(paths.orders_dir, "2026")).mode & 0o777)
+    end
+
+    # The mode of the file that survives cannot see the bug this guards
+    # against: write-then-chmod leaves the file world-readable for the instant
+    # between the two calls, and that instant contains a whole order. Removing
+    # the chmod leaves only the creation mode visible, which is the thing that
+    # actually has to be right. A permissive umask makes the failure loud.
+    def test_a_record_is_never_world_readable_even_for_an_instant
+      original_umask = File.umask(0)
+      without_chmod do
+        archive.write(ORDER)
+      end
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+
+      assert_equal "600", format("%o", File.stat(path).mode & 0o777)
+    ensure
+      File.umask(original_umask)
+    end
+
+    def test_the_index_is_never_world_readable_even_for_an_instant
+      original_umask = File.umask(0)
+      without_chmod { archive.write(ORDER) }
+
+      assert_equal "600", format("%o", File.stat(paths.index_file).mode & 0o777)
+    ensure
+      File.umask(original_umask)
+    end
+
+    # A leftover .tmp means a previous run died mid-write. Writing through it
+    # would be writing into a file we know nothing about.
+    def test_a_stale_temporary_file_is_an_error_not_something_to_write_through
+      store = archive
+      store.write(ORDER)
+      stale = File.join(paths.orders_dir, "2026", "200012345678901.json.tmp")
+      File.write(stale, "leftover")
+
+      assert_raises(ConfigError) { store.write(ORDER, force: true) }
     end
 
     def test_no_temporary_file_survives_a_write

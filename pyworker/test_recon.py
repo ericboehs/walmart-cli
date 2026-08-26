@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import os
+import pathlib
 import sys
 import time
 from pathlib import Path
@@ -554,3 +556,34 @@ def test_bot_protection_traffic_is_kept_because_it_is_evidence(tmp_path):
 
     assert len(rec.entries) == 1
     assert rec.skipped == {}
+
+
+# --- Capture files are private from the instant they exist ---------------------
+
+
+def test_a_written_capture_file_is_owner_only(tmp_path):
+    path = recon.write_private(tmp_path / "body.json", '{"ok": true}')
+
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert path.read_text() == '{"ok": true}'
+
+
+def test_a_capture_file_is_never_world_readable_even_for_an_instant(tmp_path, monkeypatch):
+    # The surviving mode cannot see write-then-chmod: the gap is between the
+    # two calls. Neutering chmod leaves only the creation mode, and a permissive
+    # umask makes the failure loud.
+    monkeypatch.setattr(pathlib.Path, "chmod", lambda self, mode: None)
+    original = os.umask(0)
+    try:
+        path = recon.write_private(tmp_path / "body.json", "{}")
+    finally:
+        os.umask(original)
+
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_an_existing_capture_file_is_replaced_not_appended(tmp_path):
+    recon.write_private(tmp_path / "body.json", "first attempt, longer")
+    path = recon.write_private(tmp_path / "body.json", "second")
+
+    assert path.read_text() == "second"
