@@ -127,6 +127,23 @@ unless the file actually changed, and refuses an ambiguous pattern rather than
 guessing which occurrence was meant. `script/mutants.json` holds the standing
 set; `rake mutants` runs it.
 
+## A test that prevents, not one that verifies
+
+Sixteen defects, and exactly one check fired *before* the mistake was committed:
+the help-table completeness test, which named four commands missing from the
+table while the table was still being written. Everything else here catches a
+defect after it exists.
+
+The difference is not effort, it is what the check compares against. A test that
+compares behaviour to a fixture we wrote can only confirm we did what we meant.
+A test that compares one artifact to **a source of truth that already exists** —
+`parse_flags` for the help table, `orders.py` for the stop reasons,
+`docs/CONTRACTS.md` for the denylist, `CLI::COMMANDS` for coverage — fails while
+you are still typing, because the other side was there first and did not move.
+
+Prefer that shape when it is available. It is rarer than it sounds and worth
+more than another assertion on behaviour.
+
 ## Rules with a reason
 
 - **A guard and the test that hunts what the guard catches must not share a code
@@ -142,6 +159,12 @@ set; `rake mutants` runs it.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A safety property contradicted in the prose is not enforced.** The code
+  never retries a bot challenge automatically — and the sentence printed to the
+  user said "run `walmart order sync`", which is the same retry, by hand, at the
+  moment it is most likely to escalate a soft challenge into a hard block. The
+  prose is the interface. A rule that lives only in the code protects only the
+  paths that do not ask a human to act.
 - **Documentation is code that cannot fail, so give it a parity test.** The help
   table was written from what the flags plausibly were, and it both invented
   flags and omitted them — a flag the tool documents and then rejects is worse

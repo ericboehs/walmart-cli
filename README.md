@@ -135,6 +135,13 @@ waits. A one-time code by text may also appear; you type that in the window too.
 
 There is no plaintext-config fallback, by design.
 
+**After a challenge, do not re-run the command.** Clear it with `walmart login`
+in the visible window first. Re-running a blocked request unattended is how a
+soft challenge becomes a hard block, and the tool never retries one for you --
+`order list` on a blocked archive says so in as many words. This is a rule about
+the prose as much as the code: the CLI must not suggest, to a human, a retry it
+would refuse to perform itself.
+
 ## Files
 
 ```text
