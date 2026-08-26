@@ -32,6 +32,19 @@ and the data has none, so a rename, a merge resolution, or a lint autofix
 removing an unfamiliar-looking entry all pass. Expect it again the moment a
 second denylist appears.
 
+The clearest evidence that this is a shape rather than a lapse: the Ruby guard
+written to fix that leak *had the same bug in it*. Two passing tests exercising
+two fields, and deleting a third from the list kept everything green — written
+twenty minutes after fixing the identical defect in Python, in a file that was
+still open, with the problem fully in mind. It did not transfer, because the
+defect is not carried by the code or by the author's attention. It is carried by
+the situation: a list, and tests that exercise the mechanism without ever naming
+the list's contents.
+
+Recognising the shape transfers. Remembering the instance does not. Which is why
+the rule has to fire without recall — mutate a new list *because it is a new
+list*, not because you remember why.
+
 Two tests are needed there, not one, because they fail differently. One asserts
 the list *is* the documented set, so shrinking it fails by name. The other pushes
 a payload carrying every entry through the real code path, so it survives
@@ -78,6 +91,18 @@ message, and prefer assertions that name the specific thing — an error code, n
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **Ask which direction a list fails in before deciding it needs pinning.**
+  Shrinking `DROP_KEYS` or growing `WALMART_SELLERS` fails *open* and silently,
+  so both are pinned to a documented set. Shrinking `WALMART_SELLERS`, or losing
+  a `TYPE_LABELS` entry, or missing a `NEXT_PAGE_LABELS` string all fail
+  *closed* into behaviour that is documented and visible — an item refused, a
+  label kept verbatim, a walk that stops with a reason and a resumable archive.
+  Those are deliberately not pinned; a membership test there is churn that
+  fights ordinary maintenance.
+- **A failure message on a list is a fork in the road, so write it as one.** The
+  exact-set test names `docs/CONTRACTS.md` as the authority and says not to edit
+  the list to satisfy the test, because "make the parity failure go away" is the
+  natural next move and it leads straight back to the leak.
 - **Two independent copies beat one shared constant, when the failure being
   survived is the copy itself being wrong.** `Redact::FORBIDDEN_KEYS` duplicates
   the worker's `DROP_KEYS` on purpose: the worker removes those fields, and the

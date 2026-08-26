@@ -388,8 +388,23 @@ def test_the_denylist_is_exactly_the_documented_set():
     """
     documented = {orders_parse._normalize(key) for key in CONTRACT_DENYLIST}
 
-    assert orders_parse.DROP_KEYS - documented == set(), "undocumented key in DROP_KEYS"
-    assert documented - orders_parse.DROP_KEYS == set(), "documented key missing from DROP_KEYS"
+    # The wording matters more than the assertion. This is the last check
+    # standing between a leak and someone who is "fixing a parity failure", and
+    # editing both lists until the tests agree lands exactly here. Point them at
+    # where the decision gets made, not at the symptom in front of them.
+    authority = (
+        "docs/CONTRACTS.md is the authority for this list. Do not edit DROP_KEYS "
+        "to satisfy this test -- change the document first, and only if dropping "
+        "the field less is genuinely intended."
+    )
+
+    assert orders_parse.DROP_KEYS - documented == set(), (
+        f"DROP_KEYS contains a field the document does not list. {authority}"
+    )
+    assert documented - orders_parse.DROP_KEYS == set(), (
+        f"a field the document requires dropping is missing from DROP_KEYS -- "
+        f"this is a live privacy leak, not a bookkeeping error. {authority}"
+    )
 
 
 @pytest.mark.parametrize("field", CONTRACT_DENYLIST)

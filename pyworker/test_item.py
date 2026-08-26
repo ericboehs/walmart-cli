@@ -298,3 +298,65 @@ def test_a_bad_argument_never_opens_a_browser(monkeypatch):
 
     with pytest.raises(ValueError):
         item.action_item({**REQUEST, "params": {"item": "milk"}})
+
+
+# --- Configuration a mechanism reads ------------------------------------------
+#
+# The denylist bug (docs/TESTING.md, instance eight) was a list with no test on
+# its contents. These are the other lists in this module, audited by asking a
+# single question: which direction does the list fail in?
+#
+# Shrinking WALMART_SELLERS or FIRST_PARTY_SELLER_TYPES fails closed -- an item
+# reads as marketplace, and cart add refuses it. Annoying, visible, safe.
+# Growing either one fails open: a marketplace seller reads as Walmart's own,
+# which is the precise thing "both signals must agree" exists to prevent, and it
+# is silent. So the sets are pinned, and an addition has to be a deliberate edit
+# rather than a plausible-looking convenience.
+#
+# TYPE_LABELS and NEXT_PAGE_LABELS are deliberately not pinned. An unrecognized
+# fulfillment label is kept verbatim by design, and a missing Next-page label
+# stops the walk with a reason and a resumable archive. Both degrade into
+# documented, visible behaviour, so a membership test there would be churn that
+# fights ordinary maintenance.
+
+
+def test_the_first_party_seller_names_are_pinned():
+    """Growing this set is what fails open, so it may not happen by accident.
+
+    "Walmart Restored" and friends carry a Walmart-shaped name while being
+    marketplace storefronts. Anything added here must be a name Walmart itself
+    sells under -- if this test is in your way, that is the question to answer.
+    """
+    assert {"walmart.com", "walmart", "walmart inc"} == item_parse.WALMART_SELLERS
+
+
+def test_the_first_party_seller_types_are_pinned():
+    assert {"internal", "1p", "first_party"} == item_parse.FIRST_PARTY_SELLER_TYPES
+
+
+def test_a_walmart_shaped_marketplace_name_is_not_first_party():
+    # The concrete case the pinned set protects, so the reason survives even if
+    # someone decides the assertion above is too strict.
+    restored = {"sellerType": "INTERNAL", "sellerName": "Walmart Restored"}
+
+    assert item_parse.is_first_party(restored) is False
+
+
+def test_every_observed_price_field_is_read():
+    """PRICE_KEYS shrinking loses a price silently, which is the same shape.
+
+    The names come from docs/CONTRACTS.md, where the observed priceInfo shape is
+    recorded. A missing entry is not a crash; it is a field quietly absent from
+    output nobody is comparing against Walmart's page.
+    """
+    documented = {
+        "currentPrice",
+        "basePrice",
+        "wasPrice",
+        "comparisonPrice",
+        "unitPrice",
+        "dropPrice",
+        "savings",
+    }
+
+    assert {source for _label, source in item_parse.PRICE_KEYS} == documented
