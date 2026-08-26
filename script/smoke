@@ -100,23 +100,32 @@ def stub_worker_source
       data = replies.fetch("order.sync").dup
       data["stopped"] = { "reason" => stop, "cursor" => "eyJvIjoxfQ==",
                           "oldest_date" => "2026-08-20T14:02:00.000Z" }
-      puts({ "type" => "result", "ok" => true, "data" => data }.to_json)
+      puts({ "type" => "result", "data" => data }.to_json)
+      exit 0
+    end
+
+    # A worker that quotes its input back in an error. Not hypothetical: a
+    # stray log line on the Python side would do exactly this, and it is the
+    # shape the canary exists to catch.
+    if ENV["SMOKE_LEAK_PROBE"] == "1"
+      puts({ "type" => "error", "code" => "leak_probe",
+             "message" => "worker failed on " + JSON.generate(request) }.to_json)
       exit 0
     end
 
     force = ENV["SMOKE_FORCE_FAILURE"]
     if force && !force.empty?
       failure = failures.fetch(force)
-      puts({ "type" => "result", "ok" => false, "error" => failure }.to_json)
+      puts({ "type" => "error", "code" => failure["code"],
+             "message" => failure["message"] }.to_json)
       exit 0
     end
 
     if replies.key?(action)
-      puts({ "type" => "result", "ok" => true, "data" => replies[action] }.to_json)
+      puts({ "type" => "result", "data" => replies[action] }.to_json)
     else
-      puts({ "type" => "result", "ok" => false,
-             "error" => { "code" => "not_implemented",
-                          "message" => action + " is not implemented" } }.to_json)
+      puts({ "type" => "error", "code" => "not_implemented",
+             "message" => action + " is not implemented" }.to_json)
     end
   RUBY
 end
@@ -185,12 +194,29 @@ class Smoke
       "PATH" => "#{@bin}:#{ENV.fetch("PATH", "")}",
       "NO_COLOR" => "1",
       "SMOKE_FORCE_FAILURE" => "",
-      "SMOKE_STOP_REASON" => ""
+      "SMOKE_STOP_REASON" => "",
+      "SMOKE_LEAK_PROBE" => ""
     }.merge(extra)
   end
 
   def cases
-    read_cases + stop_cases + json_cases + failure_cases + credential_cases
+    read_cases + stop_cases + json_cases + failure_cases + credential_cases + [leak_probe_case]
+  end
+
+  # The negative control, and the reason the canary check is worth anything.
+  #
+  # A check for the absence of something passes just as happily when the thing
+  # could never have been there -- which is what the first version of this did,
+  # scanning for a credential in a run that had none. So one case makes the
+  # leak really happen: a stub that quotes the request back in its error, a
+  # real password read from the provider, carried through the real worker
+  # transport and printed by the real error reporter. If this case stops
+  # finding the canary, then either credentials no longer reach the worker or
+  # the detector is no longer wired to what a user sees, and in both of those
+  # worlds every other canary assertion has quietly become decoration again.
+  def leak_probe_case
+    Case.new(label: "the canary check can actually catch a leak", argv: %w[login --verbose],
+             exit_code: nil, expect: { leak: true }, fresh: "leak")
   end
 
   # Every case is scanned for the canary, but these are the ones that put a
@@ -295,7 +321,7 @@ class Smoke
   def failure_cases
     [
       Case.new(label: "challenge (text)", argv: %w[search milk], exit_code: 1,
-               expect: { failure: "challenge" }),
+               expect: { failure: "challenge", text: /asked for a human/ }),
       Case.new(label: "challenge (json)", argv: %w[search milk --json], exit_code: nil,
                expect: { failure: "challenge", json: true }),
       Case.new(label: "login required (json)", argv: ["cart", "show", "--json"], exit_code: nil,
@@ -306,9 +332,11 @@ class Smoke
   def check(kase)
     extra = {}
     expect = kase.expect
+    leak_probe = false
     if expect.is_a?(Hash)
       extra["SMOKE_FORCE_FAILURE"] = expect[:failure] if expect[:failure]
       extra["SMOKE_STOP_REASON"] = expect[:stop] if expect[:stop]
+      leak_probe = extra["SMOKE_LEAK_PROBE"] = "1" if expect[:leak]
       expect = expect[:json] ? :json : expect[:text]
     end
 
@@ -318,6 +346,8 @@ class Smoke
     puts "\n$ walmart #{kase.argv.join(" ")}\n#{out}" if VERBOSE
 
     assert_exit(kase, status)
+    return assert_canary_is_detectable(kase, out, err) if leak_probe
+
     assert_no_canary(kase, out, err)
     expect == :json ? assert_one_document(kase, out) : assert_matches(kase, out, err, expect)
   end
@@ -345,10 +375,21 @@ class Smoke
   end
 
   def assert_no_canary(kase, out, err)
-    return unless "#{out}#{err}".include?(CANARY)
+    return unless canary?(out, err)
 
     fail!(kase, "a credential-shaped value reached the output")
   end
+
+  # Deliberately inverted: this one has to find it, using the same predicate
+  # every other case trusts to come back false.
+  def assert_canary_is_detectable(kase, out, err)
+    return if canary?(out, err)
+
+    fail!(kase, "planted a credential in the worker's reply and the check did not see it; " \
+                "every other canary assertion in this suite is now meaningless")
+  end
+
+  def canary?(out, err) = "#{out}#{err}".include?(CANARY)
 
   def fail!(kase, reason)
     @failures << "#{kase.label}: #{reason}"
