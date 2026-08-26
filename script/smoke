@@ -24,8 +24,14 @@ require "open3"
 ROOT = File.expand_path("..", __dir__)
 VERBOSE = ARGV.include?("--verbose")
 
-# A credential-shaped string. If this ever appears on stdout, something in the
-# chain is printing what it was handed instead of a redaction.
+# A credential-shaped string, planted where a real password would be and
+# checked for on every stream of every case.
+#
+# This only means something because a fake `security` on PATH actually hands it
+# over: the Keychain provider, the Secret wrapper, the worker request and the
+# error formatter all see the real thing. Without that the check was a
+# decoration -- it scanned output that could not contain a credential, in a run
+# where no credential existed.
 CANARY = "smoke-canary-secret-value"
 
 # Canned worker replies, keyed by action. Shapes copied from the parsers'
@@ -89,6 +95,15 @@ def stub_worker_source
     replies = JSON.parse(#{WORKER_REPLIES.to_json.dump})
     failures = JSON.parse(#{WORKER_FAILURES.to_json.dump})
 
+    stop = ENV["SMOKE_STOP_REASON"]
+    if stop && !stop.empty? && action == "order.sync"
+      data = replies.fetch("order.sync").dup
+      data["stopped"] = { "reason" => stop, "cursor" => "eyJvIjoxfQ==",
+                          "oldest_date" => "2026-08-20T14:02:00.000Z" }
+      puts({ "type" => "result", "ok" => true, "data" => data }.to_json)
+      exit 0
+    end
+
     force = ENV["SMOKE_FORCE_FAILURE"]
     if force && !force.empty?
       failure = failures.fetch(force)
@@ -131,6 +146,25 @@ class Smoke
     @stub = File.join(@dir, "stub-worker.rb")
     File.write(@stub, stub_worker_source)
     File.chmod(0o700, @stub)
+    write_fake_security
+  end
+
+  # Stands in for macOS `security`, so the credential path is exercised with a
+  # value we can then hunt for. -w means "print the password"; without it the
+  # provider is only probing for presence and must not get a value.
+  def write_fake_security
+    @bin = File.join(@dir, "bin")
+    FileUtils.mkdir_p(@bin)
+    path = File.join(@bin, "security")
+    File.write(path, <<~SH)
+      #!/bin/sh
+      case " $* " in
+        *" -w "*) echo "#{CANARY}" ;;
+        *) echo "password has been deleted" ;;
+      esac
+      exit 0
+    SH
+    File.chmod(0o755, path)
   end
 
   # `ruby stub.rb` stands in for `python fetch.py`: the CLI appends the real
@@ -148,13 +182,57 @@ class Smoke
       "XDG_STATE_HOME" => File.join(root, "state"),
       "XDG_CACHE_HOME" => File.join(root, "cache"),
       "WALMART_PYTHON" => "#{RbConfig.ruby} #{@stub}",
+      "PATH" => "#{@bin}:#{ENV.fetch("PATH", "")}",
       "NO_COLOR" => "1",
-      "SMOKE_FORCE_FAILURE" => ""
+      "SMOKE_FORCE_FAILURE" => "",
+      "SMOKE_STOP_REASON" => ""
     }.merge(extra)
   end
 
   def cases
-    read_cases + json_cases + failure_cases
+    read_cases + stop_cases + json_cases + failure_cases + credential_cases
+  end
+
+  # Every case is scanned for the canary, but these are the ones that put a
+  # credential in motion: read from the provider, wrapped, handed to the worker
+  # and -- in the failing case -- carried into an error report with --verbose,
+  # which is the switch whose whole job is to print more of what happened.
+  def credential_cases
+    [
+      Case.new(label: "doctor sees the credential without printing it", argv: %w[doctor --verbose],
+               exit_code: nil, expect: /credentials/),
+      Case.new(label: "a failing login does not print what it was given",
+               argv: %w[login --verbose], exit_code: nil,
+               expect: { failure: "challenge", text: /./ }),
+      Case.new(label: "a failing login in json mode does not print it either",
+               argv: %w[login --json --verbose], exit_code: nil,
+               expect: { failure: "challenge", json: true })
+    ]
+  end
+
+  # The exit code on a partial sync is the most consequential byte this tool
+  # produces: it is the difference between a script believing it has two years
+  # of history and knowing it has some. A unit test can only say that a method
+  # returns 3; only this can say that a process exits 3, through the real
+  # dispatcher, formatter and top-level rescue.
+  #
+  # Both states are here on purpose. One case cannot tell 3 from a constant 3,
+  # and the mutation that mattered -- always report success -- is invisible
+  # without the stopped case to contrast with the complete one.
+  def stop_cases
+    [
+      Case.new(label: "sync stopped early (exit 3)", argv: %w[order sync], exit_code: 3,
+               expect: { stop: "page_changed", text: /stopped early/ }, fresh: "stopped"),
+      Case.new(label: "sync stopped early (json, exit 3)", argv: ["order", "sync", "--json"],
+               exit_code: 3, expect: { stop: "page_changed", json: true }, fresh: "stopped-json"),
+      Case.new(label: "sync complete (exit 0)", argv: %w[order sync], exit_code: 0,
+               expect: /archived 1 order/, fresh: "complete"),
+      # A stopped sync must leave an archive that knows it is partial, and it
+      # has to survive the process that wrote it -- so this reads it back from
+      # disk in a later run rather than trusting the writer.
+      Case.new(label: "archive admits it is incomplete", argv: %w[order list], exit_code: 0,
+               expect: /archive is incomplete.+page_changed/m, fresh: "stopped")
+    ]
   end
 
   # The ordinary surface, in text mode.
@@ -229,8 +307,9 @@ class Smoke
     extra = {}
     expect = kase.expect
     if expect.is_a?(Hash)
-      extra["SMOKE_FORCE_FAILURE"] = expect[:failure]
-      expect = expect[:json] ? :json : nil
+      extra["SMOKE_FORCE_FAILURE"] = expect[:failure] if expect[:failure]
+      extra["SMOKE_STOP_REASON"] = expect[:stop] if expect[:stop]
+      expect = expect[:json] ? :json : expect[:text]
     end
 
     out, err, status = Open3.capture3(env(extra, fresh: kase.fresh), RbConfig.ruby, "-I#{ROOT}/lib",
