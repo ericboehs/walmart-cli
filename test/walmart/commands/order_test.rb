@@ -179,12 +179,12 @@ module Walmart
         assert_raises(UsageError) { run_sync(path: %w[order purge]) }
       end
 
-      # SETTLED decides whether a sync reports success, and it is a list, and
-      # its wrong version fails open -- add a real stop reason and a truncated
-      # walk exits 0 with an archive that believes it is whole. Nothing else in
-      # either suite notices, which is how it sat here unpinned.
+      # This list decides whether a sync reports success, and its wrong version
+      # fails open -- add a real stop reason and a truncated walk exits 0 with
+      # an archive that believes it is whole. Nothing else in either suite
+      # notices, which is how it sat here unpinned.
       def test_only_finishing_and_reaching_the_window_edge_count_as_settled
-        assert_equal %w[complete cutoff], Order::SETTLED,
+        assert_equal %w[complete cutoff], SyncNote::SETTLED_REASONS,
                      "adding a reason here makes a truncated sync report success. " \
                      "page_limit and no_next_page both leave history unread; if a " \
                      "reason belongs here, argue it in DESIGN.md first."
@@ -228,7 +228,7 @@ module Walmart
       # one could be added to neither and checked by nothing.
       def test_every_known_reason_is_classified_one_way_or_the_other
         assert_equal Order::KNOWN_REASONS.sort,
-                     (Order::SETTLED + MUST_NOT_REPORT_SUCCESS).sort
+                     (SyncNote::SETTLED_REASONS + MUST_NOT_REPORT_SUCCESS).sort
       end
 
       # The Ruby half of the same property. Asserted on the request because the

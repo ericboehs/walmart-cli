@@ -172,6 +172,37 @@ so it cannot on its own support a global claim:
 `window_complete?` stays true for both, because reaching the edge of what was
 asked for is still a success.
 
+### Settlement is a property of the note, not of the reason
+
+`SyncNote` answers "did this run finish what it set out to do", and both the
+archive and the sync exit code ask it — those two disagreeing is a
+contradiction this project has already shipped once.
+
+- `complete` settles.
+- `cutoff` settles **only with a lower bound**. It means "we reached the bottom
+  of the window we were given"; with no window the same word describes a walk
+  that stopped somewhere arbitrary, and reason-only membership called that a
+  success, exited 0, and printed nothing.
+- An incoherent note never settles: an upper bound with no lower bound, an
+  empty or inverted interval, a cutoff with no window. Today's worker cannot
+  produce these, but the protocol is directly invocable and a future worker bug
+  would otherwise be waved through. Not settled means `UNVERIFIED`, which is
+  the honest answer when the note contradicts itself.
+
+### Integrity is reported separately from coverage
+
+How much history was asked for and how much of what we hold can be produced are
+different questions, and the answer to one must never stand in for the other. A
+scoped window sentence used to satisfy "did we say something" and leave
+unreadable records unmentioned. They are separate branches now, and JSON carries
+`damaged` and `incompatible` as distinct counts, because their remedies differ:
+sync repairs one, only an upgrade reads the other. A read that omits records
+never advises a sync for the ones a sync cannot fix.
+
+One integrity scan is taken per render and reused. Two scans could answer from
+two views of the disk and emit a single document saying `complete: true` and
+`healthy: false`.
+
 ### Windows are intervals, and `--year` means the calendar year
 
 `order sync --year 2024` sends `since=2024-01-01` *and* `before=2025-01-01`.

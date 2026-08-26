@@ -26,17 +26,35 @@ module Walmart
 
     attr_reader :archive
 
-    def to_h
+    # One scan of the archive, reused by every field and notice in this render.
+    # Two scans could answer from two different views of the disk and emit a
+    # single document saying complete:true and healthy:false.
+    def integrity = @integrity ||= archive.integrity
+
+    def to_h = window_fields.merge(integrity_fields)
+
+    # Two axes, deliberately separate. See DESIGN.md: a single stored flag is
+    # how the old ambiguity comes back under a new name.
+    def integrity_fields
+      {
+        "complete" => archive.complete? && integrity.healthy?,
+        "healthy" => integrity.healthy?,
+        # Records the index claims and cannot produce, split by remedy.
+        "damaged" => integrity.damaged.length,
+        # Named apart from damaged. "healthy: false" alone told a script
+        # something was wrong and not what, and the two have different
+        # remedies: one is repaired by syncing, the other by upgrading.
+        "incompatible" => integrity.incompatible.length
+      }
+    end
+
+    def window_fields
       state = archive.sync_state
       {
         "synced" => archive.synced?,
-        # Two axes, named separately, then combined. A script that only gets a
-        # single "complete" will re-invent the ambiguity this replaced: an
-        # archive can have walked all of history and still be unable to answer
-        # for it, because a record on disk is damaged.
-        "complete" => archive.complete? && healthy?,
+        # An archive can have walked all of history and still be unable to
+        # answer for it, because a record on disk is damaged. Raw axis.
         "history_complete" => archive.complete?,
-        "healthy" => healthy?,
         # Scoped completeness. A --year sync that reaches its window is not
         # complete history, but it is not a truncation either, and a script
         # that cannot tell the two apart will re-run it forever.
@@ -45,10 +63,7 @@ module Walmart
         "requested_before" => archive.requested_before,
         "last_sync" => state["at"],
         "stopped_because" => archive.synced? ? state["reason"] : NEVER_SYNCED,
-        "oldest_seen" => state["oldest_date"],
-        # Records the index claims and cannot produce. A machine consumer needs
-        # this to tell a thin archive from a damaged one.
-        "damaged" => archive.damaged_ids.length
+        "oldest_seen" => state["oldest_date"]
       }.compact
     end
 
@@ -70,8 +85,6 @@ module Walmart
       "the archive is incomplete#{window}: the last sync stopped early " \
         "(#{state["reason"]}). #{advice_for(state["reason"])}"
     end
-
-    def healthy? = archive.damaged_ids.empty? && archive.incompatible_ids.empty?
 
     private
 

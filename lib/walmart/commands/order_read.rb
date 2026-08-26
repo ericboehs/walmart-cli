@@ -285,22 +285,39 @@ module Walmart
       # field and the printed sentence cannot drift apart.
       def coverage = @coverage ||= Coverage.new(archive)
 
+      # Integrity is reported after coverage and independently of it. A scoped
+      # window sentence used to satisfy the "did we say something" question
+      # while leaving unreadable records unmentioned, so the two are no longer
+      # in the same branch: one says how much history was asked for, the other
+      # how much of what we hold can actually be produced.
       def coverage_notice
         message = coverage.message
         fmt.hint(message) if message
         damage_notice
+        incompatible_notice
       end
 
       # Skipping a damaged record silently would make an archive look thin when
       # it is actually broken, and those need different responses: one is
       # "sync more", the other is "sync repairs this".
       def damage_notice
-        damaged = archive.damaged_ids
+        damaged = coverage.integrity.damaged
         return if damaged.empty?
 
         fmt.warn("#{damaged.length} archived #{damaged.length == 1 ? "order" : "orders"} " \
                  "cannot be read and #{damaged.length == 1 ? "was" : "were"} left out")
         fmt.hint("run: walmart order sync    (it will fetch #{damaged.length == 1 ? "it" : "them"} again)")
+      end
+
+      # Never advises a sync. Syncing cannot repair these and deliberately will
+      # not try: they are protected from being overwritten, which is the point.
+      def incompatible_notice
+        newer = coverage.integrity.incompatible
+        return if newer.empty?
+
+        fmt.warn("#{newer.length} archived #{newer.length == 1 ? "order was" : "orders were"} " \
+                 "written by a newer walmart-cli and cannot be read here")
+        fmt.hint("upgrade walmart-cli to read #{newer.length == 1 ? "it" : "them"}")
       end
 
       def day(value) = value.to_s[0, 10]

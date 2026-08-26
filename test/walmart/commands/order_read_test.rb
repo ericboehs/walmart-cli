@@ -505,6 +505,81 @@ module Walmart
         refute coverage["healthy"]
       end
 
+      # --- incompatible records ------------------------------------------------------
+
+      # `order list` printed the row like any other while `order show` refused
+      # it and `order search` omitted it, with nothing anywhere explaining why.
+      def test_an_incompatible_record_is_reported_when_listing
+        archive_orders(RECENT, sync: { reason: "complete" })
+        make_first_record_newer
+        run_read(%w[order list])
+
+        assert_match(/written by a newer walmart-cli/, err.string)
+        assert_match(/upgrade walmart-cli/, err.string)
+      end
+
+      # Sync cannot repair these and deliberately will not try.
+      def test_an_incompatible_record_never_advises_a_sync
+        archive_orders(RECENT, sync: { reason: "complete" })
+        make_first_record_newer
+        run_read(%w[order list])
+
+        refute_match(/order sync/, err.string)
+      end
+
+      def test_an_incompatible_record_is_reported_when_searching
+        archive_orders(RECENT, sync: { reason: "complete" })
+        make_first_record_newer
+        run_read(%w[order search], args: ["milk"])
+
+        assert_match(/written by a newer walmart-cli/, err.string)
+      end
+
+      # A scoped window sentence used to answer the "did we say something"
+      # question and leave the unreadable records unmentioned.
+      def test_a_scoped_window_does_not_hide_an_unreadable_record
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2024-01-01" })
+        make_first_record_newer
+        run_read(%w[order list])
+        text = out.string + err.string
+
+        assert_match(/older history was not asked for/, text)
+        assert_match(/written by a newer walmart-cli/, text)
+      end
+
+      def test_a_scoped_window_does_not_hide_a_damaged_record
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2024-01-01" })
+        damage_first_record
+        run_read(%w[order list])
+        text = out.string + err.string
+
+        assert_match(/older history was not asked for/, text)
+        assert_match(/cannot be read/, text)
+      end
+
+      # "healthy: false" with nothing else told a script something was wrong and
+      # not what, and the two have different remedies.
+      def test_json_counts_incompatible_records_separately
+        archive_orders(RECENT, sync: { reason: "complete" })
+        make_first_record_newer
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        assert_equal 1, coverage["incompatible"]
+        assert_equal 0, coverage["damaged"]
+        refute coverage["healthy"]
+      end
+
+      def test_json_tells_the_two_kinds_of_unreadable_apart
+        archive_orders(RECENT, sync: { reason: "complete" })
+        damage_first_record
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        assert_equal 1, coverage["damaged"]
+        assert_equal 0, coverage["incompatible"]
+      end
+
       private
 
       def archive_orders(*orders, sync: nil)
@@ -518,6 +593,15 @@ module Walmart
         store = Archive.new(paths: paths)
         id = store.index["orders"].keys.first
         File.write(File.join(paths.orders_dir, store.entry(id)["path"]), "{")
+        id
+      end
+
+      # Rewrites the first archived record as one a newer walmart-cli wrote.
+      def make_first_record_newer
+        store = Archive.new(paths: paths)
+        id = store.index["orders"].keys.first
+        path = File.join(paths.orders_dir, store.entry(id)["path"])
+        File.write(path, JSON.dump(JSON.parse(File.read(path)).merge("_format" => 99)))
         id
       end
 

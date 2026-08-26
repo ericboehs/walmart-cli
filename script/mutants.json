@@ -113,21 +113,21 @@
   },
   {
     "label": "a truncated sync at the page ceiling reports success",
-    "file": "lib/walmart/commands/order.rb",
-    "from": "SETTLED = %w[complete cutoff].freeze",
-    "to": "SETTLED = %w[complete cutoff page_limit].freeze"
+    "file": "lib/walmart/sync_note.rb",
+    "from": "    SETTLED_REASONS = [COMPLETE, CUTOFF].freeze",
+    "to": "    SETTLED_REASONS = [COMPLETE, CUTOFF, \"page_limit\"].freeze"
   },
   {
     "label": "a sync that lost the next-page control reports success",
-    "file": "lib/walmart/commands/order.rb",
-    "from": "SETTLED = %w[complete cutoff].freeze",
-    "to": "SETTLED = %w[complete cutoff no_next_page].freeze"
+    "file": "lib/walmart/sync_note.rb",
+    "from": "    SETTLED_REASONS = [COMPLETE, CUTOFF].freeze",
+    "to": "    SETTLED_REASONS = [COMPLETE, CUTOFF, \"no_next_page\"].freeze"
   },
   {
     "label": "every stop reports success",
     "file": "lib/walmart/commands/order.rb",
-    "from": "SETTLED.include?(reason) ? ExitCodes::OK : ExitCodes::UNVERIFIED",
-    "to": "ExitCodes::OK"
+    "from": "      note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED",
+    "to": "      ExitCodes::OK"
   },
   {
     "label": "ruby forgets a stop reason the worker can raise",
@@ -288,7 +288,7 @@
   {
     "label": "a cutoff is reported as a truncated sync again",
     "file": "lib/walmart/archive.rb",
-    "from": "    def incomplete? = synced? && !WINDOW_SETTLED.include?(sync_state[\"reason\"])",
+    "from": "    def incomplete? = synced? && !note.settled?",
     "to": "    def incomplete? = synced? && sync_state[\"reason\"] != \"complete\""
   },
   {
@@ -351,31 +351,31 @@
   },
   {
     "label": "a record file holding a different order is accepted",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      raise damaged(id, \"its file holds order #{found}\") unless found == id",
     "to": "      found"
   },
   {
     "label": "the reader stops confining index paths to the archive",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      raise damaged(id, \"its index entry points outside the archive\") unless inside?(path, root)",
     "to": ""
   },
   {
     "label": "a symlink out of the archive is followed",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      raise damaged(id, \"its file links outside the archive\") unless inside?(real, root)",
     "to": ""
   },
   {
     "label": "damage is collapsed back into absence",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      raise damaged(id, \"its file is missing\") unless File.exist?(path)",
     "to": "      return nil unless File.exist?(path)"
   },
   {
     "label": "the reader canonicalises a root that may not exist",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      root = File.expand_path(paths.orders_dir)\n      # A null byte",
     "to": "      root = File.realpath(paths.orders_dir)\n      # A null byte"
   },
@@ -399,19 +399,19 @@
   },
   {
     "label": "an unreadable file raises out of the reader",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      File.read(path)\n    rescue SystemCallError => e",
     "to": "      File.read(path)\n    rescue Encoding::CompatibilityError => e"
   },
   {
     "label": "a null byte in an index path raises out of the reader",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      File.expand_path(File.join(root, relative))\n    rescue ArgumentError",
     "to": "      File.expand_path(File.join(root, relative))\n    rescue Encoding::CompatibilityError"
   },
   {
     "label": "a record with no format marker is treated as current",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      unless format.is_a?(Integer) && format.positive?\n        raise damaged(id, \"its file does not say what format it is in\")\n      end\n",
     "to": ""
   },
@@ -437,7 +437,7 @@
   },
   {
     "label": "the format check falls back behind the id check",
-    "file": "lib/walmart/archive.rb",
+    "file": "lib/walmart/archive_reader.rb",
     "from": "      assert_format!(data, id)\n\n      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      data",
     "to": "      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      assert_format!(data, id)\n      data"
   },
@@ -478,14 +478,14 @@
   {
     "label": "a bounded walk that reached the end claims all of history",
     "file": "lib/walmart/archive.rb",
-    "from": "    def complete? = synced? && sync_state[\"reason\"] == \"complete\" && !windowed?",
+    "from": "    def complete? = synced? && note.all_history?",
     "to": "    def complete? = synced? && sync_state[\"reason\"] == \"complete\""
   },
   {
     "label": "the lower bound stops counting as a window",
-    "file": "lib/walmart/archive.rb",
-    "from": "    def windowed? = !(requested_since.nil? && requested_before.nil?)",
-    "to": "    def windowed? = !requested_before.nil?"
+    "file": "lib/walmart/sync_note.rb",
+    "from": "    def windowed? = !(since.nil? && before.nil?)",
+    "to": "    def windowed? = !before.nil?"
   },
   {
     "label": "the scoped sentence forgets that newer history was skipped too",
@@ -496,7 +496,43 @@
   {
     "label": "a damaged archive still reports itself complete",
     "file": "lib/walmart/coverage.rb",
-    "from": "        \"complete\" => archive.complete? && healthy?,",
+    "from": "        \"complete\" => archive.complete? && integrity.healthy?,",
     "to": "        \"complete\" => archive.complete?,"
+  },
+  {
+    "label": "a cutoff with no window is called settled",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "      return false if reason == CUTOFF && since.nil?\n",
+    "to": ""
+  },
+  {
+    "label": "an inverted window is accepted",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "      return false if before && since && before <= since\n",
+    "to": ""
+  },
+  {
+    "label": "an upper bound with no lower bound is accepted",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "      return false if before && since.nil?\n",
+    "to": ""
+  },
+  {
+    "label": "settlement stops asking whether the note makes sense",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "    def settled? = coherent? && SETTLED_REASONS.include?(reason)",
+    "to": "    def settled? = SETTLED_REASONS.include?(reason)"
+  },
+  {
+    "label": "incompatible records vanish from the json again",
+    "file": "lib/walmart/coverage.rb",
+    "from": "        \"incompatible\" => integrity.incompatible.length",
+    "to": "        \"incompatible\" => 0"
+  },
+  {
+    "label": "a record we cannot read goes unmentioned in a human read",
+    "file": "lib/walmart/commands/order_read.rb",
+    "from": "        incompatible_notice\n",
+    "to": ""
   }
 ]

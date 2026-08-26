@@ -38,8 +38,6 @@ module Walmart
       # history unread, so widening this list is how a truncated sync starts
       # reporting success -- the exact failure this command exists to avoid.
       # Pinned by a test for that reason; see test_order.rb.
-      SETTLED = %w[complete cutoff].freeze
-
       # Every reason the worker can produce, so a rename on that side fails
       # here instead of silently degrading to the catch-all branch.
       KNOWN_REASONS = %w[
@@ -72,15 +70,16 @@ module Walmart
           since: params["since"], before: params["before"]
         )
 
-        report(stored, Array(result["seen"]).length, stopped)
+        report(stored, Array(result["seen"]).length, stopped, params)
       end
 
       # Said before the sync, because the sync is the repair: those ids are
       # absent from known_ids, so the worker reads them again and write/2 now
       # accepts the replacement.
       def report_damage
-        report_incompatible
-        damaged = archive.damaged_ids
+        integrity = archive.integrity
+        report_incompatible(integrity.incompatible)
+        damaged = integrity.damaged
         return if damaged.empty?
 
         fmt.warn("#{damaged.length} archived #{damaged.length == 1 ? "order" : "orders"} " \
@@ -90,8 +89,7 @@ module Walmart
       # Said before the network, not discovered at write time. These records are
       # skipped rather than fetched, because the only safe thing to do with the
       # answer would be to throw it away.
-      def report_incompatible
-        newer = archive.incompatible_ids
+      def report_incompatible(newer)
         return if newer.empty?
 
         fmt.warn("#{newer.length} archived #{newer.length == 1 ? "order was" : "orders were"} " \
@@ -168,17 +166,17 @@ module Walmart
         end
       end
 
-      def report(stored, seen, stopped)
+      def report(stored, seen, stopped, params)
         reason = stopped["reason"].to_s
 
         if json?
           fmt.emit_json("archived" => stored, "seen" => seen, "stopped" => stopped)
-          return exit_code_for(reason)
+          return exit_code_for(reason, params)
         end
 
         fmt.say(summary(stored, seen))
         explain(reason)
-        exit_code_for(reason)
+        exit_code_for(reason, params)
       end
 
       def summary(stored, seen)
@@ -195,7 +193,7 @@ module Walmart
       # archive that thinks it is whole.
       def explain(reason)
         case reason
-        when *SETTLED then nil
+        when *SyncNote::SETTLED_REASONS then nil
         when "challenge_detected"
           fmt.hint("stopped early: Walmart asked for a human. " \
                    "Run `walmart login`, clear it, then sync again.")
@@ -218,8 +216,13 @@ module Walmart
       # An incomplete archive is not a failed command -- the records that did
       # arrive are on disk and are worth having -- but it is not a clean one
       # either, and a script should be able to tell.
-      def exit_code_for(reason)
-        SETTLED.include?(reason) ? ExitCodes::OK : ExitCodes::UNVERIFIED
+      # Asked of the same object the archive asks, so the exit code and the next
+      # read cannot disagree about whether the run succeeded. They did once: a
+      # sync exited 0 and the following `order list` called that same run a
+      # truncation.
+      def exit_code_for(reason, params)
+        note = SyncNote.new(reason: reason, since: params["since"], before: params["before"])
+        note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED
       end
     end
   end

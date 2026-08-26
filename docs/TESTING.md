@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of thirty-three defects
+The layout of the suite is not arbitrary. It is the residue of thirty-five defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -28,6 +28,8 @@ Each of these was written deliberately, read fine, and passed:
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
+| an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| `cutoff` with no window | settled by reason alone, so a globally incomplete archive exited 0 and every later read stayed silent |
 | a finished walk | `complete` from the worker means "no next cursor", so a bounded `--year` that reached the end reported the archive as all of history while it had deliberately skipped every newer order — and printed nothing, because only a cutoff counted as scoped |
 | `--year` | help, design and the class comment all said "one calendar year"; the request carried only a lower bound, so in 2026 `--year 2024` archived 2024, 2025 and 2026 |
 | the promise `--full` broke | protected records rode in `known_ids`, which `--full` empties and the worker ignores under full — so the pre-flight printed "these will be left untouched" and `--full` then fetched every one of them |
@@ -244,6 +246,14 @@ more than another assertion on behaviour.
   promise was written next to a rescue of one error class. The way to keep a
   promise like that honest is a table of sick inputs, not a sentence — ours has
   ten rows and every one of them escaped the first version.
+- **A word can be a success or a failure depending on state it does not
+  carry.** `cutoff` means "we reached the bottom of the window we were given",
+  which is only a success if there was a window. Membership in a list of
+  reasons cannot express that, so the predicate had to become a property of the
+  whole note.
+- **Saying something is not saying the right thing.** The scoped-window sentence
+  and the unreadable-record warning shared a branch, so printing either
+  satisfied the check that anything was printed at all.
 - **A name inherited from a lower layer carries that layer's meaning, not
   yours.** `complete` meant "no next cursor" in the worker and "the archive has
   everything" in the CLI, and the word travelled between them unchanged. The
