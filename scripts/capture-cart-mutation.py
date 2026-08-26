@@ -79,6 +79,7 @@ class Recorder:
         self.events: list[dict[str, Any]] = []
         self.workers: list[str] = []
         self.mutations = 0
+        self.skipped = 0
 
     def on_worker(self, worker) -> None:
         url = getattr(worker, "url", "") or "(unknown)"
@@ -93,10 +94,20 @@ class Recorder:
         if method not in BODY_METHODS:
             return
 
-        # A capture that navigated somewhere forbidden would be a capture we
-        # must delete. Refuse loudly instead.
-        if safety.is_forbidden_url(url):
-            raise safety.UnsafeNavigation(f"refusing to record a forbidden URL: {url}")
+        # A capture that recorded the order flow is a capture we must delete,
+        # and deleting it afterwards means it existed on disk first. Skipped
+        # before the body is ever read.
+        #
+        # This is not hypothetical. The first real run of this script recorded
+        # three order-flow operations because the person driving quite
+        # reasonably kept clicking, and the URL guard could not see them: they
+        # ride the same /orchestra/<app>/graphql/<Operation>/<hash> shape as
+        # every ordinary read.
+        operation = safety.operation_of(url)
+        if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):
+            self.skipped += 1
+            print(f"  refused (order flow): {operation or scrub.scrub_url(url)}")
+            return
 
         body = None
         try:
@@ -117,9 +128,7 @@ class Recorder:
         }
         self.events.append(record)
         origin = "worker" if record["from_worker"] else "page"
-        print(
-            f"  [{self.mutations}] {method} {record['operation'] or record['url']}  ({origin})"
-        )
+        print(f"  [{self.mutations}] {method} {record['operation'] or record['url']}  ({origin})")
 
     def _from_worker(self, request) -> bool | None:
         """True when Playwright attributes this request to a worker.
@@ -157,17 +166,14 @@ class Recorder:
 
     def write(self, notes: list[str]) -> Path:
         document = {
-            "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(
-                timespec="seconds"
-            ),
+            "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "what": "cart mutation performed by hand in the user's own browser",
             "workers_seen": [scrub.scrub_url(url) for url in self.workers],
             "mutating_requests": self.events,
+            "refused_order_flow_requests": self.skipped,
             "notes": notes,
         }
-        return write_private(
-            self.out_dir / "capture.json", json.dumps(document, indent=2) + "\n"
-        )
+        return write_private(self.out_dir / "capture.json", json.dumps(document, indent=2) + "\n")
 
 
 def confirm(out_dir: Path) -> bool:
@@ -210,9 +216,7 @@ def run(args: argparse.Namespace) -> int:
         with browser.open_session(options) as session:
             session.on_worker(recorder.on_worker)
             session.on_request(recorder.on_request)
-            print(
-                "\nrecording - drive the browser yourself; do not enter an order flow"
-            )
+            print("\nrecording - drive the browser yourself; do not enter an order flow")
             print("press Enter here when you are done\n")
             watched = True
             with contextlib.suppress(EOFError):
@@ -231,9 +235,7 @@ def run(args: argparse.Namespace) -> int:
         status = 2
     finally:
         path = recorder.write(notes)
-        print(
-            f"\n{recorder.mutations} mutating request(s), {len(recorder.workers)} worker(s)"
-        )
+        print(f"\n{recorder.mutations} mutating request(s), {len(recorder.workers)} worker(s)")
         print(f"wrote {path}")
         if not watched:
             print("nothing was recorded because the session never opened.", file=sys.stderr)
@@ -251,9 +253,7 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cdp-url", default="http://127.0.0.1:9222")
-    parser.add_argument(
-        "--profile", default=str(Path.home() / ".local/share/walmart/attached-chrome")
-    )
+    parser.add_argument("--profile", default=str(Path.home() / ".local/share/walmart/attached-chrome"))
     parser.add_argument("--out")
     parser.add_argument("--scrub-literal", action="append")
     parser.add_argument("--yes", action="store_true")

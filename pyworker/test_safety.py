@@ -139,3 +139,59 @@ def test_separator_styles_cannot_smuggle_a_term(text):
 
 def test_unrelated_text_is_clean():
     assert safety.violations("add milk to the cart") == []
+
+
+# --- order-flow operations ---------------------------------------------------------
+
+# Observed, not imagined. A capture taken while a human kept clicking recorded
+# three of these, and the URL guard could not see any of them: Walmart's order
+# flow rides the same /orchestra/<app>/graphql/<Operation>/<hash> shape as an
+# ordinary product read, so the URL carries none of the forbidden fragments.
+ORDER_FLOW_URLS = (
+    "https://www.walmart.com/orchestra/cartxo/graphql/reserveSlotMutation/deadbeef",
+    "https://www.walmart.com/orchestra/cartxo/graphql/CreateContract/deadbeef",
+    "https://www.walmart.com/orchestra/cartxo/graphql/updateTipping/deadbeef",
+)
+
+ORDINARY_URLS = (
+    "https://www.walmart.com/orchestra/cartxo/graphql/updateItems/deadbeef",
+    "https://www.walmart.com/orchestra/home/graphql/MergeAndGetCart/deadbeef",
+    "https://www.walmart.com/orchestra/pdp/graphql/ItemByIdBtf/deadbeef/ip/123",
+)
+
+
+def test_the_url_guard_cannot_see_order_flow_operations():
+    """The gap this exists to close, pinned so nobody removes the new guard."""
+    for url in ORDER_FLOW_URLS:
+        assert not safety.is_forbidden_url(url)
+
+
+def test_order_flow_operations_are_refused():
+    for url in ORDER_FLOW_URLS:
+        assert safety.is_forbidden_operation(safety.operation_of(url)), url
+
+
+def test_ordinary_operations_are_not_refused():
+    for url in ORDINARY_URLS:
+        assert not safety.is_forbidden_operation(safety.operation_of(url)), url
+
+
+def test_a_suffix_cannot_defeat_the_match():
+    """Walmart's own naming appends "Mutation"; an exact match would miss it."""
+    assert safety.is_forbidden_operation("reserveSlotMutation")
+    assert safety.is_forbidden_operation("RESERVE_SLOT")
+
+
+def test_operation_of_reads_the_path_not_the_query():
+    smuggled = "https://www.walmart.com/orchestra/x/graphql/updateItems/h?q=/graphql/CreateContract"
+    assert safety.operation_of(smuggled) == "updateItems"
+
+
+def test_operation_of_is_total():
+    for value in (None, "", "https://www.walmart.com/", "not a url", "https://x/graphql"):
+        assert safety.operation_of(value) is None or isinstance(safety.operation_of(value), str)
+
+
+def test_no_operation_means_no_refusal():
+    assert not safety.is_forbidden_operation(None)
+    assert not safety.is_forbidden_operation("")

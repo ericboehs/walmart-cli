@@ -558,5 +558,17 @@
     "file": "lib/walmart/archive.rb",
     "from": "      raw.is_a?(Hash) ? raw : {}",
     "to": "      raw || {}"
+  },
+  {
+    "label": "the order-flow operation guard stops matching suffixed names",
+    "file": "pyworker/safety.py",
+    "from": "    return any(term in normalized for term in FORBIDDEN_OPERATIONS)",
+    "to": "    return normalized in FORBIDDEN_OPERATIONS"
+  },
+  {
+    "label": "the operation is read from the whole url including the query",
+    "file": "pyworker/safety.py",
+    "from": "    parts = [segment for segment in urlparse(url).path.split(\"/\") if segment]",
+    "to": "    parts = [segment for segment in url.split(\"/\") if segment]"
   }
 ]

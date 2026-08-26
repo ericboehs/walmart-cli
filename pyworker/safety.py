@@ -47,6 +47,24 @@ FORBIDDEN_URL_FRAGMENTS = (
     "/order-confirmation",
 )
 
+# GraphQL operation names this tool must never record, replay, or build against.
+#
+# The URL guard above cannot see these. Walmart's order flow runs over the same
+# /orchestra/<app>/graphql/<Operation>/<hash> shape as everything else, so a URL
+# carrying an entire order submission contains none of the fragments above. A
+# capture taken while a human walked into that flow recorded it, which is how
+# this list came to exist: observed, not imagined.
+#
+# Matched against the operation name only, after normalisation, so an ordinary
+# read whose name merely resembles one of these is not refused by accident.
+FORBIDDEN_OPERATIONS = (
+    "reserveslot",
+    "createcontract",
+    "updatetipping",
+    "settipping",
+    "bookslot",
+)
+
 # The only hosts this tool may navigate to. Matched against the parsed
 # hostname, never as a substring, so www.walmart.com.evil.example is refused.
 ALLOWED_HOSTS = ("walmart.com",)
@@ -138,6 +156,36 @@ def is_allowed_host(url: str | None) -> bool:
 
     host = (parts.hostname or "").lower().rstrip(".")
     return any(host == allowed or host.endswith(f".{allowed}") for allowed in ALLOWED_HOSTS)
+
+
+def is_forbidden_operation(name: str | None) -> bool:
+    """True for a GraphQL operation that belongs to the order flow.
+
+    Deliberately narrow and substring-based on the normalised name: Walmart
+    prefixes and suffixes these ("reserveSlotMutation"), so an exact match
+    would be trivially defeated by their own naming.
+    """
+    if not name:
+        return False
+    normalized = normalize(name)
+    return any(term in normalized for term in FORBIDDEN_OPERATIONS)
+
+
+def operation_of(url: str | None) -> str | None:
+    """The GraphQL operation a Walmart URL names, if it names one.
+
+    /orchestra/<app>/graphql/<Operation>/<persisted-hash> is the shape. Parsed
+    rather than pattern-matched so a query string cannot smuggle a segment.
+    """
+    if not url:
+        return None
+    from urllib.parse import urlparse
+
+    parts = [segment for segment in urlparse(url).path.split("/") if segment]
+    if "graphql" not in parts:
+        return None
+    index = parts.index("graphql")
+    return parts[index + 1] if index + 1 < len(parts) else None
 
 
 def is_forbidden_control(label: str | None) -> bool:
