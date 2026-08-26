@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of twenty-five defects
+The layout of the suite is not arbitrary. It is the residue of twenty-seven defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -27,6 +27,7 @@ Each of these was written deliberately, read fine, and passed:
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
+| "known" order ids | meant "the index mentions it", not "the archive can return it", so an entry outliving its file told the worker to skip that order on every sync — and the unchanged-shortcut then discarded the replacement, making the damage permanent |
 | the cutoff | it stopped the walk on the *first* row older than the window, dropping every later row on that page — while `_oldest_date`, in the same file, refuses to trust row order for exactly that reason |
 | `cutoff` as a verdict | `order sync --year` exited 0 in silence, then `order list` called the same run "stopped early" and advised re-running it, which reaches the identical cutoff every time |
 | the response observer | `on_response` subscribed on the *context*, so it heard every tab in the browser; the tests passed because in a launched browser there is only one tab, and the second tab only exists in the mode we added last |
@@ -229,6 +230,16 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A predicate is a claim about a fact, and the fact can move.** `archived?`
+  asked the index; every caller meant "can we produce this order". Those agreed
+  until a file went missing, and then two of them were wrong in the same
+  direction: skip the fetch, and discard the fix. When one predicate serves
+  several questions, ask what each caller would do if it were wrong.
+- **A guard written for the healthy case can break the sick one.** The new
+  containment check canonicalised the orders directory before deciding anything,
+  and an archive can hold an index with no orders directory at all — the exact
+  state the check existed to diagnose. It raised a raw ENOENT instead. Resolve
+  what you know exists, not what you hope does.
 - **Hardening one consumer of an assumption does not harden the others.**
   `_oldest_date` carries a docstring explaining that Walmart pages can be out of
   order, and that deriving a claim from row order makes one bad page into a

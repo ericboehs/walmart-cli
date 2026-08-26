@@ -398,12 +398,58 @@ module Walmart
         assert_equal "2026-01-01", coverage["requested_since"]
       end
 
+      # --- damaged records ---------------------------------------------------------
+
+      def test_a_damaged_record_is_reported_rather_than_quietly_skipped
+        archive_orders(RECENT, sync: { reason: "complete" })
+        damage_first_record
+        run_read(%w[order list])
+
+        assert_match(/cannot be read/, err.string)
+        assert_match(/walmart order sync/, err.string)
+      end
+
+      def test_a_search_survives_a_damaged_record
+        archive_orders(RECENT, sync: { reason: "complete" })
+        damage_first_record
+
+        run_read(%w[order search], args: ["milk"])
+
+        assert_match(/cannot be read/, err.string)
+      end
+
+      # Damage and never-bought-it get different sentences, because they need
+      # different responses from the person reading them.
+      def test_show_names_the_damage_instead_of_calling_it_absent
+        archive_orders(RECENT, sync: { reason: "complete" })
+        id = damage_first_record
+
+        error = assert_raises(ArchiveError) { run_read(%w[order show], args: [id]) }
+        assert_match(/not valid JSON/, error.message)
+      end
+
+      def test_json_counts_the_damaged_records
+        archive_orders(RECENT, sync: { reason: "complete" })
+        damage_first_record
+        run_read(%w[order list], json: true)
+
+        assert_equal 1, JSON.parse(out.string)["coverage"]["damaged"]
+      end
+
       private
 
       def archive_orders(*orders, sync: nil)
         archive = Archive.new(paths: paths)
         orders.each { |order| archive.write(order) }
         archive.note_sync(**sync) if sync
+      end
+
+      # Corrupts the file behind the first index entry and returns its order id.
+      def damage_first_record
+        store = Archive.new(paths: paths)
+        id = store.index["orders"].keys.first
+        File.write(File.join(paths.orders_dir, store.entry(id)["path"]), "{")
+        id
       end
 
       def run_read(path, args: [], json: false, worker: nil)

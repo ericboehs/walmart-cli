@@ -336,5 +336,47 @@
     "file": "lib/walmart/commands/doctor.rb",
     "from": "        return unused_profile_check unless config.fetch(\"cdp_url\").to_s.empty?\n",
     "to": ""
+  },
+  {
+    "label": "a damaged record travels to the worker as known again",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "\"known_ids\" => flags[:full] == true ? [] : archive.readable_ids",
+    "to": "\"known_ids\" => flags[:full] == true ? [] : archive.index[\"orders\"].keys"
+  },
+  {
+    "label": "the unchanged shortcut trusts the index instead of the disk",
+    "file": "lib/walmart/archive.rb",
+    "from": "      return :unchanged if readable?(order_id) && !force",
+    "to": "      return :unchanged if archived?(order_id) && !force"
+  },
+  {
+    "label": "a record file holding a different order is accepted",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raise damaged(id, \"its file holds order #{found}\") unless found == id",
+    "to": "      found"
+  },
+  {
+    "label": "the reader stops confining index paths to the archive",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raise damaged(id, \"its index entry points outside the archive\") unless inside?(path, root)",
+    "to": ""
+  },
+  {
+    "label": "a symlink out of the archive is followed",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raise damaged(id, \"its file links outside the archive\") unless inside?(real, root)",
+    "to": ""
+  },
+  {
+    "label": "damage is collapsed back into absence",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raise damaged(id, \"its file is missing\") unless File.exist?(path)",
+    "to": "      return nil unless File.exist?(path)"
+  },
+  {
+    "label": "the reader canonicalises a root that may not exist",
+    "file": "lib/walmart/archive.rb",
+    "from": "      root = File.expand_path(paths.orders_dir)\n      path = File.expand_path",
+    "to": "      root = File.realpath(paths.orders_dir)\n      path = File.expand_path"
   }
 ]

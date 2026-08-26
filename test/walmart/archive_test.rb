@@ -299,12 +299,174 @@ module Walmart
       assert_equal "delivery", rebuilt.entry("200012345678901")["type"]
     end
 
-    def test_a_record_missing_from_disk_reads_as_absent_rather_than_crashing
+    # This test used to assert the opposite -- that a missing file "reads as
+    # absent" -- and that collapse is the defect. It made damage and
+    # never-bought-it the same answer, which is how a broken entry could keep
+    # telling the worker to skip the order forever. The valid concern underneath
+    # it, that a bulk reader must not crash, is served by readable_record below.
+    def test_a_missing_file_is_damage_and_says_which_order
       store = archive
       store.write(ORDER)
       FileUtils.rm(File.join(paths.orders_dir, "2026", "200012345678901.json"))
 
-      assert_nil store.record("200012345678901")
+      error = assert_raises(ArchiveError) { store.record("200012345678901") }
+      assert_match(/200012345678901/, error.message)
+      assert_match(/missing/, error.message)
+    end
+
+    def test_an_order_we_never_archived_is_nil_not_damage
+      assert_nil archive.record("999999999999999")
+    end
+
+    def test_a_corrupt_file_is_damage_not_absence
+      store = archive
+      store.write(ORDER)
+      File.write(File.join(paths.orders_dir, "2026", "200012345678901.json"), "{")
+
+      assert_raises(ArchiveError) { store.record("200012345678901") }
+    end
+
+    # Parseable is not the same as ours. Without the id check one order's file
+    # satisfies another order's skip.
+    def test_a_file_holding_a_different_order_is_damage
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      File.write(path, JSON.dump(ORDER.merge("order_id" => "300000000000000")))
+
+      error = assert_raises(ArchiveError) { store.record("200012345678901") }
+      assert_match(/holds order 300000000000000/, error.message)
+    end
+
+    def test_a_bulk_reader_gets_nil_rather_than_an_exception
+      store = archive
+      store.write(ORDER)
+      File.write(File.join(paths.orders_dir, "2026", "200012345678901.json"), "{")
+
+      assert_nil store.readable_record("200012345678901")
+    end
+
+    # --- Known means returnable --------------------------------------------------
+
+    # The whole point of the change. An index entry surviving a damaged file
+    # used to travel to the worker as known_ids, so the detail page was skipped
+    # on every sync and the archive could never repair itself.
+    def test_a_damaged_record_is_not_a_known_id
+      store = archive
+      store.write(ORDER)
+      FileUtils.rm(File.join(paths.orders_dir, "2026", "200012345678901.json"))
+
+      assert_empty store.readable_ids
+      assert_equal ["200012345678901"], store.damaged_ids
+      assert store.archived?("200012345678901"), "the index still lists it"
+    end
+
+    def test_an_intact_record_is_a_known_id
+      store = archive
+      store.write(ORDER)
+
+      assert_equal ["200012345678901"], store.readable_ids
+      assert_empty store.damaged_ids
+    end
+
+    # Step five of the chain: even when the worker did return the order again,
+    # the unchanged shortcut discarded it, because it asked the index rather
+    # than the disk.
+    def test_a_returned_order_repairs_a_damaged_record_without_force
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      FileUtils.rm(path)
+
+      assert_equal :written, store.write(ORDER)
+      assert_path_exists path
+      assert_equal "200012345678901", store.record("200012345678901")["order_id"]
+    end
+
+    def test_an_intact_record_is_still_skipped_without_force
+      store = archive
+      store.write(ORDER)
+
+      assert_equal :unchanged, store.write(ORDER)
+    end
+
+    # --- Reader path confinement ---------------------------------------------------
+
+    # Both of these reproduce against the old reader: it joined orders_dir with
+    # the index path and trusted it. The writer never creates such an entry,
+    # which is the reason to assert it rather than the reason not to.
+    def test_an_index_path_cannot_escape_the_archive
+      store = archive
+      store.write(ORDER)
+      outside = File.join(tmp, "elsewhere.json")
+      File.write(outside, JSON.dump({ "order_id" => "200012345678901" }))
+      store.index["orders"]["200012345678901"]["path"] = "../../elsewhere.json"
+
+      error = assert_raises(ArchiveError) { store.record("200012345678901") }
+      assert_match(/outside the archive/, error.message)
+    end
+
+    def test_a_symlink_out_of_the_archive_is_refused
+      store = archive
+      store.write(ORDER)
+      outside = File.join(tmp, "elsewhere.json")
+      File.write(outside, JSON.dump({ "order_id" => "200012345678901" }))
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      FileUtils.rm(path)
+      File.symlink(outside, path)
+
+      error = assert_raises(ArchiveError) { store.record("200012345678901") }
+      assert_match(/links outside the archive/, error.message)
+    end
+
+    # An index can list orders while orders/ has never been created: an archive
+    # whose only sync hit a challenge is exactly that shape. Canonicalising the
+    # root eagerly raised a raw ENOENT here -- in the very case this API exists
+    # to diagnose -- and readable_ids inherited it, so `order sync` would have
+    # died building its own known_ids.
+    def test_an_index_without_an_orders_directory_reports_missing_not_enoent
+      FileUtils.mkdir_p(File.dirname(paths.index_file))
+      File.write(paths.index_file, JSON.dump(
+                                     "version" => 1,
+                                     "orders" => {
+                                       "200012345678901" => { "path" => "2026/200012345678901.json",
+                                                              "date" => "2026-08-20" }
+                                     },
+                                     "sync" => { "reason" => "challenge_detected" }
+                                   ))
+      store = Archive.new(paths: paths)
+
+      refute_path_exists paths.orders_dir
+      error = assert_raises(ArchiveError) { store.record("200012345678901") }
+      assert_match(/its file is missing/, error.message)
+      assert_empty store.readable_ids
+      assert_equal ["200012345678901"], store.damaged_ids
+    end
+
+    def test_a_sync_can_repair_an_archive_that_has_no_orders_directory
+      FileUtils.mkdir_p(File.dirname(paths.index_file))
+      File.write(paths.index_file, JSON.dump(
+                                     "version" => 1,
+                                     "orders" => {
+                                       "200012345678901" => { "path" => "2026/200012345678901.json",
+                                                              "date" => "2026-08-20" }
+                                     },
+                                     "sync" => {}
+                                   ))
+      store = Archive.new(paths: paths)
+
+      assert_equal :written, store.write(ORDER)
+      assert_equal "200012345678901", store.record("200012345678901")["order_id"]
+    end
+
+    def test_a_directory_where_a_record_should_be_is_refused
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      FileUtils.rm(path)
+      FileUtils.mkdir_p(path)
+
+      assert_raises(ArchiveError) { store.record("200012345678901") }
     end
 
     # --- Paths ------------------------------------------------------------------

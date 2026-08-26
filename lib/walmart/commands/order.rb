@@ -62,6 +62,7 @@ module Walmart
       def archive = @archive ||= Archive.new(paths: context.paths)
 
       def sync(flags)
+        report_damage
         params = params_for(flags)
         result = worker.run("order.sync", params: params)
         stored = store(Array(result["orders"]), full: flags[:full] == true)
@@ -74,13 +75,27 @@ module Walmart
         report(stored, Array(result["seen"]).length, stopped)
       end
 
+      # Said before the sync, because the sync is the repair: those ids are
+      # absent from known_ids, so the worker reads them again and write/2 now
+      # accepts the replacement.
+      def report_damage
+        damaged = archive.damaged_ids
+        return if damaged.empty?
+
+        fmt.warn("#{damaged.length} archived #{damaged.length == 1 ? "order" : "orders"} " \
+                 "cannot be read; this sync will fetch #{damaged.length == 1 ? "it" : "them"} again")
+      end
+
       def params_for(flags)
         {
           "since" => since(flags),
           "full" => flags[:full] == true,
-          # Ids we already hold. Sending them is what makes a re-sync cheap:
-          # the worker skips their detail pages instead of re-reading them.
-          "known_ids" => flags[:full] == true ? [] : archive.index["orders"].keys
+          # Ids we already hold *and can return*. Sending them is what makes a
+          # re-sync cheap: the worker skips their detail pages. Index keys were
+          # used here, which meant an entry left behind by a missing or corrupt
+          # file kept the order skipped on every sync, so the damage was
+          # permanent unless someone happened to run --full.
+          "known_ids" => flags[:full] == true ? [] : archive.readable_ids
         }
       end
 

@@ -109,6 +109,25 @@ not counting known pages weakens the unattended ceiling that exists to stop a
 bug becoming abuse. Actual cursor resume is blocked on observing a mechanism
 that does not earn a 429, and must not be invented.
 
+### "Known" means returnable, not indexed
+
+`index.json` and the record files can disagree: a file goes missing, is
+truncated, or holds another order. The index entry survives either way, so any
+predicate built on index membership is answering a different question from the
+one its callers ask.
+
+- `Archive#record` raises `ArchiveError` when the index claims an order and the
+  file cannot be returned, and returns nil only for an id we never archived.
+  Damage and never-bought-it need different responses, so they get different
+  answers.
+- `Archive#readable_ids` is what may travel to the worker as `known_ids`.
+- `Archive#write`'s unchanged shortcut asks the disk, so an ordinary sync
+  repairs damage rather than discarding the replacement.
+- The reader confines index paths to the archive and refuses symlinks out of
+  it. The writer never creates such an entry; the reader asserts it anyway,
+  because the index is a file on disk and the invariant should be executable
+  rather than merely true of today's writer.
+
 ### Known limitation: coverage describes the last run, not the archive
 
 `index.json` holds one sync note, and it describes the run that wrote it. Two

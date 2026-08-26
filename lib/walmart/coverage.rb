@@ -38,7 +38,10 @@ module Walmart
         "requested_since" => archive.requested_since,
         "last_sync" => state["at"],
         "stopped_because" => archive.synced? ? state["reason"] : NEVER_SYNCED,
-        "oldest_seen" => state["oldest_date"]
+        "oldest_seen" => state["oldest_date"],
+        # Records the index claims and cannot produce. A machine consumer needs
+        # this to tell a thin archive from a damaged one.
+        "damaged" => archive.damaged_ids.length
       }.compact
     end
 

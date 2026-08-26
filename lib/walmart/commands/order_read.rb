@@ -95,14 +95,10 @@ module Walmart
         positional, = parse_flags(args, max_positional: 1)
         raise UsageError, "walmart order show needs an order id" if positional.empty?
 
+        # Damage raises ArchiveError from the archive itself, naming the order
+        # and the reason; nil now means only that we have never archived it.
         record = archive.record(resolve(positional.first))
-        # The index said we had it and the file is not there. Reporting "no
-        # such order" would send someone re-syncing to fix a missing file,
-        # which a dedupe-by-id sync will not do.
-        if record.nil?
-          raise Error.new("the archive index lists that order but its file is missing",
-                          code: "record_missing")
-        end
+        raise Error.new("no archived order #{positional.first}", code: "record_missing") if record.nil?
 
         render_order(record)
       end
@@ -197,7 +193,10 @@ module Walmart
       # -- and grouping by name would report one product as two.
       def matching_items(query)
         archive.entries.each_with_object({}) do |entry, found|
-          record = archive.record(entry["order_id"])
+          # readable_record: a search across an intact archive must not die on
+          # one damaged file. The count is reported separately so the gap is
+          # visible rather than silent.
+          record = archive.readable_record(entry["order_id"])
           next unless record
 
           record["items"].to_a.each do |item|
@@ -289,6 +288,19 @@ module Walmart
       def coverage_notice
         message = coverage.message
         fmt.hint(message) if message
+        damage_notice
+      end
+
+      # Skipping a damaged record silently would make an archive look thin when
+      # it is actually broken, and those need different responses: one is
+      # "sync more", the other is "sync repairs this".
+      def damage_notice
+        damaged = archive.damaged_ids
+        return if damaged.empty?
+
+        fmt.warn("#{damaged.length} archived #{damaged.length == 1 ? "order" : "orders"} " \
+                 "cannot be read and #{damaged.length == 1 ? "was" : "were"} left out")
+        fmt.hint("run: walmart order sync    (it will fetch #{damaged.length == 1 ? "it" : "them"} again)")
       end
 
       def day(value) = value.to_s[0, 10]

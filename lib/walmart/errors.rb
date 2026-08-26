@@ -58,6 +58,16 @@ module Walmart
     end
   end
 
+  # An archived record exists in the index and cannot be returned: the file is
+  # missing, unparseable, holds a different order, or the entry points outside
+  # the archive. Distinct from a genuinely unknown id, which is not damage and
+  # must not be reported as though it were.
+  class ArchiveError < Error
+    def initialize(message, code: "archive_unreadable", details: nil)
+      super(message, code: code, exit_code: ExitCodes::FAILED, details: details)
+    end
+  end
+
   # Stored configuration or archive data is unreadable or malformed.
   class ConfigError < Error
     def initialize(message, code: "config", details: nil)

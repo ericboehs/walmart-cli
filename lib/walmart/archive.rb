@@ -48,15 +48,44 @@ module Walmart
       index["orders"].values.sort_by { |value| value["date"].to_s }.reverse
     end
 
+    # The record for an id, or nil when we have never archived it.
+    #
+    # Raises ArchiveError when the index claims the order and the file cannot be
+    # returned. Those are different facts and the caller acts on them
+    # differently: "we never bought that" ends the search, "the file we wrote is
+    # damaged" is a repair. Collapsing damage into nil would report corruption
+    # as not-found and send someone re-syncing to fix a file a dedupe-by-id sync
+    # will never rewrite.
     def record(order_id)
-      entry = entry(order_id)
-      return nil unless entry
+      id = order_id.to_s
+      return nil unless entry(id)
 
-      path = File.join(paths.orders_dir, entry["path"])
-      return nil unless File.exist?(path)
-
-      JSON.parse(File.read(path))
+      read_record(confined_path(entry(id)["path"], id), id)
     end
+
+    # The record, or nil for any reason at all. Never raises.
+    #
+    # For bulk readers: one damaged file must not turn `order search` into a
+    # crash across an otherwise intact archive.
+    def readable_record(order_id)
+      record(order_id)
+    rescue ArchiveError
+      nil
+    end
+
+    def readable?(order_id) = !readable_record(order_id).nil?
+
+    # Ids whose records we can actually return.
+    #
+    # This is what may travel as known_ids. Index membership was used for that
+    # and it is the wrong predicate: an entry surviving a missing or corrupt
+    # file told the worker to skip the detail page forever, so an ordinary sync
+    # could never repair the archive. "Known" has to mean "we can return it".
+    def readable_ids = index["orders"].keys.select { |id| readable?(id) }
+
+    # Ids the index claims and cannot produce. Worth reporting: they are the
+    # difference between an archive that is thin and one that is damaged.
+    def damaged_ids = index["orders"].keys.reject { |id| readable?(id) }
 
     # --- Writing ---------------------------------------------------------------
 
@@ -67,7 +96,10 @@ module Walmart
     def write(order, force: false)
       order_id = order["order_id"].to_s
       raise ArgumentError, "an order needs an id to be archived" if order_id.empty?
-      return :unchanged if archived?(order_id) && !force
+      # readable?, not archived?. The shortcut exists to make an incremental
+      # sync cheap, and skipping a rewrite because a *broken* entry exists is
+      # the opposite: it discards the replacement that would have repaired it.
+      return :unchanged if readable?(order_id) && !force
 
       refuse_unredacted!(order_id, order)
       record = order.merge("_synced_at" => timestamp, "_format" => FORMAT)
@@ -145,6 +177,66 @@ module Walmart
     private
 
     def timestamp = @now.call.iso8601
+
+    # Resolves an index path inside the archive, or refuses.
+    #
+    # The writer only ever creates confined paths, so today this cannot trigger
+    # -- which is exactly why it is worth asserting. The reader trusted the
+    # index, and the index is a file on disk; an entry with ../.. in it reads
+    # any JSON on the filesystem, and a symlink in the orders tree does the same
+    # with a perfectly ordinary-looking path. Both reproduce. Making the
+    # invariant executable keeps it true of tomorrow's writer too.
+    def confined_path(relative, id)
+      raise damaged(id, "its index entry has no file path") if relative.to_s.empty?
+
+      # expand_path, not realpath. An index can list orders while orders/ does
+      # not exist -- an archive whose only sync hit a challenge is exactly that
+      # shape -- and realpath raises ENOENT on a missing directory. Resolving
+      # the root eagerly made the containment check fail with a raw backtrace
+      # in precisely the case this method exists to diagnose.
+      root = File.expand_path(paths.orders_dir)
+      path = File.expand_path(File.join(root, relative.to_s))
+      raise damaged(id, "its index entry points outside the archive") unless inside?(path, root)
+      raise damaged(id, "its file is missing") unless File.exist?(path)
+
+      resolve_link(path, id)
+    end
+
+    # Symlinks are resolved only once the target is known to exist, because
+    # realpath needs a real file at both ends. Both sides are canonicalised
+    # here so a symlinked root (/var -> /private/var on macOS) does not read as
+    # an escape.
+    def resolve_link(path, id)
+      real = File.realpath(path)
+      root = File.realpath(paths.orders_dir)
+      raise damaged(id, "its file links outside the archive") unless inside?(real, root)
+      raise damaged(id, "its path is not a regular file") unless File.file?(real)
+
+      real
+    end
+
+    def inside?(path, root) = path.start_with?("#{root}/")
+
+    def read_record(path, id)
+      data = JSON.parse(File.read(path))
+      raise damaged(id, "its file does not hold an order") unless data.is_a?(Hash)
+
+      # Parseable is not the same as ours. Without this, one order's file can
+      # satisfy another order's skip, and the archive reports an order it has
+      # never actually stored.
+      found = data["order_id"].to_s
+      raise damaged(id, "its file holds order #{found}") unless found == id
+      raise damaged(id, "it was written by a newer version") if data["_format"].to_i > FORMAT
+
+      data
+    rescue JSON::ParserError
+      raise damaged(id, "its file is not valid JSON")
+    end
+
+    def damaged(id, why)
+      ArchiveError.new("the archive lists order #{id} but #{why}",
+                       details: { "order_id" => id })
+    end
 
     def index_entry(order, relative)
       {
