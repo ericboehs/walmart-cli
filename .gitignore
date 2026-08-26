@@ -1,0 +1,26 @@
+# Recon captures are raw, unscrubbed, and may contain PII. Never commit them.
+pyworker/recon/
+recon/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Ruby
+coverage/
+.bundle/
+*.gem
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Anything that looks like exported session state
+*.storage-state.json
+browser-profile/

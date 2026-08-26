@@ -1,0 +1,52 @@
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "pyworker/.venv/**/*"
+    - "vendor/**/*"
+
+Style/Documentation:
+  Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Style/FrozenStringLiteralComment:
+  Enabled: true
+
+Metrics/MethodLength:
+  Max: 30
+
+Metrics/AbcSize:
+  Max: 30
+
+Metrics/ClassLength:
+  Max: 200
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+
+Metrics/PerceivedComplexity:
+  Max: 12
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/BlockLength:
+  Exclude:
+    - "test/**/*"
+    - "Rakefile"
+
+Layout/LineLength:
+  Max: 110
+
+Naming/FileName:
+  Exclude:
+    - "bin/walmart"
+
+Style/SpecialGlobalVars:
+  Enabled: false

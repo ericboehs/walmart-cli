@@ -1,0 +1,26 @@
+[project]
+name = "walmart-pyworker"
+version = "0.1.0"
+description = "Playwright worker for walmart-cli"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.48",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["."]
+python_files = ["test_*.py"]
