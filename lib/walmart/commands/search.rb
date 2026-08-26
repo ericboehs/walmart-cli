@@ -60,7 +60,6 @@ module Walmart
           report_empty(query, items, marketplace)
         else
           fmt.table(shown.each_with_index.map { |item, index| row(item, index) }, COLUMNS)
-          report_scope(data)
           report_pagination(data, shown.length)
         end
 
@@ -79,15 +78,6 @@ module Walmart
         else
           fmt.empty_result(what: "\"#{query}\"")
         end
-      end
-
-      # Walmart prices and availability are per store. When the worker could not
-      # attach store context, the numbers on screen are generic, and saying so is
-      # cheaper than a shopper discovering it at the register.
-      def report_scope(data)
-        return if data["store_scoped"]
-
-        fmt.hint("prices are not store-specific; run `walmart login` and pin a store for local pricing")
       end
 
       def report_pagination(data, shown)

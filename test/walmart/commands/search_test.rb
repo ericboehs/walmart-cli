@@ -164,19 +164,23 @@ module Walmart
         assert_includes error.message, "changed"
       end
 
-      def test_generic_prices_are_flagged_rather_than_presented_as_local
+      # Prices are store-scoped by the session's own cookies, so results carry
+      # no caveat. An earlier version warned that they were generic; that
+      # warning was wrong, and a confident wrong caveat is its own bug.
+      def test_results_carry_no_pricing_caveat
         run_search(results: [MILK])
 
-        assert_includes err.string, "not store-specific"
+        refute_includes err.string, "store-specific"
       end
 
-      def test_store_scoped_results_carry_no_caveat
+      def test_a_throttle_is_reported_as_itself
         worker = FakeWorker.new(
-          results: { "search" => { "items" => [MILK], "pagination" => {}, "store_scoped" => true } }
+          errors: { "search" => WorkerError.new("Walmart is rate-limiting this session",
+                                                code: "rate_limited") }
         )
-        run_search(worker: worker)
 
-        refute_includes err.string, "not store-specific"
+        error = assert_raises(WorkerError) { run_search(worker: worker) }
+        refute_predicate error, :login_required?
       end
 
       def test_a_bot_block_is_reported_as_a_challenge_not_a_failure

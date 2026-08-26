@@ -1,7 +1,15 @@
 """The search action: build the request, issue it in-session, read the answer.
 
-The request contract was recovered by read-only observation of a signed-in
-session (Safari, 2026-08-26). Walmart's search is a *persisted* GraphQL query:
+There are two ways in, and the default is the boring one: the search page is
+server-rendered and ships its whole result set inside the HTML, so one ordinary
+navigation answers the question. That path needs no persisted hash, sends no
+synthesized headers, and looks exactly like a person searching -- which matters,
+because Walmart throttles requests carrying only part of the header set the real
+page sends.
+
+The second way, kept as a fallback behind transport="graphql", was recovered by
+read-only observation of a signed-in session (Safari, 2026-08-26). Walmart's
+search is there a *persisted* GraphQL query:
 the operation lives in the URL path together with a content hash, and the only
 query parameter is a URL-encoded JSON ``variables`` object.
 
@@ -26,7 +34,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import browser
 import challenge
@@ -45,6 +53,14 @@ STALE_CONTRACT = (
 )
 
 NOT_SIGNED_IN = "no signed-in Walmart session; run `walmart login` first"
+
+# Walmart throttles synthesized requests that carry only part of the header set
+# the real page sends. That is a throttle, not a bot challenge, and conflating
+# the two would tell a user to go clear a puzzle that does not exist.
+RATE_LIMITED = (
+    "Walmart is rate-limiting this session. Wait a few minutes and try again; "
+    "repeating the request immediately makes it worse."
+)
 
 # Stable operation headers only. Correlation ids, trace ids, and above all
 # DEVICE_PROFILE_REF_ID are deliberately absent: the page supplies its own, and
@@ -93,6 +109,41 @@ MAX_LIMIT = 100
 DEFAULT_SORT = "best_match"
 
 
+SEARCH_PAGE = f"{browser.WALMART_ORIGIN}/search"
+
+# The server-rendered search page ships the whole result set in its HTML. Reading
+# it costs one navigation, needs no persisted hash, and is the same request a
+# person makes -- which matters, because synthesized requests with partial header
+# sets get throttled.
+NEXT_DATA_SCRIPT = """
+() => {
+  const node = document.getElementById('__NEXT_DATA__');
+  if (!node) { return null; }
+  try {
+    const data = JSON.parse(node.textContent);
+    return data?.props?.pageProps?.initialData?.searchResult ?? null;
+  } catch (error) {
+    return null;
+  }
+}
+"""
+
+NO_SSR_PAYLOAD = (
+    "the search page did not ship its usual embedded results; Walmart may have changed the page, "
+    "or the session may need `walmart login`"
+)
+
+
+def search_page_url(params: dict[str, Any]) -> str:
+    """The URL a person would visit for this search."""
+    query = {"q": params["query"]}
+    if params.get("page", 1) != 1:
+        query["page"] = str(params["page"])
+    if params.get("sort") and params["sort"] != DEFAULT_SORT:
+        query["sort"] = params["sort"]
+    return f"{SEARCH_PAGE}?{urlencode(query)}"
+
+
 def normalize_params(request: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize what the CLI asked for.
 
@@ -109,9 +160,9 @@ def normalize_params(request: dict[str, Any]) -> dict[str, Any]:
         "page": _bounded_int(params.get("page"), DEFAULT_PAGE, minimum=1),
         "limit": _bounded_int(params.get("limit"), DEFAULT_LIMIT, minimum=1, maximum=MAX_LIMIT),
         "sort": str(params.get("sort") or DEFAULT_SORT),
-        # Store scoping observed in the live request. It belongs to the session,
-        # so it is passed through when a caller has it and left empty otherwise
-        # -- never hardcoded, never persisted.
+        # Observed empty in ordinary signed-in traffic; store context lives in
+        # cookies, not here. Kept as a parameter so a future observation can
+        # supply it without reshaping the request.
         "store_slot_booked": str(params.get("store_slot_booked") or ""),
     }
 
@@ -163,6 +214,9 @@ def build_variables(params: dict[str, Any]) -> dict[str, Any]:
         "dealsId": "",
         "nudgeContext": "",
         **scalars,
+        # Store context is not carried here. It travels in the session's own
+        # cookies (assortmentStoreId, isoLoc), which is why an empty string is
+        # the correct value rather than a missing one: the page sends the key.
         "storeSlotBooked": params.get("store_slot_booked") or "",
         "postProcessingVersion": 2,
         "version": "v2",
@@ -213,6 +267,12 @@ class NotSignedIn(Exception):
     code = "login_required"
 
 
+class RateLimited(Exception):
+    """Throttled. Distinct from a block, and never retried automatically."""
+
+    code = "rate_limited"
+
+
 class StaleContract(Exception):
     """Walmart moved the persisted query out from under us."""
 
@@ -252,6 +312,8 @@ def handle_result(result: dict[str, Any]) -> dict[str, Any]:
 
     if status in (401, 403):
         raise NotSignedIn(NOT_SIGNED_IN)
+    if status == 429:
+        raise RateLimited(RATE_LIMITED)
     if status in (404, 400) and not payload:
         raise StaleContract(STALE_CONTRACT)
     if status != 200:
@@ -260,26 +322,56 @@ def handle_result(result: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("search returned a response that was not JSON")
 
     parsed = search_parse.parse_search(payload)
-    parsed["store_scoped"] = bool(result.get("store_scoped"))
     return parsed
 
 
 def action_search(request: dict[str, Any]) -> dict[str, Any]:
-    """Worker entry point for `walmart search`."""
+    """Worker entry point for `walmart search`.
+
+    Reads the server-rendered page by default: one navigation, no synthesized
+    GraphQL, no dependency on a persisted hash Walmart rotates, and no extra
+    rate-limit surface. The persisted-query transport stays available behind
+    `transport: "graphql"` because it is built and tested, and a second way in
+    is worth having the day the first one changes.
+    """
     params = normalize_params(request)
     options = browser.BrowserOptions.from_request(request.get("options", {}))
-    url = build_request(params, persisted_hash=_hash_for(request))
+    transport = str((request.get("params") or {}).get("transport") or "page")
 
     with browser.open_session(options) as session:
         protocol.progress(f"searching for {params['query']!r}")
-        result = session.fetch_same_origin(url, headers=REQUEST_HEADERS)
-        result["store_scoped"] = bool(params.get("store_slot_booked"))
-        data = handle_result(result)
+        if transport == "graphql":
+            url = build_request(params, persisted_hash=_hash_for(request))
+            data = handle_result(session.fetch_same_origin(url, headers=REQUEST_HEADERS))
+        else:
+            data = search_page(session, params)
 
     data["query"] = params["query"]
     data["limit"] = params["limit"]
     data["items"] = data["items"][: params["limit"]]
     return data
+
+
+def search_page(session, params: dict[str, Any]) -> dict[str, Any]:
+    """Navigate to the search page and read the results it shipped."""
+    url = search_page_url(params)
+    response = session.goto(url, wait_until="domcontentloaded")
+    status = getattr(response, "status", None) if response is not None else None
+
+    if status == 429:
+        raise RateLimited(RATE_LIMITED)
+
+    # Where we landed decides whether this is a block, before anything is read
+    # from the document. A block page is still a page, and it parses to nothing.
+    challenge.raise_if_blocked_url(getattr(session.page, "url", None))
+
+    payload = session.page.evaluate(NEXT_DATA_SCRIPT)
+    if not payload:
+        # An empty page is not an empty catalog. Reporting "no results" here
+        # would be a confident answer produced by having read nothing.
+        raise RuntimeError(NO_SSR_PAYLOAD)
+
+    return search_parse.parse_search(payload)
 
 
 def _hash_for(request: dict[str, Any]) -> str:

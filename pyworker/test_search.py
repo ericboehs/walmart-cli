@@ -116,12 +116,20 @@ def test_observed_flags_are_copied_not_improved():
     assert variables["enableUnifiedProductFragment"] is False
 
 
-def test_store_scoping_is_passed_through_and_never_invented():
-    empty = variables_of(search.build_request(params()))
-    scoped = variables_of(search.build_request(params(store_slot_booked="OPAQUE")))
+def test_store_slot_booked_is_sent_empty_not_omitted():
+    # Observed empty in ordinary signed-in traffic. The page sends the key, so
+    # we send the key: a missing field and an empty one are different requests.
+    variables = variables_of(search.build_request(params()))
 
-    assert empty["storeSlotBooked"] == ""
-    assert scoped["storeSlotBooked"] == "OPAQUE"
+    assert "storeSlotBooked" in variables
+    assert variables["storeSlotBooked"] == ""
+
+
+def test_translation_is_sent_as_null():
+    variables = variables_of(search.build_request(params()))
+
+    assert "translation" in variables["additionalQueryParams"]
+    assert variables["additionalQueryParams"]["translation"] is None
 
 
 def test_no_device_identifier_is_synthesized():
@@ -202,10 +210,18 @@ def test_a_non_json_two_hundred_is_not_silently_empty():
         search.handle_result({"status": 200, "body": "<html>maintenance</html>"})
 
 
-def test_store_scoping_is_reported_so_prices_can_be_qualified():
-    data = search.handle_result({**ok_result(), "store_scoped": True})
+def test_a_throttle_is_not_reported_as_a_bot_block():
+    # Telling a throttled user to go clear a puzzle that does not exist sends
+    # them hunting for a challenge window that will never appear.
+    with pytest.raises(search.RateLimited) as raised:
+        search.handle_result({"status": 429, "body": ""})
 
-    assert data["store_scoped"] is True
+    assert raised.value.code == "rate_limited"
+    assert not isinstance(raised.value, challenge.Blocked)
+
+
+def test_a_throttle_advises_waiting_rather_than_retrying():
+    assert "wait" in search.RATE_LIMITED.lower()
 
 
 # --- Interpreting a response --------------------------------------------------
@@ -285,7 +301,7 @@ def test_the_action_issues_one_request_and_returns_items(monkeypatch):
     session = FakeSession(ok_result([{"usItemId": "1", "name": "Bananas"}]))
     install_session(monkeypatch, session)
 
-    data = search.action_search(search_request(query="bananas"))
+    data = search.action_search(search_request(query="bananas", transport="graphql"))
 
     assert len(session.fetched) == 1
     assert data["query"] == "bananas"
@@ -298,7 +314,7 @@ def test_the_limit_trims_results_without_changing_the_request(monkeypatch):
     session = FakeSession(ok_result(items))
     install_session(monkeypatch, session)
 
-    data = search.action_search(search_request(query="milk", limit=3))
+    data = search.action_search(search_request(query="milk", limit=3, transport="graphql"))
 
     assert len(data["items"]) == 3
     assert variables_of(session.fetched[0][0])["limit"] == 40
@@ -320,6 +336,127 @@ def test_a_blocked_search_stops_instead_of_retrying(monkeypatch):
     install_session(monkeypatch, session)
 
     with pytest.raises(challenge.Blocked):
-        search.action_search(search_request(query="milk"))
+        search.action_search(search_request(query="milk", transport="graphql"))
 
     assert len(session.fetched) == 1
+
+
+# --- The server-rendered path (the default) -----------------------------------
+
+
+class FakeResponse:
+    def __init__(self, status):
+        self.status = status
+
+
+class FakePageSession:
+    """A session that navigates and hands back an embedded payload."""
+
+    def __init__(self, payload=None, status=200, url="https://www.walmart.com/search?q=milk"):
+        self.payload = payload
+        self.status = status
+        self.page = self
+        self.navigated = []
+        self.evaluated = []
+        self.url = url
+
+    def goto(self, url, **_kwargs):
+        self.navigated.append(url)
+        return FakeResponse(self.status)
+
+    def evaluate(self, script, argument=None):
+        self.evaluated.append(script)
+        if argument is not None:
+            raise AssertionError("the page path takes no arguments")
+        return self.payload
+
+    def fetch_same_origin(self, *_args, **_kwargs):
+        raise AssertionError("the default path must not synthesize a request")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+SSR_RESULT = {
+    "itemStacks": [
+        {
+            "itemsV2": None,
+            # itemsV2 can be null while items holds the products. Reading only
+            # the first would report an empty catalog for a full page.
+            "items": [{"usItemId": "77", "name": "Bananas", "price": 0.58, "averageWeight": 0.4}],
+        }
+    ],
+    "hasMorePages": True,
+    "paginationV2": {"maxPage": 8},
+}
+
+
+def test_the_default_path_navigates_like_a_person(monkeypatch):
+    session = FakePageSession(payload=SSR_RESULT)
+    install_session(monkeypatch, session)
+
+    data = search.action_search(search_request(query="bananas"))
+
+    assert session.navigated == ["https://www.walmart.com/search?q=bananas"]
+    assert [item["name"] for item in data["items"]] == ["Bananas"]
+
+
+def test_paging_and_sorting_travel_in_the_url(monkeypatch):
+    session = FakePageSession(payload=SSR_RESULT)
+    install_session(monkeypatch, session)
+
+    search.action_search(search_request(query="milk", page=3, sort="price_low"))
+
+    assert session.navigated == ["https://www.walmart.com/search?q=milk&page=3&sort=price_low"]
+
+
+def test_the_graphql_transport_is_still_reachable(monkeypatch):
+    session = FakeSession(ok_result())
+    install_session(monkeypatch, session)
+
+    search.action_search(search_request(query="milk", transport="graphql"))
+
+    assert len(session.fetched) == 1
+
+
+def test_an_empty_page_is_not_reported_as_an_empty_catalog(monkeypatch):
+    session = FakePageSession(payload=None)
+    install_session(monkeypatch, session)
+
+    with pytest.raises(RuntimeError) as raised:
+        search.action_search(search_request(query="milk"))
+
+    assert "did not ship" in str(raised.value)
+
+
+def test_landing_on_the_block_page_is_named_as_a_block(monkeypatch):
+    # A block page is still a page, and it parses to nothing. Where we landed
+    # is the diagnosis; the empty document is only the symptom.
+    session = FakePageSession(payload=None, url="https://identity.walmart.com/blocked?ref=1")
+    install_session(monkeypatch, session)
+
+    with pytest.raises(challenge.Blocked):
+        search.action_search(search_request(query="milk"))
+
+
+def test_a_throttled_navigation_is_reported_as_a_throttle(monkeypatch):
+    session = FakePageSession(payload=SSR_RESULT, status=429)
+    install_session(monkeypatch, session)
+
+    with pytest.raises(search.RateLimited):
+        search.action_search(search_request(query="milk"))
+
+
+def test_weighted_produce_is_flagged(monkeypatch):
+    # You order two pounds of bananas, not two bananas. averageWeight being
+    # present at all is the signal.
+    session = FakePageSession(payload=SSR_RESULT)
+    install_session(monkeypatch, session)
+
+    item = search.action_search(search_request(query="bananas"))["items"][0]
+
+    assert item["weighted"] is True
+    assert item["price"] == 0.58

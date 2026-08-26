@@ -116,3 +116,13 @@ def test_the_module_never_suggests_retrying():
 
     assert "retry" in text
     assert "not retry" in text
+
+
+def test_a_block_destination_is_recognized_from_the_url_alone():
+    assert challenge.detect_url("https://identity.walmart.com/blocked?ref=1") == "unknown"
+    assert challenge.detect_url("https://captcha.px-cloud.net/x") == "perimeterx"
+
+
+def test_an_ordinary_url_is_not_a_block():
+    assert challenge.detect_url("https://www.walmart.com/search?q=blocked+drain+cleaner") is None
+    assert challenge.detect_url(None) is None

@@ -99,7 +99,7 @@ def normalize_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         "seller_id": _string(raw.get("sellerId")),
         "seller_name": _string(raw.get("sellerName")),
         "availability": _availability(raw),
-        "price": prices["current"],
+        "price": prices["current"] if prices["current"] is not None else _number(raw.get("price")),
         "price_display": prices["current_display"],
         "was_price": prices["was"],
         "unit_price_display": prices["unit_display"],
@@ -113,7 +113,24 @@ def normalize_item(raw: dict[str, Any]) -> dict[str, Any] | None:
         "sponsored": bool(raw.get("sponsoredProduct")),
         "url": _string(raw.get("canonicalUrl")),
         "first_party": is_first_party(raw),
+        # Present on the server-rendered payload, absent from the GraphQL one.
+        # None means "this response did not say", which is different from False:
+        # a shopper told "cannot add" about an item nobody asked about is worse
+        # served than one told nothing.
+        "can_add": _bool_or_none(raw.get("canAddToCart")),
+        "out_of_stock": _bool_or_none(raw.get("isOutOfStock")),
+        "snap_eligible": _bool_or_none(raw.get("snapEligible")),
+        # Weighted produce: you order 2 lb of bananas, not 2 bananas. The signal
+        # is averageWeight being present at all, which is why it is read as
+        # "is there a number here" rather than as a truthy value.
+        "weighted": _number(raw.get("averageWeight")) is not None,
+        "average_weight": _number(raw.get("averageWeight")),
+        "weight_increment": _number(raw.get("weightIncrement")),
     }
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def is_first_party(raw: dict[str, Any]) -> bool:

@@ -89,6 +89,29 @@ def _value_for(payload: dict, normalized_key: str) -> Any:
     return None
 
 
+def detect_url(url: str | None) -> str | None:
+    """Name the block vendor if this is where a block sends you, else None.
+
+    A navigation that lands on the interstitial is a block even when the body
+    is ordinary HTML. URL beats page text: the text is localized and
+    redesigned, the destination is not.
+    """
+    if not url:
+        return None
+    lowered = str(url).lower()
+    if not any(marker in lowered for marker in BLOCK_URL_MARKERS):
+        return None
+    return "perimeterx" if "px" in lowered or "perimeterx" in lowered else "unknown"
+
+
+def raise_if_blocked_url(url: str | None) -> None:
+    """Stop the command when a navigation landed on a block. Never retries."""
+    vendor = detect_url(url)
+    if vendor is None:
+        return
+    raise Blocked(ADVICE, detail=f"navigation landed on a block page ({vendor})")
+
+
 def raise_if_blocked(payload: Any, *, status: int | None = None) -> None:
     """Stop the command when a response is a block. Never retries.
 
