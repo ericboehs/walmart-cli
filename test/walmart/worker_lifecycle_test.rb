@@ -49,6 +49,47 @@ module Walmart
     end
 
     # A worker that ignores TERM must not hang the CLI past its own timeout.
+    # The worker is not a leaf. It drives Playwright, which runs Chromium, and
+    # a grandchild that survives holds Chromium's own lock inside the profile
+    # while our flock reports it free -- so the next command fails inside
+    # Playwright instead of at the guard that has a good error message.
+    def test_a_timeout_kills_the_whole_process_tree_not_just_the_worker
+      parent_marker = File.join(tmp, "parent-pid")
+      child_marker = File.join(tmp, "child-pid")
+      worker = build_worker(<<~RUBY)
+        child = spawn(#{RbConfig.ruby.inspect}, "-e", <<~CHILD)
+          File.write(#{child_marker.inspect}, Process.pid.to_s)
+          sleep 120
+        CHILD
+        File.write(#{parent_marker.inspect}, Process.pid.to_s)
+        Process.detach(child)
+        sleep 120
+      RUBY
+
+      assert_raises(WorkerError) { worker.run("probe", timeout: 1) }
+      wait_for_file(child_marker)
+
+      assert_dead(File.read(parent_marker).to_i)
+      assert_dead(File.read(child_marker).to_i)
+    end
+
+    # A stray grandchild is the one failure with no `walmart` process in ps for
+    # the user to find, so the group is what has to die -- and the group is
+    # only ours to kill because the spawn asked for one.
+    def test_the_worker_gets_its_own_process_group
+      marker = File.join(tmp, "pgid")
+      worker = build_worker(<<~RUBY)
+        File.write(#{marker.inspect}, [Process.pid, Process.getpgrp].join(" "))
+        puts({ "type" => "result", "ok" => true, "data" => {} }.to_json)
+      RUBY
+
+      worker.run("probe", timeout: 10)
+      pid, pgid = File.read(marker).split.map(&:to_i)
+
+      assert_equal pid, pgid, "the worker should lead its own group"
+      refute_equal Process.getpgrp, pgid, "the worker must not share our group"
+    end
+
     def test_a_worker_that_ignores_term_is_killed
       marker = File.join(tmp, "pid")
       worker = build_worker(<<~RUBY)
@@ -168,6 +209,12 @@ module Walmart
       File.write(script, "require 'json'\n#{body}")
       Worker.new(paths: paths, config: config, env: env, logger: logger,
                  python_command: [RbConfig.ruby], script: script)
+    end
+
+    def wait_for_file(path, timeout: 10)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      sleep 0.05 while !File.exist?(path) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+      path
     end
 
     # Polls rather than asserting instantly: TERM, and the KILL that may follow,

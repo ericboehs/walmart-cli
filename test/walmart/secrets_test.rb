@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "pp"
+require "yaml"
+
 require_relative "../test_helper"
 
 module Walmart
@@ -14,6 +17,62 @@ module Walmart
       refute_includes secret.inspect, "hunter2"
       refute_includes JSON.generate({ "password" => secret }), "hunter2"
       assert_equal "hunter2", secret.value
+    end
+
+    def message_from_raising(secret)
+      raise "credential was #{secret}"
+    rescue RuntimeError => e
+      e.message
+    end
+
+    # The leak we are guarding against is never a deliberate print. It is a
+    # backtrace, a `p` left in while debugging, or some object that merely
+    # happens to hold a Secret being logged. So this walks every route Ruby
+    # has from an object to text, rather than the two we happen to call.
+    def test_no_route_from_a_secret_to_text_reveals_it
+      secret = Secrets::Secret.new("hunter2")
+      holder = Struct.new(:credential).new(secret)
+
+      renderings = {
+        "to_s" => secret.to_s,
+        "inspect" => secret.inspect,
+        "interpolation" => "#{secret}", # rubocop:disable Style/RedundantInterpolation
+        "inside an array" => [secret].inspect,
+        "inside a hash" => { password: secret }.inspect,
+        "format %s" => format("%s", secret),
+        "format %p" => format("%p", secret),
+        "json" => JSON.generate({ "password" => secret }),
+        "pretty json" => JSON.pretty_generate({ "password" => secret }),
+        "pretty print" => PP.pp(secret, +""),
+        "an object holding one" => holder.inspect,
+        "an exception message" => message_from_raising(secret),
+        "String()" => String(secret)
+      }
+
+      renderings.each do |route, rendered|
+        refute_includes rendered, "hunter2", "a secret leaked through #{route}"
+      end
+    end
+
+    # Marshal and Psych read instance variables directly, so none of the text
+    # routes above protect them. They raise rather than redacting: a Secret
+    # that round-trips as "[REDACTED]" is a credential that silently fails to
+    # log in, which is harder to diagnose than an exception at the line that
+    # tried to serialize it.
+    def test_a_secret_refuses_to_be_marshalled
+      error = assert_raises(Error) { Marshal.dump(Secrets::Secret.new("hunter2")) }
+
+      assert_equal "secret_serialization", error.code
+    end
+
+    def test_a_secret_refuses_to_be_dumped_as_yaml
+      assert_raises(Error) { YAML.dump(Secrets::Secret.new("hunter2")) }
+    end
+
+    def test_a_secret_still_hands_over_its_value_when_asked_directly
+      # The whole point is that one call site can read it; a Secret nobody can
+      # use is not secure, it is broken.
+      assert_equal "hunter2", Secrets::Secret.new("hunter2").value
     end
 
     def test_status_reports_states_not_values

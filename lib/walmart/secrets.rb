@@ -23,6 +23,14 @@ module Walmart
     # A credential value that refuses to leak through inspection, interpolation
     # in a log line, or an exception dump. Call #value only where the secret is
     # actually needed (the worker's stdin).
+    #
+    # Every way Ruby can turn an object into text is covered here, because the
+    # leak we are guarding against is never a deliberate print -- it is a
+    # backtrace, a `p` left in during debugging, or an object that merely
+    # happens to hold one getting logged. Serialization raises instead of
+    # redacting: a Secret that round-trips as "[REDACTED]" would be a
+    # credential that silently fails to log in, which is worse than a stack
+    # trace at the line that tried.
     class Secret
       def initialize(value)
         @value = value.to_s
@@ -35,6 +43,13 @@ module Walmart
       def inspect = "#<Walmart::Secrets::Secret [REDACTED]>"
       def to_json(*) = '"[REDACTED]"'
       def pretty_print(pp) = pp.text(inspect)
+
+      # Marshal and Psych both read instance variables directly, so neither is
+      # covered by any of the above.
+      def marshal_dump = raise(Error.new(NOT_SERIALIZABLE, code: "secret_serialization"))
+      def encode_with(_coder) = raise(Error.new(NOT_SERIALIZABLE, code: "secret_serialization"))
+
+      NOT_SERIALIZABLE = "refusing to serialize a credential"
     end
 
     # Provider contract:

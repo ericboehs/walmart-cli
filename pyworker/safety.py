@@ -30,6 +30,12 @@ FORBIDDEN_TERMS = (
 )
 
 # URL fragments the navigation guard refuses outright.
+#
+# The leading separator on every entry is load-bearing, not stylistic. The
+# whole URL is percent-decoded before matching, query strings included, so a
+# bare term here would start refusing ordinary shopping: "checkout organizer"
+# is a real thing to search for, and only the separator keeps that search from
+# reading as a destination.
 FORBIDDEN_URL_FRAGMENTS = (
     "/checkout",
     "/cart/checkout",

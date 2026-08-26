@@ -46,26 +46,59 @@ module Walmart
     # TERM first so the worker can close the browser cleanly, then KILL if it
     # ignores us. A child that swallows TERM would otherwise hang the CLI past
     # its own timeout, inside Open3's join.
+    #
+    # Signals go to the process *group*, not the pid. The worker is not a leaf:
+    # it drives Playwright, which runs a Chromium tree. Killing only the parent
+    # leaves that browser running, reparented to init, still holding Chromium's
+    # own SingletonLock inside the persistent profile -- while our flock says
+    # the profile is free. The next command then fails deep inside Playwright
+    # instead of at our guard, so the user gets a stack trace rather than the
+    # sentence we wrote for exactly this case, and there is no `walmart`
+    # process in ps for them to find.
     def kill(wait_thread)
-      Process.kill("TERM", wait_thread.pid)
+      target = signal_target(wait_thread.pid)
+      return if target.nil?
+
+      Process.kill("TERM", target)
       return unless wait_thread.join(KILL_GRACE_SECONDS).nil?
 
       @logger&.call(:warn, "worker ignored TERM; sending KILL")
-      Process.kill("KILL", wait_thread.pid)
+      Process.kill("KILL", target)
       return unless wait_thread.join(KILL_GRACE_SECONDS).nil?
 
-      warn_survivor(wait_thread.pid, "survived KILL")
+      warn_survivor(target, "survived KILL")
     rescue Errno::ESRCH
       # Already gone, which is the outcome we wanted.
       nil
     rescue Errno::EPERM => e
       # Not benign: something is still running, still holding the profile lock,
       # and the next command would blame a ghost. Say so now.
-      warn_survivor(wait_thread.pid, e.message)
+      warn_survivor(target, e.message)
     end
 
-    def warn_survivor(pid, reason)
-      @logger&.call(:warn, "could not stop worker #{pid} (#{reason}); a browser may still be running " \
+    # A negative pid signals the whole group. Returns nil when there is nothing
+    # to signal.
+    #
+    # The guard against signalling our own group is the important line here:
+    # if the spawn did not get its own group, the child shares ours, and
+    # `kill(-our_group)` would take down the user's shell pipeline -- their
+    # terminal, not just our worker. Refusing to escalate is the smaller
+    # failure of the two.
+    def signal_target(pid)
+      return nil if pid.nil?
+
+      group = Process.getpgid(pid)
+      return -group unless group == Process.getpgrp
+
+      @logger&.call(:warn, "worker shares this process group; signalling it alone")
+      pid
+    rescue Errno::ESRCH
+      nil
+    end
+
+    def warn_survivor(target, reason)
+      what = target.to_i.negative? ? "worker process group #{target.abs}" : "worker #{target}"
+      @logger&.call(:warn, "could not stop #{what} (#{reason}); a browser may still be running " \
                            "and holding the profile lock")
       nil
     end

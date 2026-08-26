@@ -193,9 +193,15 @@ module Walmart
     # Chromium holding the profile lock) alive after the CLI is gone. Open3
     # closes the pipes when the block unwinds but never signals the child, so
     # the kill has to happen here, on every abnormal exit path.
+    #
+    # pgroup: true puts the worker in its own process group so that kill can
+    # take the whole Playwright/Chromium tree with it. Without it we can only
+    # signal the Python parent, and a browser outliving its owner is precisely
+    # the failure the profile lock cannot detect.
     def spawn(request, timeout:, stderr_tail:, mutation:, &block)
       cmd = python_command + [worker_script]
-      Open3.popen3(worker_env, *cmd, chdir: pyworker_dir) do |stdin, stdout, stderr, wait_thread|
+      options = { chdir: pyworker_dir, pgroup: true }
+      Open3.popen3(worker_env, *cmd, **options) do |stdin, stdout, stderr, wait_thread|
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
         err_thread = Thread.new { drain_stderr(stderr, stderr_tail) }
         begin

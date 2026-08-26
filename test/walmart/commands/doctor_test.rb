@@ -112,6 +112,39 @@ module Walmart
         refute_includes err.string, "another walmart command"
       end
 
+      # Our flock says the profile is free and Chromium's own lock says it is
+      # not. That pair means a browser outlived the command that started it,
+      # which is the one failure with no `walmart` process in ps to find.
+      def test_a_stale_chromium_lock_is_reported_as_a_leftover_browser
+        FileUtils.mkdir_p(paths.browser_profile)
+        File.write(File.join(paths.browser_profile, "SingletonLock"), "")
+
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
+
+        assert_includes out.string, "warn  profile"
+        assert_includes err.string, "leftover Chromium"
+      end
+
+      # Chromium writes SingletonLock as a symlink to a host:pid target that
+      # does not exist as a file. File.exist? follows the link and says no.
+      def test_a_dangling_singleton_symlink_still_counts
+        FileUtils.mkdir_p(paths.browser_profile)
+        File.symlink("somehost-12345", File.join(paths.browser_profile, "SingletonLock"))
+
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
+
+        assert_includes err.string, "leftover Chromium"
+      end
+
+      def test_a_clean_profile_does_not_warn_about_a_browser
+        FileUtils.mkdir_p(paths.browser_profile)
+
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
+
+        assert_includes out.string, "ok    profile"
+        refute_includes err.string, "leftover Chromium"
+      end
+
       def test_an_actively_held_lock_warns
         FileUtils.mkdir_p(paths.browser_profile)
         File.write(paths.profile_lock, "12345")

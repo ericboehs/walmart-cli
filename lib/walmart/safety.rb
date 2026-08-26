@@ -30,6 +30,10 @@ module Walmart
     ].freeze
 
     # URL path fragments a navigation guard must refuse.
+    #
+    # The leading separator on every entry is load-bearing: the whole URL is
+    # percent-decoded before matching, so a bare term here would refuse
+    # ordinary searches like "checkout organizer".
     FORBIDDEN_URL_FRAGMENTS = %w[
       /checkout
       /cart/checkout

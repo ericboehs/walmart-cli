@@ -11,6 +11,11 @@ module Walmart
     # network. Every check is local: the worker probe inspects the Python
     # environment and browser binaries, and never contacts Walmart.
     class Doctor < Base
+      # Chromium writes these into a persistent profile and removes them on a
+      # clean exit. Named here rather than probed with ps, because the process
+      # is not ours to identify and a name match would be a guess.
+      SINGLETON_LOCKS = %w[SingletonLock SingletonSocket SingletonCookie].freeze
+
       Check = Struct.new(:name, :status, :detail, :hint, keyword_init: true) do
         def ok?   = status == :ok
         def fail? = status == :fail
@@ -183,12 +188,36 @@ module Walmart
       end
 
       def idle_profile_check
-        if File.directory?(paths.browser_profile)
-          Check.new(name: "profile", status: :ok, detail: paths.browser_profile)
-        else
-          Check.new(name: "profile", status: :warn, detail: "no browser profile yet",
-                    hint: "run: walmart login")
-        end
+        return no_profile_check unless File.directory?(paths.browser_profile)
+        return stale_browser_check if stale_browser_lock
+
+        Check.new(name: "profile", status: :ok, detail: paths.browser_profile)
+      end
+
+      def no_profile_check
+        Check.new(name: "profile", status: :warn, detail: "no browser profile yet",
+                  hint: "run: walmart login")
+      end
+
+      # Our flock says nobody is using the profile, and Chromium's own lock
+      # says otherwise. That combination means a browser outlived the command
+      # that started it -- a killed worker, a crash -- and it is the one
+      # failure with no `walmart` process in ps for anyone to find. Without
+      # this check the next command dies deep inside Playwright, and the good
+      # error message two branches up is the one the user never sees.
+      def stale_browser_check
+        Check.new(name: "profile", status: :warn,
+                  detail: "a browser may still be running from an earlier command",
+                  hint: "quit any leftover Chromium started by walmart, or remove " \
+                        "#{stale_browser_lock} if you are sure none is running")
+      end
+
+      def stale_browser_lock
+        return @stale_browser_lock if defined?(@stale_browser_lock)
+
+        @stale_browser_lock = SINGLETON_LOCKS
+                              .map { |name| File.join(paths.browser_profile, name) }
+                              .find { |path| File.exist?(path) || File.symlink?(path) }
       end
 
       def render(checks)
