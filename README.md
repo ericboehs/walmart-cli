@@ -63,6 +63,10 @@ result is empty, that text mode says something useful, and that exit codes match
 the four documented meanings. Several defects reached review because the unit
 suite asserts what the code should do and nothing asserted what it printed.
 
+[docs/TESTING.md](docs/TESTING.md) explains why the suite is shaped this way:
+nine defects, seven of them found sitting inside checks that were passing, and
+the two habits that caught them. Worth reading before adding a test here.
+
 ## Safety invariants
 
 These outrank convenience, and they are enforced by tests rather than by good
