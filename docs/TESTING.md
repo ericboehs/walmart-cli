@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of seventy-four defects
+The layout of the suite is not arbitrary. It is the residue of seventy-five defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -30,6 +30,7 @@ Each of these was written deliberately, read fine, and passed:
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
+| a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | the unknown named wrong | the rewritten docstring still called the mutation unobserved when the request had been seen four times and the response is what is missing |
 | a parity test that read one file | it passed while the capture script's own --help repeated the whole retracted diagnosis, and the confidence it produced covered everything |
 | "both were true when written" | the comment in the parity test granted an inference the standing of an observation, inside the test written to stop exactly that |
@@ -287,6 +288,9 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A discipline nobody enforces is a habit, and a habit does not fail
+  loudly.** The gates were being run by hand before every commit, which worked
+  until the once it did not. `rake hooks`.
 - **Name the unknown precisely.** A docstring calling the mutation unobserved
   was disproved by its own opening line, which said the request is known;
   the response is the missing half. Being vague about which half is missing is

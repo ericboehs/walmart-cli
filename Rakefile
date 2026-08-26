@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "fileutils"
+
 require "rake/testtask"
 
 PYWORKER = File.expand_path("pyworker", __dir__)
@@ -57,3 +59,14 @@ desc "Everything CI runs"
 task ci: %i[rubocop ruff test pytest smoke]
 
 task default: :ci
+
+desc "install the git hooks that run the gates before a commit"
+task :hooks do
+  hooks = File.join(__dir__, ".git", "hooks")
+  FileUtils.mkdir_p(hooks)
+  source = File.join(__dir__, "script", "hooks", "pre-commit")
+  target = File.join(hooks, "pre-commit")
+  FileUtils.cp(source, target)
+  FileUtils.chmod(0o755, target)
+  puts "installed #{target}"
+end
