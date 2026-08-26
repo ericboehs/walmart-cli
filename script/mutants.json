@@ -1590,5 +1590,29 @@
       "pytest",
       "pyworker/test_recon.py"
     ]
+  },
+  {
+    "label": "the docs deny the mutation code exists",
+    "file": "docs/CONTRACTS.md",
+    "from": "### 4. Where that leaves the contract",
+    "to": "### 4. Where that leaves the contract\n\nUntil then there is no cart mutation code."
+  },
+  {
+    "label": "the retracted diagnosis is restated as present fact",
+    "file": "docs/CONTRACTS.md",
+    "from": "My Items remains unobserved, and this time that is all it means.",
+    "to": "The cart mutation runs off the main thread. My Items remains unobserved."
+  },
+  {
+    "label": "the docs stop saying both gates are shut",
+    "file": "docs/CONTRACTS.md",
+    "from": "The response is not observed, and neither is per-line delivery eligibility.",
+    "to": "The response is not observed."
+  },
+  {
+    "label": "the docs claim headers are kept",
+    "file": "docs/CONTRACTS.md",
+    "from": "No headers. No request body,",
+    "to": "Headers are kept. No request body,"
   }
 ]

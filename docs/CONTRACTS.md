@@ -260,30 +260,64 @@ ordinary HTML.
 A `429` is a throttle, not a block, and the two must stay distinguishable. Neither is
 ever retried automatically, and no challenge is ever automated, simulated or bypassed.
 
-## Not observable from page context
+## How the cart mutation came to be observed
 
-The cart mutation and My Items both run off the main thread: a `fetch` wrapper
-installed before the app's own initialization catches `getCart` but sees nothing for
-either of these, an `XMLHttpRequest` wrapper sees nothing, `performance` resource
-entries have no matching entry, and no service worker controls the page. Playwright
-observes at the browser level and can see worker traffic, so these need a
-browser-level capture.
+Written in order, because the first answer was wrong and the wrong answer is
+the useful part.
 
-Until then there is no cart mutation code. `home/updateItems` is a name and a verb;
-we have no request body, no response body, and no idea what a partial success looks
-like. Verification of post-state is the whole authorization, so `cart show` comes
-first.
+### 1. Page-context hooks saw nothing
 
-### The one mutation performed
+A `fetch` wrapper installed before the app's own initialization caught
+`getCart` but saw nothing for the cart mutation or for My Items. An
+`XMLHttpRequest` wrapper saw nothing. `performance` resource entries had no
+matching entry. No service worker controlled the page.
 
-To learn whether the mutation was observable at all, an item **already in the cart**
-was incremented from quantity 2 to 3 through the site's own UI control and then
-decremented back to 2, with the final state re-read from a fresh page load. The item,
-its offer, price and promotions never left the cart, so nothing could be lost by a
-failed restore. The result was negative — no request was visible — which is what put
-this section here.
+To find out whether the mutation was observable at all, an item **already in
+the cart** was incremented from quantity 2 to 3 through the site's own UI
+control and then decremented back to 2, with the final state re-read from a
+fresh page load. The item, its offer, price and promotions never left the cart,
+so nothing could be lost by a failed restore. A remove-and-restore has none of
+those safety properties and was refused.
 
-A remove-and-restore has none of those safety properties and was refused.
+No request was visible.
+
+### 2. The conclusion drawn from that was wrong
+
+This document said the mutation "runs off the main thread", and that a
+browser-level capture was needed because Playwright can see worker traffic.
+
+That was a claim about Walmart inferred from a fact about our hooks. The
+evidence supported only the narrower statement: **a page-context hook did not
+observe this traffic.** Silence from an instrument is a fact about the
+instrument until something else corroborates it.
+
+The cost of the stronger claim was real. It stood as the reason no mutation
+work could begin, so the work did not begin, and the blocker was a wrong
+diagnosis rather than a hard limit.
+
+### 3. Browser-level events observed it, from the page
+
+Subscribing to Playwright's own request events -- which observe at the browser
+level rather than from inside the document -- recorded four `updateItems`
+requests with bodies.
+
+Playwright attributes worker traffic to the owning page, so the capture records
+`from_worker` for each request to tell the two explanations apart. **It was
+false for all four.** The requests came from the page. Nothing was ever off the
+main thread; the hooks simply ran somewhere that could not see them.
+
+My Items remains unobserved, and this time that is all it means. There is no
+finding about how it works.
+
+### 4. Where that leaves the contract
+
+The request is observed and is written up under **Cart (write)** above: the
+path, the persisted-query hash, the eighteen feature flags, and the absence of
+both `operationName` and `lineItemId`.
+
+The response is not observed, and neither is per-line delivery eligibility.
+Both are gates in code, not cautions in prose, and the cart mutation refuses
+before opening a browser while either stands.
 
 ## What the first response capture keeps
 
