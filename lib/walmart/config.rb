@@ -106,6 +106,12 @@ module Walmart
       tmp = "#{paths.config_file}.tmp"
       # Created private rather than tightened afterwards: write-then-chmod
       # leaves the file at the umask's mercy for the moment in between.
+      #
+      # TRUNC here, EXCL in the archive, on purpose. A config re-save is
+      # routine, and refusing to write someone's settings because of debris
+      # from an old crash is worse than overwriting the debris. An archive temp
+      # file is either a crash worth noticing or a concurrent writer worth
+      # refusing.
       body = "#{JSON.pretty_generate(data)}\n"
       File.open(tmp, File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |file| file.write(body) }
       File.chmod(0o600, tmp)
