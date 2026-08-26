@@ -24,6 +24,7 @@ fetches happen off the main thread where page-level instrumentation cannot see t
 | Search | yes | `props.pageProps.initialData.searchResult` |
 | Item | yes | `props.pageProps.initialData.data.product` |
 | Order history | yes | `props.pageProps.phRedesignInitialData.data.purchaseHistory` |
+| Order detail | yes | `props.pageProps.initialData.data.order` |
 | Cart | no | client fetch of `getCart` |
 | My Items | no | not observable from page context |
 
@@ -157,6 +158,50 @@ own observation, not an assumption. Because the timestamp filters are null in re
 traffic, the default two years and `--all` are ours to implement by walking cursors
 until `orderDate` passes the cutoff. A guessed timestamp filter that silently returns
 nothing looks exactly like having no old orders.
+
+### Order detail
+
+The list rows are an index, not a record. `groups[].items[]` there carries only `id`,
+`name`, `offerId`, `quantity`, `imageInfo`, `statusCode`, `isUnavailable`, `uniqueId` —
+no `usItemId` and no price. Archiving from the list alone would record what was bought
+but neither what it cost nor a stable catalog id, and `offerId` is a weaker join key
+than `usItemId` for bought-before annotations.
+
+Server-rendered at `https://www.walmart.com/orders/<orderId>` (`/orders/[orderId]`),
+at `props.pageProps.initialData.data.order`.
+
+**The fulfillment groups are under a dynamic key.** On the order observed they were
+under `groups_2101`. Find them by the `groups_` prefix, never by literal name, and
+handle more than one such key rather than taking the first.
+
+`order`: `id`, `displayId`, `orderDate`, `shortTitle`, `itemCount`, `timezone`,
+`martId`, `groups_<n>[]`, `priceDetails`, and the sensitive material listed below.
+
+`item`: `id`, `quantity`, `priceInfo{linePrice}`, `productInfo{usItemId, offerId, name,
+shortDescription, imageInfo, isAlcohol, salesUnitType}`, `conditionGroupCode`,
+`orderedSalesUnit`, `requestedWeight`, `addOns`, `actions`. `requestedWeight` and
+`orderedSalesUnit` are the weighted-produce fields on the order side; both were null
+on the item observed, so their populated shape is unobserved.
+
+`priceDetails`: `subTotal`, `taxTotal`, `grandTotal`, `grandTotalWithTips`,
+`strikethroughSubTotal`, `savings`, `allSavings`, `discounts`, `fees`,
+`belowMinimumFee`, `minimumThreshold`, `memberShippingSaving`, `driverTip`,
+`donations`, `refund`, `rewards`, `authorizationAmount`, `monthlyPayment`,
+`summaryDescription`. Store these as given.
+
+The detail page, not the list, is where the sensitive material lives. Drop at minimum
+`paymentMethods`, `refundPaymentMethods`, `chargeHistory`, `authorizationAmount`,
+`customer`, `idBarcodeImageUrl` (a scannable in-store identifier),
+`orderInvoiceDetails`, `digitalInvoiceDetail`, and within each group `deliveryAddress`,
+`deliveryInstructions`, `deliveryPreferences`, `alternatePickupPerson`,
+`alternateGroupRecipients`, `callDriverDetails`, `checkInDetails`, `accessPointId`,
+`driver`, `shopper`, `pickedBy`. Assert the denylist at any depth: a nested
+`deliveryAddress` is the one that survives a shallow check.
+
+Suggested traversal: walk `/orders` for the index, which is cheap and carries
+`type` and the cursor, stop on `orderDate` past the cutoff, then fetch each surviving
+order's detail page once and archive from that, keyed by order id, so a re-sync
+dedupes instead of refetching.
 
 ## Bot protection and throttling
 
