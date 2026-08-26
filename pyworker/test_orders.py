@@ -194,6 +194,51 @@ def test_paging_clicks_next_rather_than_replaying_a_cursor(monkeypatch):
     assert len(result["seen"]) == 2
 
 
+def test_pages_accumulate_in_the_order_they_were_read(monkeypatch):
+    # Three rows over two pages, so the sequence cannot be satisfied by an
+    # accumulator that reverses -- two elements cannot tell those apart.
+    middle = {**ONLINE_ROW, "id": "250000000000002", "orderDate": "2026-06-01T00:00:00.000Z"}
+    oldest = {**IN_STORE_ROW, "id": "210000000000003", "orderDate": "2026-01-05T00:00:00.000Z"}
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW, middle], cursor="CURSOR-1")],
+        next_pages=[graphql_history([oldest], cursor=None)],
+        orders_by_id={row: order() for row in ("200012345678901", "250000000000002", "210000000000003")},
+    )
+
+    seen = [row["order_id"] for row in sync(monkeypatch, session)["seen"]]
+
+    assert seen == ["200012345678901", "250000000000002", "210000000000003"]
+
+
+def test_the_oldest_date_is_the_oldest_read_not_the_last_row(monkeypatch):
+    # The archive prints "nothing older than X" from this. Taking the last row
+    # assumes every page came back newest-first; one out-of-order page would
+    # turn a coverage claim into a confident lie, so it is a real minimum.
+    out_of_order = {**IN_STORE_ROW, "id": "210000000000003", "orderDate": "2024-01-05T00:00:00.000Z"}
+    session = FakeSession(
+        pages=[history(orders=[out_of_order, ONLINE_ROW], cursor=None)],
+        orders_by_id={"210000000000003": order(), "200012345678901": order()},
+    )
+
+    stopped = sync(monkeypatch, session)["stopped"]
+
+    assert stopped["oldest_date"] == "2024-01-05T00:00:00.000Z"
+
+
+def test_undated_rows_do_not_erase_the_oldest_date(monkeypatch):
+    # A row we cannot date is not a date of None; reporting no coverage floor
+    # at all would understate what we actually have.
+    undated = {**IN_STORE_ROW, "id": "210000000000003", "orderDate": None}
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW, undated], cursor=None)],
+        orders_by_id={"200012345678901": order(), "210000000000003": order()},
+    )
+
+    stopped = sync(monkeypatch, session)["stopped"]
+
+    assert stopped["oldest_date"] == "2026-08-20T14:02:00.000Z"
+
+
 def test_a_missing_next_control_is_not_the_end_of_history(monkeypatch):
     # The cursor promised another page. Not finding the button means the page
     # changed, and calling that "complete" would archive a partial history as

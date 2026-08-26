@@ -144,9 +144,22 @@ def walk(session, params: dict[str, Any]) -> dict[str, Any]:
             # Only kept when it is still useful. A finished walk holding a
             # session-scoped cursor is an identifier kept for no reason.
             "cursor": cursor if reason not in (COMPLETE, CUTOFF) else None,
-            "oldest_date": seen[-1]["date"] if seen else None,
+            "oldest_date": _oldest_date(seen),
         },
     }
+
+
+def _oldest_date(seen: list[dict[str, Any]]) -> str | None:
+    """The oldest date actually read, taken as a minimum rather than as the last row.
+
+    Walmart returns history newest first and the cutoff logic depends on that,
+    but this value is a *claim about coverage* -- the archive prints "nothing
+    older than X" from it. Deriving a claim from an assumption about ordering
+    means one out-of-order page turns it into a confident lie, so it is
+    computed from the dates themselves.
+    """
+    dates = [row["date"] for row in seen if row.get("date")]
+    return min(dates) if dates else None
 
 
 def _first_page(session) -> dict[str, Any]:

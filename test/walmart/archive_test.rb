@@ -20,6 +20,16 @@ module Walmart
       "type" => "in-store"
     ).freeze
 
+    # Deliberately adversarial to the ordering test: its id sorts *highest* of
+    # the three while its date sits in the middle. Without it, the fixture ids
+    # happened to correlate with their dates, and a comparator that ignored the
+    # date entirely and sorted by id passed the whole suite.
+    MIDDLE = ORDER.merge(
+      "order_id" => "900000000000005",
+      "display_id" => "9000000-00005",
+      "date" => "2025-11-14T09:30:00.000Z"
+    ).freeze
+
     # Silences the belt-and-braces chmod so a test can observe the mode the
     # file was *created* with. minitest/mock is not available here, so this
     # swaps the real method and puts it back.
@@ -173,14 +183,30 @@ module Walmart
       assert_nil entry["items"]
     end
 
+    # Three orders, written in an order that matches neither the answer nor its
+    # reverse, with ids that contradict the dates. Two elements cannot tell a
+    # date sort from "reverse whatever was inserted last", and ids that happen
+    # to sort like their dates cannot tell a date sort from an id sort.
     def test_entries_come_back_newest_first
       store = archive
+      store.write(MIDDLE)
       store.write(OLDER)
       store.write(ORDER)
 
       ids = store.entries.map { |row| row["order_id"] }
 
-      assert_equal %w[200012345678901 100000000000001], ids
+      assert_equal %w[200012345678901 900000000000005 100000000000001], ids
+    end
+
+    # Newest-first is not cosmetic. `order search` takes the first sighting of
+    # an item as the current name and price, so a wrong order here quietly
+    # reports what something used to cost.
+    def test_an_undated_record_sorts_last_rather_than_first
+      store = archive
+      store.write(ORDER)
+      store.write(ORDER.merge("order_id" => "300000000000003", "date" => nil))
+
+      assert_equal "200012345678901", store.entries.first["order_id"]
     end
 
     def test_in_store_receipts_share_the_archive_with_online_orders
