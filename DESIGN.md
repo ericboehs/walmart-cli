@@ -155,6 +155,23 @@ The worker takes two id lists, and they are not interchangeable:
   included, because the page load would be spent only to have the answer thrown
   away at write time.
 
+### A finished walk is not a complete archive
+
+The worker's `complete` means "no next cursor". It proves the walk reached
+Walmart's oldest page and says nothing about the rows skipped on the way down,
+so it cannot on its own support a global claim:
+
+- `--year 2024` skips every newer row all the way down and still ends with no
+  cursor.
+- A lower-bounded window has the same hole. A final page holding one in-window
+  row and one older row is not a frontier — the in-window row clears it — so
+  the walk ends `complete` having skipped the old one. The default rolling
+  window is lower-bounded, so this is the ordinary case.
+
+`Archive#complete?` therefore requires a settled walk **and** no window at all.
+`window_complete?` stays true for both, because reaching the edge of what was
+asked for is still a success.
+
 ### Windows are intervals, and `--year` means the calendar year
 
 `order sync --year 2024` sends `since=2024-01-01` *and* `before=2025-01-01`.
@@ -177,17 +194,36 @@ The shape:
 
 - Separate `last_attempt` from accumulated `coverage`. A failed or narrow run
   must never erase an earlier, stronger claim.
-- `coverage` is a set of verified date intervals, merged where they overlap or
-  abut. `--year` contributes a bounded interval; the default window a
-  lower-bounded one; `--all` an unbounded one.
+- `coverage` is a set of verified date intervals. `--year` contributes a
+  bounded interval; the default window a lower-bounded one; `--all` an
+  unbounded one.
 - A settled run (`complete` or `cutoff`) adds its requested interval. A failed
-  run may add *records* without enlarging guaranteed coverage.
+  run adds **zero** intervals and leaves prior coverage untouched; it may still
+  add records. This needs no protocol change, which is the reason to take the
+  conservative reading in v1.
+
+  Enlarging coverage from a *failed* run would need one. It must not be
+  inferred from `seen` or `oldest_date`: the walk extends `seen` with a whole
+  index page before reading any detail, so a block on the first detail leaves
+  every later row on that page counted as seen. That would require an explicit
+  `completed_through`, advanced only once every in-window row on a page was
+  read, known, or protected. Not in v1.
 - Every claim carries `verified_at`. Orders placed after that timestamp are not
   implied by it.
-- Coverage and archive health are separate axes. A record going missing does
-  not undo the historical fact that the window was walked — but a
-  machine-readable `complete` must not suggest the archive can answer fully
-  while `damaged_ids` or `incompatible_ids` is non-empty. Two names, not one.
+- **Merging is not scalar, because the timestamps differ.** Two intervals that
+  overlap were verified at different moments, and a merged one has to pick.
+  Taking the max overstates the older segment. The rule: intervals are kept
+  split by `verified_at` and merged only when the timestamps are equal.
+  Adjacent segments are reported as a list, not collapsed. If that proves
+  unwieldy, the fallback is merging with `verified_at` = min, accepting the
+  loss of freshness — but the choice is made explicitly, not left to whichever
+  merge was written first.
+- Coverage and archive health are separate axes, and both are published raw:
+  `history_complete` and the coverage intervals on one, `damaged` and
+  `incompatible` counts on the other. `complete` is *derived* —
+  `history_complete && healthy` — and never stored. A single stored flag is how
+  the old ambiguity comes back under a new name. This part is already
+  implemented; the intervals are not.
 - Migration: an existing note knows `since` but, unless it was written after
   the bounded-window change, has no upper bound. Treat those as lower-bounded.
   Do not reinterpret an old `cutoff` as calendar-year coverage.

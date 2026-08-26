@@ -30,7 +30,13 @@ module Walmart
       state = archive.sync_state
       {
         "synced" => archive.synced?,
-        "complete" => archive.complete?,
+        # Two axes, named separately, then combined. A script that only gets a
+        # single "complete" will re-invent the ambiguity this replaced: an
+        # archive can have walked all of history and still be unable to answer
+        # for it, because a record on disk is damaged.
+        "complete" => archive.complete? && healthy?,
+        "history_complete" => archive.complete?,
+        "healthy" => healthy?,
         # Scoped completeness. A --year sync that reaches its window is not
         # complete history, but it is not a truncation either, and a script
         # that cannot tell the two apart will re-run it forever.
@@ -53,7 +59,10 @@ module Walmart
     # twice.
     def message
       return never_synced_message unless archive.synced?
-      return window_message if archive.sync_state["reason"] == "cutoff"
+      # Any settled run that was given a window, not only a cutoff. A bounded
+      # walk that reached the end of history is just as scoped, and it said
+      # nothing at all.
+      return window_message if archive.window_complete? && archive.windowed?
       return nil unless archive.incomplete?
 
       state = archive.sync_state
@@ -61,6 +70,8 @@ module Walmart
       "the archive is incomplete#{window}: the last sync stopped early " \
         "(#{state["reason"]}). #{advice_for(state["reason"])}"
     end
+
+    def healthy? = archive.damaged_ids.empty? && archive.incompatible_ids.empty?
 
     private
 
@@ -70,8 +81,15 @@ module Walmart
     # the same command reaches the same cutoff every time, which is the false
     # remedy we removed from the page ceiling.
     def window_message
-      "the archive covers #{requested_window}; older history was not asked for. " \
+      "the archive covers #{requested_window}; #{unasked} was not asked for. " \
         "Run `walmart order sync --all` to read everything Walmart still shows."
+    end
+
+    # A bounded window skipped newer orders as well as older ones. The comment
+    # above requested_window knew that; the sentence people actually read said
+    # "older history" for both.
+    def unasked
+      archive.requested_before ? "history outside that window" : "older history"
     end
 
     # A bounded window and an open-topped one are different claims, and saying

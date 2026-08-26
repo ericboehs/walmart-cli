@@ -693,6 +693,39 @@ module Walmart
       assert_equal "2025-01-01", store.requested_since
     end
 
+    # "complete" from the worker means "no next cursor". It proves the walk
+    # reached the oldest page; it says nothing about the rows skipped on the way
+    # there. A bounded --year skipped every newer order and still finished this
+    # way, and the archive then claimed all of history and printed no notice.
+    def test_a_bounded_walk_that_reached_the_end_is_not_all_of_history
+      store = archive
+      store.note_sync(reason: "complete", since: "2024-01-01", before: "2025-01-01")
+
+      refute_predicate store, :complete?
+      assert_predicate store, :window_complete?
+      refute_predicate store, :incomplete?
+    end
+
+    # The lower bound has the same hole: a final page holding one in-window row
+    # and one older row is not a frontier, so the walk ends COMPLETE having
+    # skipped the old one. The default rolling window is lower-bounded, so this
+    # is the common case, not an exotic one.
+    def test_a_lower_bounded_walk_that_reached_the_end_is_not_all_of_history
+      store = archive
+      store.note_sync(reason: "complete", since: "2024-08-26")
+
+      refute_predicate store, :complete?
+      assert_predicate store, :window_complete?
+    end
+
+    def test_only_an_unwindowed_walk_can_claim_all_of_history
+      store = archive
+      store.note_sync(reason: "complete")
+
+      assert_predicate store, :complete?
+      refute_predicate store, :windowed?
+    end
+
     def test_sync_state_survives_a_restart
       archive.note_sync(reason: "rate_limited")
 

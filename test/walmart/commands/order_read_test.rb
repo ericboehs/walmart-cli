@@ -445,6 +445,66 @@ module Walmart
         assert_match(/2024-01-01 to 2025-01-01 \(exclusive\)/, out.string + err.string)
       end
 
+      # The silent case: a bounded run that reached the end of history said
+      # nothing at all, because only a cutoff was treated as scoped.
+      def test_a_bounded_walk_that_finished_still_states_its_scope
+        archive_orders(RECENT, sync: { reason: "complete", since: "2024-01-01",
+                                       before: "2025-01-01" })
+        run_read(%w[order list])
+
+        assert_match(/covers 2024-01-01 to 2025-01-01/, out.string + err.string)
+      end
+
+      # For --year, newer history was not asked for either.
+      def test_a_bounded_window_does_not_claim_only_older_history_was_skipped
+        archive_orders(RECENT, sync: { reason: "complete", since: "2024-01-01",
+                                       before: "2025-01-01" })
+        run_read(%w[order list])
+
+        assert_match(/history outside that window was not asked for/, out.string + err.string)
+      end
+
+      def test_an_open_topped_window_still_talks_about_older_history
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2024-01-01" })
+        run_read(%w[order list])
+
+        assert_match(/older history was not asked for/, out.string + err.string)
+      end
+
+      def test_a_bounded_walk_is_not_reported_complete_to_a_script
+        archive_orders(RECENT, sync: { reason: "complete", since: "2024-01-01",
+                                       before: "2025-01-01" })
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        refute coverage["complete"]
+        assert coverage["window_complete"]
+        assert_equal "2025-01-01", coverage["requested_before"]
+      end
+
+      def test_an_unwindowed_walk_that_finished_is_reported_complete
+        archive_orders(RECENT, sync: { reason: "complete" })
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        assert coverage["complete"]
+        assert coverage["history_complete"]
+        assert coverage["healthy"]
+      end
+
+      # Walking all of history and being able to answer for it are different
+      # facts, and a single flag makes scripts guess which one they got.
+      def test_a_damaged_archive_is_not_complete_even_after_a_full_walk
+        archive_orders(RECENT, sync: { reason: "complete" })
+        damage_first_record
+        run_read(%w[order list], json: true)
+        coverage = JSON.parse(out.string)["coverage"]
+
+        refute coverage["complete"], "it cannot answer for a record it cannot read"
+        assert coverage["history_complete"], "but the walk did happen"
+        refute coverage["healthy"]
+      end
+
       private
 
       def archive_orders(*orders, sync: nil)

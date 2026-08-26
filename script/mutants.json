@@ -294,8 +294,8 @@
   {
     "label": "the cutoff notice advises re-running the same command",
     "file": "lib/walmart/coverage.rb",
-    "from": "      return window_message if archive.sync_state[\"reason\"] == \"cutoff\"",
-    "to": "      return nil if archive.sync_state[\"reason\"] == \"nope\""
+    "from": "      return window_message if archive.window_complete? && archive.windowed?",
+    "to": "      return nil if archive.window_complete? && archive.windowed?"
   },
   {
     "label": "the cutoff stops the walk on the first old row again",
@@ -474,5 +474,29 @@
       "pytest",
       "pyworker/test_orders.py"
     ]
+  },
+  {
+    "label": "a bounded walk that reached the end claims all of history",
+    "file": "lib/walmart/archive.rb",
+    "from": "    def complete? = synced? && sync_state[\"reason\"] == \"complete\" && !windowed?",
+    "to": "    def complete? = synced? && sync_state[\"reason\"] == \"complete\""
+  },
+  {
+    "label": "the lower bound stops counting as a window",
+    "file": "lib/walmart/archive.rb",
+    "from": "    def windowed? = !(requested_since.nil? && requested_before.nil?)",
+    "to": "    def windowed? = !requested_before.nil?"
+  },
+  {
+    "label": "the scoped sentence forgets that newer history was skipped too",
+    "file": "lib/walmart/coverage.rb",
+    "from": "      archive.requested_before ? \"history outside that window\" : \"older history\"",
+    "to": "      \"older history\""
+  },
+  {
+    "label": "a damaged archive still reports itself complete",
+    "file": "lib/walmart/coverage.rb",
+    "from": "        \"complete\" => archive.complete? && healthy?,",
+    "to": "        \"complete\" => archive.complete?,"
   }
 ]

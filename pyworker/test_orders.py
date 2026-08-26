@@ -763,3 +763,35 @@ def test_a_date_only_row_on_the_lower_edge_is_inside_the_window(monkeypatch):
     result = sync(monkeypatch, session, **year_window(2024))
 
     assert [r["order_id"] for r in result["orders"]] == ["200000000000009"]
+
+
+# The worker half of the completeness story. Both of these end with "no next
+# cursor", which is all COMPLETE means -- so the Ruby side must not read it as
+# "everything is archived". These tests exist to pin the shapes the archive's
+# complete? is defending against.
+def test_a_bounded_walk_reports_complete_while_skipping_newer_rows(monkeypatch):
+    rows = [dated_row("200000000000002", "2025-06-01"), dated_row("200000000000003", "2024-06-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={r["id"]: order(id=r["id"]) for r in rows},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert result["stopped"]["reason"] == orders.COMPLETE
+    assert [r["order_id"] for r in result["orders"]] == ["200000000000003"]
+
+
+def test_a_mixed_final_page_reports_complete_while_skipping_an_older_row(monkeypatch):
+    # Not a frontier: one row is in-window, so the page does not end the walk.
+    # There is simply no next page, and the old row was never fetched.
+    rows = [dated_row("200000000000003", "2025-06-01"), dated_row("200000000000001", "2020-06-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={r["id"]: order(id=r["id"]) for r in rows},
+    )
+
+    result = sync(monkeypatch, session, since="2024-01-01")
+
+    assert result["stopped"]["reason"] == orders.COMPLETE
+    assert [r["order_id"] for r in result["orders"]] == ["200000000000003"]

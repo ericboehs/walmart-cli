@@ -204,9 +204,19 @@ module Walmart
 
     def requested_before = sync_state["before"]
 
-    # True only when a walk has run and finished. The one claim a machine
-    # consumer may act on.
-    def complete? = synced? && sync_state["reason"] == "complete"
+    # Everything Walmart still shows is on disk.
+    #
+    # Requires no window at all, not merely a finished walk. "complete" from the
+    # worker means "no next cursor", which proves we reached the oldest page and
+    # says nothing about the rows we skipped getting there. `--year 2024` skips
+    # newer rows all the way down and still ends with no cursor. The lower bound
+    # has the same hole: a final page holding one in-window row and one older
+    # row is not a frontier, so the walk ends COMPLETE having skipped the old
+    # one. Only an unwindowed run fetches every row it passes.
+    def complete? = synced? && sync_state["reason"] == "complete" && !windowed?
+
+    # Was this sync asked for part of history rather than all of it?
+    def windowed? = !(requested_since.nil? && requested_before.nil?)
 
     private
 
