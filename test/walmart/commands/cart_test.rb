@@ -221,6 +221,43 @@ module Walmart
         assert_includes out.string, MILK["item_id"]
       end
 
+      # --- the readiness gate, mirrored on both sides ---------------------------
+      #
+      # The worker is the authority and refuses regardless. Ruby keeps a copy so
+      # that nobody is asked to authorise a change that cannot happen -- a
+      # prompt is a promise that the answer matters. A copy needs a parity test.
+
+      def test_ruby_and_python_agree_about_readiness
+        source = File.read(File.expand_path("../../../pyworker/cart_mutate.py", __dir__))
+        response_known = source[/^ACCEPTED_RESPONSE_SHAPE.*=\s*(.+)$/, 1]
+        delivery_known = source[/^PER_LINE_DELIVERY_PROVEN\s*=\s*(\w+)/, 1]
+
+        refute_nil response_known, "could not find the response gate in cart_mutate.py"
+        refute_nil delivery_known, "could not find the delivery gate in cart_mutate.py"
+
+        python_ready = response_known.strip != "None" && delivery_known == "True"
+        assert_equal python_ready, Cart::MUTATION_READY,
+                     "Ruby and the worker disagree about whether cart changes are enabled"
+      end
+
+      def test_an_unready_build_refuses_before_asking
+        worker = FakeWorker.new(results: { "cart.add" => CHANGED })
+        io = StringIO.new("y\n")
+        def io.tty? = true
+        error = assert_raises(Error) do
+          Cart.new(build_context(worker: worker, stdin: io)).run(%w[cart add], %w[10450114])
+        end
+        assert_equal ExitCodes::FAILED, error.exit_code
+        assert_empty worker.calls, "asked the worker despite not being ready"
+        refute_includes out.string, "[y/N]", "prompted for a change it was going to refuse"
+      end
+
+      def test_a_name_is_not_an_item_id
+        error = assert_raises(UsageError) { run_change_worker(%w[cart add], %w[milk]) }
+        assert_match(/not an item id/, error.message)
+        assert_match(/cannot look an item up by name/, error.message)
+      end
+
       # --- changing the cart ---------------------------------------------------
       #
       # The worker decides the outcome; this side decides what the outcome
@@ -269,7 +306,7 @@ module Walmart
       def test_a_change_asks_before_it_acts
         worker = FakeWorker.new(results: { "cart.add" => CHANGED })
         context = build_context(worker: worker)
-        error = assert_raises(UsageError) { Cart.new(context).run(%w[cart add], %w[10450114]) }
+        error = assert_raises(UsageError) { enabled { Cart.new(context).run(%w[cart add], %w[10450114]) } }
         assert_match(/--confirm/, error.message)
         assert_empty worker.calls
       end
@@ -282,7 +319,7 @@ module Walmart
         io = StringIO.new("n\n")
         def io.tty? = true
         context = build_context(worker: worker, stdin: io)
-        assert_raises(UsageError) { Cart.new(context).run(%w[cart add], %w[10450114]) }
+        assert_raises(UsageError) { enabled { Cart.new(context).run(%w[cart add], %w[10450114]) } }
         assert_empty worker.calls
       end
 
@@ -342,13 +379,22 @@ module Walmart
       def run_change(result, json: false)
         worker = FakeWorker.new(results: { "cart.add" => result })
         context = build_context(worker: worker, json: json, options: { confirm: true })
-        Cart.new(context).run(%w[cart add], %w[10450114])
+        enabled { Cart.new(context).run(%w[cart add], %w[10450114]) }
       end
 
       def run_change_worker(path, args)
         worker = FakeWorker.new(results: { "cart.add" => CHANGED, "cart.remove" => CHANGED })
-        Cart.new(build_context(worker: worker, options: { confirm: true })).run(path, args)
+        enabled { Cart.new(build_context(worker: worker, options: { confirm: true })).run(path, args) }
         worker
+      end
+
+      # Everything behind the readiness gate. Named so a test that needs it
+      # cannot be mistaken for one that proves the gate is open.
+      def enabled
+        Cart.define_singleton_method(:mutation_ready?) { true }
+        yield
+      ensure
+        Cart.define_singleton_method(:mutation_ready?) { Cart::MUTATION_READY }
       end
 
       def run_cart(worker: nil, lines: [], totals: {}, problems: [], json: false,

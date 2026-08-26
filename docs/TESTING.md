@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of fifty-five defects
+The layout of the suite is not arbitrary. It is the residue of sixty-two defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -29,6 +29,11 @@ Each of these was written deliberately, read fine, and passed:
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
+| a guard tested against an imagined caller | the store check was tested with a bare id string while Ruby sends the whole store object; both suites passed and every correctly configured production request would have been refused |
+| one gate for two unknowns | per-line delivery was "documented as unproven", so capturing a response would have silently authorised a second, unrelated missing contract |
+| the phase flag set too early | `sent = True` preceded the send's own safety checks, so a refusal that sent nothing would have been reported as possibly-sent |
+| a prompt for the impossible | the CLI asked permission, then refused — and printed the refusal twice, because two whole messages were glued together |
+| a name accepted as an id | `cart add milk` reached the worker; item ids are digits and nothing checked |
 | a success we invented | `acknowledgement` accepted any non-empty `data`, so `{"data":{"anything":false}}` was a success — fail-open, for a shape never observed |
 | the error text side door | GraphQL errors were passed through verbatim into the result, and a server echoing its input would have carried the cart id past every canary |
 | guards for a store nobody pinned | the mutation ignored `pinned_store` and the cart's own `store_id`/`intent`, so it would change a pickup cart or another store's cart |
@@ -270,6 +275,15 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A test may not imagine the other side of a boundary.** Where Ruby produces
+  and Python consumes, the shape lives in `test/contracts/` — the producer's
+  test asserts it still emits that, the consumer's test reads it. Two suites
+  passing says nothing about whether they agree.
+- **One gate per unknown.** Two unproven things behind one flag means evidence
+  for either opens both. Each contract gets its own constant and its own
+  sentence.
+- **A prompt is a promise that the answer matters.** Refuse before asking, not
+  after.
 - **An unobserved contract is a gate, not a caveat.** Writing "the response
   shape is unobserved" in a docstring and then accepting any non-empty `data`
   is the same bug as not knowing: the honest encoding is a constant that is

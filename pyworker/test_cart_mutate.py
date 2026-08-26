@@ -9,6 +9,7 @@ do not.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -30,8 +31,13 @@ HYPOTHETICAL_SHAPE = {"updateItems": {}}
 
 @pytest.fixture
 def assuming_a_success_contract(monkeypatch):
-    """Pretend, for one test, that a successful response has been observed."""
+    """Pretend, for one test, that every missing contract has been observed.
+
+    Both gates, because a test that only lifted one would pass for the wrong
+    reason the day the other is lifted for real.
+    """
     monkeypatch.setattr(cart_mutate, "ACCEPTED_RESPONSE_SHAPE", HYPOTHETICAL_SHAPE)
+    monkeypatch.setattr(cart_mutate, "PER_LINE_DELIVERY_PROVEN", True)
     return HYPOTHETICAL_SHAPE
 
 
@@ -312,12 +318,15 @@ def test_item_ids_are_compared_as_strings():
 # the value in every direction it could escape -- the result document, the
 # NDJSON events, and stderr. A narrowed invariant with no test is a deleted one.
 
-STORE = "5260"
-OPTIONS = {
-    "profile_dir": "/tmp/profile",
-    "profile_lock": "/tmp/profile.lock",
-    "pinned_store": STORE,
-}
+# The options Ruby actually sends, read from the shared contract rather than
+# imagined here. The first version of these tests used a bare store id string
+# while Worker sends the whole store object; both suites passed and the guard
+# would have refused every correctly configured request in production.
+# test/contracts/README.md has the rule.
+CONTRACT_PATH = Path(__file__).resolve().parent.parent / "test" / "contracts" / "worker_options.json"
+OPTIONS = {k: v for k, v in json.loads(CONTRACT_PATH.read_text()).items() if not k.startswith("_")}
+PINNED_STORE = OPTIONS["pinned_store"]
+STORE = PINNED_STORE["store_id"]
 ITEM_ID = "33282303"
 DELIVERABLE = {"intent": "DELIVERY", "store_id": STORE}
 MARKETPLACE_LINE = {
@@ -577,20 +586,63 @@ def test_a_change_refuses_before_opening_a_browser_while_unproven(monkeypatch):
     assert opened == []
 
 
+def test_each_unmet_contract_is_named_separately(monkeypatch):
+    """Two unknowns, two gates. Evidence for one is not evidence for the other."""
+    assert len(cart_mutate.unmet_contracts()) == 2
+
+    monkeypatch.setattr(cart_mutate, "ACCEPTED_RESPONSE_SHAPE", HYPOTHETICAL_SHAPE)
+    remaining = cart_mutate.unmet_contracts()
+    assert len(remaining) == 1
+    assert "particular line can be delivered" in remaining[0]
+
+
+def test_capturing_a_response_does_not_authorise_undelivered_lines(monkeypatch):
+    """The failure mode the second gate exists to prevent."""
+    monkeypatch.setattr(cart_mutate, "ACCEPTED_RESPONSE_SHAPE", HYPOTHETICAL_SHAPE)
+    with pytest.raises(cart_mutate.CartMutationRefused):
+        cart_mutate.assert_ready()
+
+
+def test_per_line_delivery_is_still_unproven():
+    """If this fails, someone proved it -- check what they observed."""
+    assert cart_mutate.PER_LINE_DELIVERY_PROVEN is False
+
+
 # --- store and delivery ---------------------------------------------------------------
 #
 # A change made against a pickup cart, or another store's cart, is a change to
 # something nobody asked about. None of it can be inferred from silence, so a
 # missing value refuses exactly as a wrong one does.
 
+DELIVERY_CART = {"intent": "DELIVERY", "store_id": STORE}
+
 BAD_CARTS = {
-    "no store pinned": ({"intent": "DELIVERY", "store_id": STORE}, None, "no store is pinned"),
-    "cart names no store": ({"intent": "DELIVERY", "store_id": ""}, STORE, "which store"),
-    "a different store": ({"intent": "DELIVERY", "store_id": "1234"}, STORE, "belongs to store"),
-    "no intent at all": ({"intent": "", "store_id": STORE}, STORE, "delivery or pickup"),
-    "a pickup cart": ({"intent": "PICKUP", "store_id": STORE}, STORE, "only changes delivery"),
-    "shipping": ({"intent": "SHIPPING", "store_id": STORE}, STORE, "only changes delivery"),
-    "no fulfillment block": ({}, STORE, "which store"),
+    "no store pinned": (DELIVERY_CART, None, "no store is pinned"),
+    "cart names no store": ({"intent": "DELIVERY", "store_id": ""}, PINNED_STORE, "which store"),
+    "a different store": (
+        {"intent": "DELIVERY", "store_id": "1234"},
+        PINNED_STORE,
+        "belongs to store",
+    ),
+    "no intent at all": ({"intent": "", "store_id": STORE}, PINNED_STORE, "delivery or pickup"),
+    "a pickup cart": (
+        {"intent": "PICKUP", "store_id": STORE},
+        PINNED_STORE,
+        "only changes delivery",
+    ),
+    "shipping": (
+        {"intent": "SHIPPING", "store_id": STORE},
+        PINNED_STORE,
+        "only changes delivery",
+    ),
+    "no fulfillment block": ({}, PINNED_STORE, "which store"),
+    # The shapes a malformed config could produce. None may be accepted, and
+    # none may be stringified into something that accidentally compares equal.
+    "pinned store is a bare id": (DELIVERY_CART, STORE, "not a store object"),
+    "pinned store is a list": (DELIVERY_CART, [STORE], "not a store object"),
+    "pinned store has no id": (DELIVERY_CART, {"name": "Owasso"}, "no store_id"),
+    "pinned store id is blank": (DELIVERY_CART, {"store_id": "  "}, "no store_id"),
+    "pinned store id is null": (DELIVERY_CART, {"store_id": None}, "no store_id"),
 }
 
 
@@ -603,13 +655,22 @@ def test_a_cart_we_cannot_vouch_for_is_refused(case):
 
 
 def test_the_pinned_delivery_cart_is_allowed():
-    cart_mutate.assert_deliverable_from_the_pinned_store({"fulfillment": DELIVERABLE}, STORE)
+    """The shape Ruby really sends, against the store it really names."""
+    cart_mutate.assert_deliverable_from_the_pinned_store({"fulfillment": DELIVERABLE}, PINNED_STORE)
+
+
+def test_the_guard_reads_the_store_id_and_not_the_whole_object():
+    """The production bug: str(dict) never equals a store id."""
+    with pytest.raises(cart_mutate.CartMutationRefused):
+        cart_mutate.assert_deliverable_from_the_pinned_store(
+            {"fulfillment": {"intent": "DELIVERY", "store_id": str(PINNED_STORE)}}, PINNED_STORE
+        )
 
 
 def test_the_store_guard_runs_before_anything_is_sent(mutation_run, assuming_a_success_contract):
     session = MutatingSession(before=1, after=2)
     with pytest.raises(cart_mutate.CartMutationRefused):
-        mutation_run(session, {"item_id": ITEM_ID, "delta": 1}, options=dict(OPTIONS, pinned_store=""))
+        mutation_run(session, {"item_id": ITEM_ID, "delta": 1}, options=dict(OPTIONS, pinned_store=None))
     assert session.sent == []
 
 
@@ -737,3 +798,57 @@ def test_a_server_error_echoing_the_cart_id_does_not_leak_it(
     assert result["outcome"] == REJECTED
     for text in (json.dumps(result), json.dumps(events), captured.out, captured.err):
         assert CART_ID not in text
+
+
+def test_a_safety_refusal_at_the_send_boundary_is_a_clean_failure(
+    mutation_run, monkeypatch, assuming_a_success_contract
+):
+    """The phase boundary must sit after the last thing that can refuse.
+
+    checked_destination validates the URL and the body's operation. When those
+    lived inside send_update the caller had already flagged the attempt as
+    begun, so a refusal -- nothing sent -- was reported as possibly-sent.
+    """
+    session = MutatingSession(before=1, after=2)
+    monkeypatch.setattr(
+        cart_mutate,
+        "checked_destination",
+        lambda _b: (_ for _ in ()).throw(safety.UnsafeNavigation("no")),
+    )
+    with pytest.raises(cart_mutate.PreflightFailed):
+        mutation_run(session, {"item_id": ITEM_ID, "delta": 1})
+    assert session.sent == []
+
+
+def test_the_quantity_field_rejects_a_boolean():
+    """bool subclasses int, so True would have incremented to 2."""
+    assert cart_mutate.quantity_of({"lines": [{"item_id": "1", "quantity": True}]}, "1") is None
+
+
+# --- what the refusal actually reads like -------------------------------------------
+#
+# The first version joined whole messages, so two unmet contracts produced one
+# paragraph that said "changing the cart is not enabled yet" twice and buried
+# the difference between them. Reported from a real run.
+
+
+def test_the_heading_is_said_once_however_many_reasons_there_are():
+    message = cart_mutate.not_ready_message(["first reason", "second reason"])
+    assert message.count(cart_mutate.NOT_READY_PREFIX) == 1
+
+
+def test_several_reasons_are_listed_not_run_together():
+    message = cart_mutate.not_ready_message(["first reason", "second reason"])
+    assert "\n  - first reason" in message
+    assert "\n  - second reason" in message
+
+
+def test_one_reason_stays_a_sentence():
+    message = cart_mutate.not_ready_message(["the only reason"])
+    assert message == f"{cart_mutate.NOT_READY_PREFIX}: the only reason. Nothing was sent."
+
+
+def test_the_refusal_always_says_nothing_was_sent():
+    """The one fact a person needs from a refusal."""
+    for reasons in (["one"], ["one", "two"], cart_mutate.unmet_contracts()):
+        assert "Nothing was sent." in cart_mutate.not_ready_message(reasons)

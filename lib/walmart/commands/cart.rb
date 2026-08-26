@@ -53,6 +53,23 @@ module Walmart
 
       SUBCOMMANDS = %w[show add remove].freeze
 
+      # Mirrors the gates in pyworker/cart_mutate.py, kept honest by a parity
+      # test. Duplicated deliberately: the worker is the authority and refuses
+      # regardless, but asking someone to authorise a change that cannot happen
+      # is a worse first impression than telling them so. A prompt is a promise
+      # that the answer matters.
+      MUTATION_READY = false
+
+      # Read through a method so tests can exercise the machinery behind the
+      # gate without rewriting a constant. The gate itself is the constant.
+      def self.mutation_ready? = MUTATION_READY
+
+      # An item id is what `walmart cart show` prints in its first column. Every
+      # id observed is digits. This is checked here rather than in the worker
+      # only because a name typed by mistake -- `cart add milk` -- should not
+      # cost a browser launch to find out.
+      ITEM_ID = /\A\d+\z/
+
       def run(path, args)
         subcommand = path[1] || "show"
         raise UsageError, "unknown cart subcommand: #{subcommand}" unless SUBCOMMANDS.include?(subcommand)
@@ -78,13 +95,36 @@ module Walmart
       # them to skip the confirmation or the verification.
       def change(subcommand, args)
         positional, = parse_flags(args, max_positional: 2)
-        item_id = positional[0] or raise UsageError, "which item? give the item id from `walmart cart show`"
+        item_id = item_id_argument(positional[0])
         remove = subcommand == "remove"
         delta = remove ? nil : quantity_argument(positional[1])
 
+        refuse_unready
         confirm!(question_for(subcommand, item_id, delta))
         params = { "item_id" => item_id, "delta" => delta, "remove" => remove }
         report_change(worker.run("cart.#{remove ? "remove" : "add"}", params: params, mutation: true))
+      end
+
+      # Before the prompt, not after: see MUTATION_READY.
+      def refuse_unready
+        return if self.class.mutation_ready?
+
+        raise Error.new(
+          "changing the cart is not enabled in this build yet. `walmart cart show` " \
+          "still works, and nothing was sent.",
+          code: "not_ready", exit_code: ExitCodes::FAILED
+        )
+      end
+
+      def item_id_argument(raw)
+        raise UsageError, "which item? give the id from the first column of `walmart cart show`" if raw.nil?
+        unless raw.match?(ITEM_ID)
+          raise UsageError,
+                "#{raw.inspect} is not an item id. Item ids are the numbers in the id column of " \
+                "`walmart cart show`; this tool cannot look an item up by name."
+        end
+
+        raw
       end
 
       def quantity_argument(raw)

@@ -87,11 +87,30 @@ OBSERVED_FEATURES = (
 # Filling this in requires evidence, not a decision. See docs/CONTRACTS.md.
 ACCEPTED_RESPONSE_SHAPE: dict[str, Any] | None = None
 
+# A SECOND, INDEPENDENT GATE.
+#
+# Delivery eligibility is checked at the cart level -- fulfillment.intent --
+# because that is the only signal the parsed cart carries. Whether a particular
+# line can actually be delivered has never been observed. That is a different
+# unknown from the response shape, and it was previously only a paragraph in
+# the docs, which meant capturing one response would have silently authorised
+# the other.
+#
+# Two contracts, two constants, and readiness needs both. Evidence for one is
+# never evidence for the other.
+PER_LINE_DELIVERY_PROVEN = False
+
+NO_PER_LINE_DELIVERY_REASON = (
+    "this tool can see that the cart is a delivery cart, but not that a particular line "
+    "can be delivered, and it will not assume the two are the same"
+)
+
 CONTRACT_UNPROVEN = "contract_unproven"
-NOT_READY_MESSAGE = (
-    "changing the cart is not enabled yet: no successful response from Walmart's "
-    "cart update has ever been recorded, so this tool cannot tell a change that "
-    "worked from one that silently did nothing. Nothing was sent."
+NOT_READY_PREFIX = "changing the cart is not enabled yet"
+
+NO_RESPONSE_CONTRACT_REASON = (
+    "no successful response from Walmart's cart update has ever been recorded, so this "
+    "tool cannot tell a change that worked from one that silently did nothing"
 )
 
 # Outcomes. Deliberately four, not two: "we could not tell" is a real answer
@@ -171,7 +190,7 @@ def acknowledgement(status: Any, payload: Any) -> Acknowledgement:
 
     if ACCEPTED_RESPONSE_SHAPE is None:
         # Fail closed. Any success we declare here would be invented.
-        return Acknowledgement(False, CONTRACT_UNPROVEN, NOT_READY_MESSAGE)
+        return Acknowledgement(False, CONTRACT_UNPROVEN, not_ready_message(unmet_contracts()))
 
     if not _matches(payload.get("data"), ACCEPTED_RESPONSE_SHAPE):
         return Acknowledgement(False, "unreadable", "the response did not match the known shape")
@@ -351,7 +370,12 @@ def quantity_of(cart: dict[str, Any] | None, item_id: str) -> int | None:
     if line is None:
         return 0
     value = line.get("quantity")
-    return value if isinstance(value, int) else None
+    # bool is a subclass of int, so isinstance(True, int) is True and a cart
+    # reporting quantity=True would arithmetic its way to 2. Same reasoning as
+    # the request validation.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 def cart_id_of(payload: Any) -> str:
@@ -374,8 +398,27 @@ def update_items_url() -> str:
     return safety.assert_navigable(f"{browser.WALMART_ORIGIN}{UPDATE_ITEMS_PATH}")
 
 
-def send_update(session, body: dict[str, Any]) -> tuple[Any, Any]:
+def checked_destination(body: dict[str, Any]) -> str:
+    """The URL to post to, having refused every reason not to.
+
+    Split out from the sending so that the phase boundary is exact. These
+    checks can refuse, and a refusal here means nothing was sent -- which is a
+    clean failure, not an unverified one. When this lived inside send_update
+    the caller had already recorded the attempt as begun.
+    """
+    url = update_items_url()
+    mismatch = safety.operation_mismatch(url, body)
+    if mismatch:
+        raise safety.UnsafeNavigation(f"refusing to send a body naming {mismatch}")
+    return url
+
+
+def send_update(session, url: str, body: dict[str, Any]) -> tuple[Any, Any]:
     """Issue the mutation from inside the page. Returns (status, payload).
+
+    Nothing in here may refuse: by the time this is called the request is
+    considered sent, because from the caller's point of view it cannot be
+    proven otherwise. Validation belongs in checked_destination, above.
 
     From the page rather than replayed, for the reason the read path already
     learned the hard way: a reconstructed request with a partial header set was
@@ -383,11 +426,6 @@ def send_update(session, body: dict[str, Any]) -> tuple[Any, Any]:
     the page to make its own call means every cookie and client hint is the
     real one, because it is the real one.
     """
-    url = update_items_url()
-    mismatch = safety.operation_mismatch(url, body)
-    if mismatch:
-        raise safety.UnsafeNavigation(f"refusing to send a body naming {mismatch}")
-
     result = session.page.evaluate(
         """async ({url, body}) => {
             const response = await fetch(url, {
@@ -510,11 +548,20 @@ def assert_deliverable_from_the_pinned_store(cart: dict[str, Any], pinned_store:
     is a change to something the person did not ask about. None of these can be
     inferred from silence, so a missing value refuses just as a wrong one does.
     """
-    pinned = str(pinned_store or "").strip()
-    if not pinned:
+    # pinned_store is the whole store object Ruby's config holds, not an id.
+    # An earlier version stringified whatever arrived, which compared a live
+    # store id against the rendering of a dict -- it would have refused every
+    # correctly configured request in production while every test passed.
+    # Read the one field, and refuse anything that is not the producer's shape.
+    if pinned_store is None:
         raise CartMutationRefused(
             "no store is pinned, so this tool cannot tell which store's cart it is about to change"
         )
+    if not isinstance(pinned_store, dict):
+        raise CartMutationRefused("the pinned store setting is not a store object")
+    pinned = str(pinned_store.get("store_id") or "").strip()
+    if not pinned:
+        raise CartMutationRefused("the pinned store has no store_id")
 
     fulfillment = cart.get("fulfillment") or {}
     store_id = str(fulfillment.get("store_id") or "").strip()
@@ -539,6 +586,39 @@ def assert_line_is_addressable(line: dict[str, Any]) -> None:
             )
 
 
+def unmet_contracts() -> list[str]:
+    """Everything still unobserved that this action would have to assume.
+
+    A list rather than a boolean so the refusal can say which, and so adding a
+    third gate later is a line here rather than a rewrite of the caller.
+    """
+    missing = []
+    if ACCEPTED_RESPONSE_SHAPE is None:
+        missing.append(NO_RESPONSE_CONTRACT_REASON)
+    if not PER_LINE_DELIVERY_PROVEN:
+        missing.append(NO_PER_LINE_DELIVERY_REASON)
+    return missing
+
+
+def not_ready_message(reasons: list[str]) -> str:
+    """One heading, then the reasons. Not two sentences glued together.
+
+    Joining whole messages meant each one repeated "changing the cart is not
+    enabled yet", so a person with two unmet contracts was told twice, in one
+    paragraph, and had to read both to notice they said different things.
+    """
+    if len(reasons) == 1:
+        return f"{NOT_READY_PREFIX}: {reasons[0]}. Nothing was sent."
+    listed = "".join(f"\n  - {reason}" for reason in reasons)
+    return f"{NOT_READY_PREFIX}, for {len(reasons)} reasons:{listed}\nNothing was sent."
+
+
+def assert_ready() -> None:
+    missing = unmet_contracts()
+    if missing:
+        raise CartMutationRefused(not_ready_message(missing))
+
+
 def action_cart_change(request: dict[str, Any]) -> dict[str, Any]:
     """Worker entry point for every cart quantity change.
 
@@ -548,11 +628,9 @@ def action_cart_change(request: dict[str, Any]) -> dict[str, Any]:
     """
     item_id, delta, remove = _requested(request)
 
-    # Refuse before opening a browser. While the success contract is unproven
-    # there is no version of this that ends in a trustworthy answer, so the
-    # cheapest correct thing is to not start.
-    if ACCEPTED_RESPONSE_SHAPE is None:
-        raise CartMutationRefused(NOT_READY_MESSAGE)
+    # Refuse before opening a browser. Both contracts, checked separately, so
+    # that evidence for one cannot be mistaken for evidence for the other.
+    assert_ready()
 
     options = browser.BrowserOptions.from_request(request.get("options", {}))
     pinned_store = (request.get("options") or {}).get("pinned_store")
@@ -589,9 +667,14 @@ def action_cart_change(request: dict[str, Any]) -> dict[str, Any]:
 
             body = build_update_items_body(cart_id_of(payload), line, target)
 
+            # Everything that can still refuse happens before the flag flips.
+            # The flag means "a request may be in flight", and it must not be
+            # set by anything that can turn around and raise instead.
+            destination = checked_destination(body)
+
             protocol.progress("updating the cart")
             sent = True
-            status, response = send_update(session, body)
+            status, response = send_update(session, destination, body)
             ack = acknowledgement(status, response)
 
             # Read the cart again from the site, never from the response. What

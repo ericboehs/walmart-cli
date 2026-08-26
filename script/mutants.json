@@ -962,7 +962,7 @@
   {
     "label": "the readiness gate opens",
     "file": "pyworker/cart_mutate.py",
-    "from": "    if ACCEPTED_RESPONSE_SHAPE is None:\n        raise CartMutationRefused(NOT_READY_MESSAGE)\n",
+    "from": "    assert_ready()\n",
     "to": "",
     "command": [
       "uv",
@@ -1076,5 +1076,127 @@
     "file": "lib/walmart/commands/cart.rb",
     "from": "        [:item_id, \"id\", :left],\n",
     "to": ""
+  },
+  {
+    "label": "per-line delivery is quietly declared proven",
+    "file": "pyworker/cart_mutate.py",
+    "from": "PER_LINE_DELIVERY_PROVEN = False",
+    "to": "PER_LINE_DELIVERY_PROVEN = True",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "response evidence also unlocks the delivery gate",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if not PER_LINE_DELIVERY_PROVEN:\n        missing.append(NO_PER_LINE_DELIVERY_REASON)\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the pinned store is stringified instead of read",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    pinned = str(pinned_store.get(\"store_id\") or \"\").strip()",
+    "to": "    pinned = str(pinned_store or \"\").strip()",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a pinned store that is not an object is accepted",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if not isinstance(pinned_store, dict):\n        raise CartMutationRefused(\"the pinned store setting is not a store object\")\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the send is flagged as begun before validation",
+    "file": "pyworker/cart_mutate.py",
+    "from": "            destination = checked_destination(body)\n\n            protocol.progress(\"updating the cart\")\n            sent = True",
+    "to": "            protocol.progress(\"updating the cart\")\n            sent = True\n            destination = checked_destination(body)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "a boolean quantity is treated as a number",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    if isinstance(value, bool) or not isinstance(value, int):\n        return None\n    return value",
+    "to": "    return value if isinstance(value, int) else None",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "the worker options contract stops matching the producer",
+    "file": "lib/walmart/worker.rb",
+    "from": "        \"pinned_store\" => @config&.store",
+    "to": "        \"pinned_store\" => @config&.store&.fetch(\"store_id\", nil)"
+  },
+  {
+    "label": "the ruby side stops mirroring the readiness gate",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "      MUTATION_READY = false",
+    "to": "      MUTATION_READY = true"
+  },
+  {
+    "label": "a change prompts before checking it can run",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        refuse_unready\n        confirm!(question_for(subcommand, item_id, delta))",
+    "to": "        confirm!(question_for(subcommand, item_id, delta))\n        refuse_unready"
+  },
+  {
+    "label": "a name is accepted as an item id",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        unless raw.match?(ITEM_ID)",
+    "to": "        if false"
+  },
+  {
+    "label": "the unmet reasons are glued into one sentence",
+    "file": "pyworker/cart_mutate.py",
+    "from": "    listed = \"\".join(f\"\\n  - {reason}\" for reason in reasons)",
+    "to": "    listed = \" \".join(reasons)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_mutate.py"
+    ]
   }
 ]
