@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of sixteen defects
+The layout of the suite is not arbitrary. It is the residue of seventeen defects
 found in two days, eleven of which were sitting inside checks that were passing
 at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -26,6 +26,7 @@ Each of these was written deliberately, read fine, and passed:
 | `SETTLED`, the list deciding whether a sync reports success | nothing named its contents, so adding a real stop reason to it made a truncated sync exit 0 with all 405 checks green |
 | `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
+| `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | the first draft of the per-command help table | hand-written from plausibility rather than from `parse_flags`: it invented two flags that do not exist and omitted five that do |
 | the first draft of the page-ceiling test | it asked for 10,000 pages and got 200, which is equally satisfied by ignoring the parameter — which is what the code did, because the test passed the wrong argument shape |
 
@@ -183,6 +184,18 @@ more than another assertion on behaviour.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **A suggestion is a promise about the tool.** After signing in, the CLI said
+  "next: walmart store pin", which it answers with "unknown command" — the first
+  instruction a new user is given, and it did not work. `PLANNED` exists so
+  `--help` can name unbuilt commands honestly, which made the vocabulary
+  available everywhere while nothing said which contexts may use it. Help may
+  name planned commands; nothing else may, and
+  `test/walmart/suggested_commands_test.rb` enforces that against `CLI::PLANNED`.
+- **A test can hold a defect in place as firmly as it can catch one.** The store
+  hint was wrong for as long as it existed, and a test named
+  "warns with the next step" required it to stay wrong. When fixing a defect,
+  find the test that was asserting the old behaviour — if there isn't one, ask
+  why not; if there is, it was written by someone who also did not check.
 - **A safety property contradicted in the prose is not enforced.** The code
   never retries a bot challenge automatically — and the sentence printed to the
   user said "run `walmart order sync`", which is the same retry, by hand, at the

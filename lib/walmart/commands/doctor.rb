@@ -158,8 +158,11 @@ module Walmart
           Check.new(name: "store", status: :ok,
                     detail: "#{store["name"]} (#{store["store_id"]}) #{store["zip"]}")
         else
-          Check.new(name: "store", status: :warn, detail: "no store pinned",
-                    hint: "run: walmart store pin")
+          # No hint: `store pin` is not implemented, and pointing at it is how
+          # doctor sent people to an unknown command. A warn with no remedy is
+          # honest; a warn with a remedy that does not exist is not.
+          Check.new(name: "store", status: :warn,
+                    detail: "no store pinned (store pin is not implemented yet)")
         end
       end
 

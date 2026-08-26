@@ -93,10 +93,17 @@ module Walmart
         assert_includes out.string, "email + password set"
       end
 
-      def test_unpinned_store_warns_with_the_next_step
+      # This asserted the hint said "walmart store pin", which is how the bug
+      # survived: the tool advised an unimplemented command and a test required
+      # it to. A check can hold a defect in place as firmly as it can catch one,
+      # and this one read as perfectly reasonable -- "warns with the next step"
+      # is a sensible thing to want. Nothing here asked whether the next step
+      # was a command that exists.
+      def test_unpinned_store_warns_without_naming_a_command_that_does_not_exist
         run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
 
-        assert_includes err.string, "walmart store pin"
+        assert_includes out.string, "no store pinned"
+        refute_includes out.string + err.string, "walmart store pin"
       end
 
       # The lock file is never unlinked, so after the first login it is there

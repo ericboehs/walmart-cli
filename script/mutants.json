@@ -158,5 +158,11 @@
     "file": "lib/walmart/help.rb",
     "from": "        [\"--marketplace\", \"include marketplace sellers, not only Walmart's own\"]\n",
     "to": ""
+  },
+  {
+    "label": "the CLI suggests an unimplemented command again",
+    "file": "lib/walmart/commands/login.rb",
+    "from": "fmt.say(\"next: walmart search \\\"oat milk\\\", or walmart order sync to build the archive\")",
+    "to": "fmt.say(\"next: walmart store pin\")"
   }
 ]

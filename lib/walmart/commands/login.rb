@@ -82,7 +82,11 @@ module Walmart
           fmt.emit_json({ "login" => data })
         elsif data["signed_in"]
           fmt.say(fmt.paint("signed in", :green))
-          fmt.say("next: walmart store pin")
+          # Only ever name a command that exists. This said "next: walmart
+          # store pin" for as long as store pin has been unimplemented, so the
+          # first thing a new user was told to do after signing in was run a
+          # command the CLI rejects. A suggestion is a promise about the tool.
+          fmt.say("next: walmart search \"oat milk\", or walmart order sync to build the archive")
         else
           fmt.error("sign-in did not complete: #{Array(data["notes"]).join("; ")}")
         end
