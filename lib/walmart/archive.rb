@@ -107,12 +107,6 @@ module Walmart
       index["orders"].keys.select { |id| failure_for(id).is_a?(ArchiveIncompatibleError) }
     end
 
-    # Ids the worker should not spend a page load on: the ones we can return,
-    # plus the ones we are refusing to overwrite. Fetching an incompatible
-    # record would mean discovering at write time that the only safe move is to
-    # throw the answer away.
-    def unfetchable_ids = readable_ids + incompatible_ids
-
     # --- Writing ---------------------------------------------------------------
 
     # Writes one order and updates the index. Returns :written or :unchanged.
@@ -270,10 +264,17 @@ module Walmart
       # Parseable is not the same as ours. Without this, one order's file can
       # satisfy another order's skip, and the archive reports an order it has
       # never actually stored.
+      # Before the id check, and before every other content test. Once the file
+      # says it was written by a newer version, this CLI has admitted it does
+      # not understand the contents -- so it is in no position to decide that
+      # some *other* thing about those contents makes the file disposable. A
+      # newer record that also had a mismatched id was classified as repairable
+      # damage and destroyed.
+      assert_format!(data, id)
+
       found = data["order_id"].to_s
       raise damaged(id, "its file holds order #{found}") unless found == id
 
-      assert_format!(data, id)
       data
     rescue JSON::ParserError
       raise damaged(id, "its file is not valid JSON")

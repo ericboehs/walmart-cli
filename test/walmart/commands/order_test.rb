@@ -231,6 +231,52 @@ module Walmart
                      (Order::SETTLED + MUST_NOT_REPORT_SUCCESS).sort
       end
 
+      # The Ruby half of the same property. Asserted on the request because the
+      # promise -- "these will be left untouched" -- was printed by a pre-flight
+      # that could not see what --full did to the list it relied on.
+      def test_protected_ids_are_sent_even_under_full
+        archive_with_incompatible_record
+        worker = FakeWorker.new(results: { "order.sync" => { "orders" => [], "seen" => [] } })
+        run_sync(worker: worker, args: ["--full"])
+
+        params = worker.calls.first[:params]
+
+        assert_empty params["known_ids"], "--full deliberately re-reads what we have"
+        assert_equal ["200012345678901"], params["protected_ids"]
+      end
+
+      def test_a_record_we_refuse_to_overwrite_is_announced_before_the_network
+        archive_with_incompatible_record
+        run_sync(args: [])
+
+        assert_match(/written by a newer walmart-cli/, err.string)
+        assert_match(/upgrade walmart-cli/, err.string)
+      end
+
+      def test_an_incompatible_record_is_not_counted_as_damaged
+        archive_with_incompatible_record
+        run_sync(args: [])
+
+        refute_match(/cannot be read/, err.string)
+      end
+
+      # Defense in depth: we do not ask for these, but the worker is a separate
+      # process and one refused write must not lose the orders after it.
+      def test_a_returned_protected_record_does_not_abort_the_store_loop
+        archive_with_incompatible_record
+        returned = [
+          { "order_id" => "200012345678901", "date" => "2026-08-20", "items" => [] },
+          { "order_id" => "400000000000000", "date" => "2026-08-21", "items" => [] }
+        ]
+        worker = FakeWorker.new(results: {
+                                  "order.sync" => { "orders" => returned, "seen" => returned }
+                                })
+        run_sync(worker: worker, args: [])
+
+        assert Archive.new(paths: paths).readable?("400000000000000"),
+               "the order after the refusal is still stored"
+      end
+
       private
 
       def sync_worker(orders, stopped: { "reason" => "complete" }, seen: nil)
@@ -243,6 +289,14 @@ module Walmart
             }
           }
         )
+      end
+
+      # An archive holding one record written by a newer walmart-cli.
+      def archive_with_incompatible_record
+        store = Archive.new(paths: paths)
+        store.write({ "order_id" => "200012345678901", "date" => "2026-08-20", "items" => [] })
+        path = File.join(paths.orders_dir, store.entry("200012345678901")["path"])
+        File.write(path, JSON.dump(JSON.parse(File.read(path)).merge("_format" => 2)))
       end
 
       def run_sync(worker: nil, orders: [], stopped: { "reason" => "complete" }, seen: nil,

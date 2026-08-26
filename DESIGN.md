@@ -143,6 +143,18 @@ one its callers ask.
 
 `force` means "rewrite a record we understand", never "discard one we do not".
 
+The format check runs before every other content test. Once a file claims a
+format this CLI does not understand, it is in no position to decide that
+something *else* about the contents makes the file disposable.
+
+The worker takes two id lists, and they are not interchangeable:
+
+- `known_ids` — records we hold and can return. Skipped on an incremental sync,
+  deliberately ignored under `--full`, which is what "full" means.
+- `protected_ids` — records we refuse to overwrite. Skipped always, `--full`
+  included, because the page load would be spent only to have the answer thrown
+  away at write time.
+
 ### Known limitation: coverage describes the last run, not the archive
 
 `index.json` holds one sync note, and it describes the run that wrote it. Two

@@ -332,7 +332,9 @@ module Walmart
       store = archive
       store.write(ORDER)
       path = File.join(paths.orders_dir, "2026", "200012345678901.json")
-      File.write(path, JSON.dump(ORDER.merge("order_id" => "300000000000000")))
+      # A current-format marker, so this exercises the id check rather than
+      # tripping the format check that now runs ahead of it.
+      File.write(path, JSON.dump(ORDER.merge("order_id" => "300000000000000", "_format" => 1)))
 
       error = assert_raises(ArchiveError) { store.record("200012345678901") }
       assert_match(/holds order 300000000000000/, error.message)
@@ -505,7 +507,6 @@ module Walmart
         # The bucketing must not raise either.
         assert_kind_of Array, store.damaged_ids
         assert_kind_of Array, store.incompatible_ids
-        assert_kind_of Array, store.unfetchable_ids
       ensure
         File.chmod(0o600, path) if path && File.exist?(path)
       end
@@ -540,12 +541,26 @@ module Walmart
       assert_equal ["200012345678901"], store.incompatible_ids
     end
 
-    # Skipped rather than fetched: the only safe thing to do with the answer
-    # would be to throw it away, so the page load is wasted.
-    def test_a_newer_record_is_not_worth_fetching
-      store, = newer_format_record
+    # The same file, wrong in two ways at once. The id mismatch was noticed
+    # first and made the record "repairable", so the newer format never got a
+    # say and the bytes were overwritten. Once a file claims a format we do not
+    # understand, we are in no position to judge anything else about its
+    # contents.
+    def test_a_newer_record_with_a_mismatched_id_is_still_protected
+      store = archive
+      store.write(ORDER)
+      path = File.join(paths.orders_dir, "2026", "200012345678901.json")
+      File.write(path, JSON.dump("order_id" => "300000000000000", "_format" => 2,
+                                 "newer_only" => "keep me"))
+      kept = File.read(path)
+      reopened = Archive.new(paths: paths)
 
-      assert_includes store.unfetchable_ids, "200012345678901"
+      assert_raises(ArchiveIncompatibleError) { reopened.record("200012345678901") }
+      assert_raises(ArchiveIncompatibleError) { reopened.write(ORDER) }
+      assert_raises(ArchiveIncompatibleError) { reopened.write(ORDER, force: true) }
+      assert_equal kept, File.read(path)
+      assert_equal ["200012345678901"], reopened.incompatible_ids
+      assert_empty reopened.damaged_ids
     end
 
     def test_show_says_upgrade_rather_than_calling_it_damage

@@ -340,7 +340,7 @@
   {
     "label": "a damaged record travels to the worker as known again",
     "file": "lib/walmart/commands/order.rb",
-    "from": "\"known_ids\" => flags[:full] == true ? [] : archive.unfetchable_ids",
+    "from": "\"known_ids\" => flags[:full] == true ? [] : archive.readable_ids",
     "to": "\"known_ids\" => flags[:full] == true ? [] : archive.index[\"orders\"].keys"
   },
   {
@@ -414,5 +414,31 @@
     "file": "lib/walmart/archive.rb",
     "from": "      unless format.is_a?(Integer) && format.positive?\n        raise damaged(id, \"its file does not say what format it is in\")\n      end\n",
     "to": ""
+  },
+  {
+    "label": "a protected record is fetched anyway under --full",
+    "file": "pyworker/orders.py",
+    "from": "        if order_id in params[\"protected_ids\"]:\n            continue\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "protected ids ride in known_ids again, which --full empties",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "          \"protected_ids\" => archive.incompatible_ids",
+    "to": "          \"protected_ids\" => []"
+  },
+  {
+    "label": "the format check falls back behind the id check",
+    "file": "lib/walmart/archive.rb",
+    "from": "      assert_format!(data, id)\n\n      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      data",
+    "to": "      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      assert_format!(data, id)\n      data"
   }
 ]

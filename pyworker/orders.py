@@ -102,14 +102,24 @@ def normalize_params(request: dict[str, Any]) -> dict[str, Any]:
     known = params.get("known_ids") or []
     if not isinstance(known, list):
         raise ValueError("known_ids must be a list of order ids")
+    protected = params.get("protected_ids") or []
+    if not isinstance(protected, list):
+        raise ValueError("protected_ids must be a list of order ids")
 
     return {
         # ISO date. Orders older than this end the walk; None means all history.
         "since": _string(params.get("since")),
         "full": bool(params.get("full")),
         # Ids the caller already has. Their detail pages are not fetched, which
-        # is what makes a re-sync cheap.
+        # is what makes a re-sync cheap. A full sync deliberately ignores this
+        # list: that is what "full" means.
         "known_ids": {str(value) for value in known},
+        # Ids the caller cannot store even if we fetch them -- records written
+        # by a newer version of the CLI, which it refuses to overwrite. Skipped
+        # always, including under full, because the page load would be spent
+        # only to have the answer thrown away at write time. Distinct from
+        # known_ids precisely because full must not override it.
+        "protected_ids": {str(value) for value in protected},
         "max_pages": _bounded(params.get("max_pages"), MAX_PAGES, maximum=MAX_PAGES),
         "wait_seconds": _bounded(params.get("wait_seconds"), PAGE_WAIT_SECONDS),
     }
@@ -268,6 +278,8 @@ def _read_page(session, rows, params, records) -> bool:
             continue
 
         frontier = False
+        if order_id in params["protected_ids"]:
+            continue
         if order_id in params["known_ids"] and not params["full"]:
             continue
         records.append(_read_order(session, row, order_id))

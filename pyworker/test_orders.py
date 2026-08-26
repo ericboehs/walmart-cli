@@ -567,3 +567,49 @@ def test_a_well_formed_known_id_is_still_skipped(monkeypatch):
 
     assert result["orders"] == []
     assert result["stopped"]["reason"] == orders.COMPLETE
+
+
+# A protected id is one the caller cannot store even if we fetch it: a record
+# written by a newer CLI, which it refuses to overwrite. It rode in known_ids,
+# which --full empties and which this function ignores under full -- so the
+# pre-flight promised those records would be left untouched and --full then
+# fetched every one of them, only for the write to be refused after the network.
+def test_a_protected_id_is_skipped_even_under_full(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW], cursor=None)],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, full=True, protected_ids=["200012345678901"])
+
+    assert result["orders"] == []
+    detail_pages = [url for url in session.navigated if "/orders/" in url]
+    assert detail_pages == [], "a protected order must cost no page load"
+
+
+def test_a_known_id_is_still_fetched_under_full(monkeypatch):
+    # The difference between the two lists: full means "re-read what we have".
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW], cursor=None)],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, full=True, known_ids=["200012345678901"])
+
+    assert [record["order_id"] for record in result["orders"]] == ["200012345678901"]
+
+
+def test_a_protected_id_is_skipped_on_an_incremental_sync_too(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[ONLINE_ROW], cursor=None)],
+        orders_by_id={"200012345678901": order()},
+    )
+
+    result = sync(monkeypatch, session, protected_ids=["200012345678901"])
+
+    assert result["orders"] == []
+
+
+def test_protected_ids_must_be_a_list():
+    with pytest.raises(ValueError, match="protected_ids"):
+        orders.normalize_params({"params": {"protected_ids": "200012345678901"}})

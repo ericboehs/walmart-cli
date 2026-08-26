@@ -108,7 +108,14 @@ module Walmart
           # used here, which meant an entry left behind by a missing or corrupt
           # file kept the order skipped on every sync, so the damage was
           # permanent unless someone happened to run --full.
-          "known_ids" => flags[:full] == true ? [] : archive.unfetchable_ids
+          "known_ids" => flags[:full] == true ? [] : archive.readable_ids,
+          # Sent whatever --full says, and honoured by the worker whatever
+          # --full says. These are records we refuse to overwrite, so fetching
+          # one buys nothing: the answer would be discarded at write time. They
+          # rode in known_ids, which --full empties and the worker ignores under
+          # full -- so the pre-flight promised they would be left untouched and
+          # then --full fetched every one of them.
+          "protected_ids" => archive.incompatible_ids
         }
       end
 
@@ -137,7 +144,16 @@ module Walmart
       end
 
       def store(orders, full:)
-        orders.count { |order| archive.write(order, force: full) == :written }
+        orders.count do |order|
+          archive.write(order, force: full) == :written
+        rescue ArchiveIncompatibleError => e
+          # Defense in depth. We do not ask for these, but the worker is a
+          # separate process and the protocol is directly invocable, so one
+          # protected record must not abort the store loop and lose the orders
+          # that came after it.
+          fmt.warn(e.message)
+          false
+        end
       end
 
       def report(stored, seen, stopped)
