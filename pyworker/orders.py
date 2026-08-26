@@ -109,6 +109,10 @@ def normalize_params(request: dict[str, Any]) -> dict[str, Any]:
     return {
         # ISO date. Orders older than this end the walk; None means all history.
         "since": _string(params.get("since")),
+        # Exclusive upper bound, so a window can be a bounded interval rather
+        # than only "everything since". `--year 2024` means the calendar year,
+        # which needs both ends; without this it archived 2024, 2025 and 2026.
+        "before": _string(params.get("before")),
         "full": bool(params.get("full")),
         # Ids the caller already has. Their detail pages are not fetched, which
         # is what makes a re-sync cheap. A full sync deliberately ignores this
@@ -278,6 +282,12 @@ def _read_page(session, rows, params, records) -> bool:
             continue
 
         frontier = False
+        # Above the window: skipped, but the walk goes on. These rows are the
+        # ones we page through on the way down to the requested year, and they
+        # are not evidence we have gone far enough back, so they clear the
+        # frontier rather than setting it.
+        if _at_or_after(row, params["before"]):
+            continue
         if order_id in params["protected_ids"]:
             continue
         if order_id in params["known_ids"] and not params["full"]:
@@ -336,6 +346,22 @@ def _older_than(row: dict[str, Any], since: str | None) -> bool:
         # back. Stopping on it would silently truncate the archive.
         return False
     return str(date) < str(since)
+
+
+def _at_or_after(row: dict[str, Any], before: str | None) -> bool:
+    """True when the row is too new for the requested window.
+
+    The upper half of a bounded window. Unlike the lower bound this never stops
+    the walk: history is read newest first, so rows above the window are exactly
+    what we page *through* to reach it. An undated row is not evidence either
+    way and is left in, matching _older_than.
+    """
+    if not before:
+        return False
+    date = row.get("date")
+    if not date:
+        return False
+    return str(date) >= str(before)
 
 
 def _collector(captured: list[Any]):

@@ -277,6 +277,41 @@ module Walmart
                "the order after the refusal is still stored"
       end
 
+      # --year means one calendar year, which is what the help, the design and
+      # this class all claimed while the request carried only a lower bound.
+      def test_year_sends_both_ends_of_the_window
+        worker = FakeWorker.new(results: { "order.sync" => { "orders" => [], "seen" => [] } })
+        run_sync(worker: worker, args: ["--year", "2024"])
+        params = worker.calls.first[:params]
+
+        assert_equal "2024-01-01", params["since"]
+        assert_equal "2025-01-01", params["before"]
+      end
+
+      def test_the_rolling_default_window_is_open_at_the_top
+        worker = FakeWorker.new(results: { "order.sync" => { "orders" => [], "seen" => [] } })
+        run_sync(worker: worker, args: [])
+
+        assert_nil worker.calls.first[:params]["before"]
+      end
+
+      def test_all_is_open_at_both_ends
+        worker = FakeWorker.new(results: { "order.sync" => { "orders" => [], "seen" => [] } })
+        run_sync(worker: worker, args: ["--all"])
+        params = worker.calls.first[:params]
+
+        assert_nil params["since"]
+        assert_nil params["before"]
+      end
+
+      def test_the_window_that_was_asked_for_is_recorded
+        run_sync(args: ["--year", "2024"], stopped: { "reason" => "cutoff" })
+        state = Archive.new(paths: paths).sync_state
+
+        assert_equal "2024-01-01", state["since"]
+        assert_equal "2025-01-01", state["before"]
+      end
+
       private
 
       def sync_worker(orders, stopped: { "reason" => "complete" }, seen: nil)

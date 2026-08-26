@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of thirty-one defects
+The layout of the suite is not arbitrary. It is the residue of thirty-two defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -28,6 +28,7 @@ Each of these was written deliberately, read fine, and passed:
 | the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
 | `test_unpinned_store_warns_with_the_next_step` | it required the hint to say `walmart store pin`, a command the CLI does not implement — the check held the defect in place instead of catching it, and its name reads as entirely reasonable |
 | a reader that promised never to raise | it rescued one error class, and the layers under it raised `ArgumentError`, `TypeError` and `Errno::*` on sick input — so the crash landed in `damaged_ids`, which `order sync` calls *before* opening the worker, and a damaged archive crashed the repair path built for it |
+| `--year` | help, design and the class comment all said "one calendar year"; the request carried only a lower bound, so in 2026 `--year 2024` archived 2024, 2025 and 2026 |
 | the promise `--full` broke | protected records rode in `known_ids`, which `--full` empties and the worker ignores under full — so the pre-flight printed "these will be left untouched" and `--full` then fetched every one of them |
 | `--full` on a newer record | the reader correctly refused a format it did not understand, and the writer then treated "unreadable" as "repairable" and overwrote it |
 | "known" order ids | meant "the index mentions it", not "the archive can return it", so an entry outliving its file told the worker to skip that order on every sync — and the unchanged-shortcut then discarded the replacement, making the damage permanent |
@@ -242,6 +243,10 @@ more than another assertion on behaviour.
   promise was written next to a rescue of one error class. The way to keep a
   promise like that honest is a table of sick inputs, not a sentence — ours has
   ten rows and every one of them escaped the first version.
+- **Three places agreeing with each other is not evidence.** The help, the
+  design and the class comment all said "one calendar year", which made the
+  claim feel checked. None of them was the code. Agreement among descriptions
+  measures how consistently something was described, not whether it is true.
 - **When two rules disagree, the one that admits ignorance wins.** A file with
   a newer format *and* a mismatched id was judged by the id first, called
   repairable, and destroyed. Order your checks so the one saying "I do not

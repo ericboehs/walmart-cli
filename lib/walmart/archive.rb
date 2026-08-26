@@ -149,7 +149,7 @@ module Walmart
     # session-scoped identifier written to disk for no operational purpose,
     # which the minimization rule forbids on its own, and it made the archive
     # look resumable when it is not.
-    def note_sync(reason: "complete", oldest_date: nil, since: nil)
+    def note_sync(reason: "complete", oldest_date: nil, since: nil, before: nil)
       index["sync"] = {
         "at" => timestamp,
         "reason" => reason,
@@ -157,6 +157,9 @@ module Walmart
         # apart from a truncation: both stopped before the end of history, but
         # one stopped exactly where it was told to.
         "since" => since,
+        # The upper end, when the window had one. A bounded window and an
+        # open-topped one make different coverage claims.
+        "before" => before,
         "oldest_date" => oldest_date
       }.compact
       save_index
@@ -198,6 +201,8 @@ module Walmart
 
     # The window the last sync was given, if it was given one.
     def requested_since = sync_state["since"]
+
+    def requested_before = sync_state["before"]
 
     # True only when a walk has run and finished. The one claim a machine
     # consumer may act on.

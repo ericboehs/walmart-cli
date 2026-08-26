@@ -440,5 +440,39 @@
     "file": "lib/walmart/archive.rb",
     "from": "      assert_format!(data, id)\n\n      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      data",
     "to": "      found = data[\"order_id\"].to_s\n      raise damaged(id, \"its file holds order #{found}\") unless found == id\n\n      assert_format!(data, id)\n      data"
+  },
+  {
+    "label": "--year loses its upper bound and becomes --since-year",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "          \"before\" => before(flags),",
+    "to": "          \"before\" => nil,"
+  },
+  {
+    "label": "the worker stops honouring the top of the window",
+    "file": "pyworker/orders.py",
+    "from": "        if _at_or_after(row, params[\"before\"]):\n            continue\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
+  },
+  {
+    "label": "the top of the window becomes a frontier and truncates the walk",
+    "file": "pyworker/orders.py",
+    "from": "    if not before:\n        return False\n    date = row.get(\"date\")\n    if not date:\n        return False\n    return str(date) >= str(before)",
+    "to": "    if not before:\n        return False\n    date = row.get(\"date\")\n    if not date:\n        return False\n    return str(date) > str(before)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_orders.py"
+    ]
   }
 ]

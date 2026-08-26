@@ -36,6 +36,7 @@ module Walmart
         # that cannot tell the two apart will re-run it forever.
         "window_complete" => archive.window_complete?,
         "requested_since" => archive.requested_since,
+        "requested_before" => archive.requested_before,
         "last_sync" => state["at"],
         "stopped_because" => archive.synced? ? state["reason"] : NEVER_SYNCED,
         "oldest_seen" => state["oldest_date"],
@@ -69,11 +70,19 @@ module Walmart
     # the same command reaches the same cutoff every time, which is the false
     # remedy we removed from the page ceiling.
     def window_message
+      "the archive covers #{requested_window}; older history was not asked for. " \
+        "Run `walmart order sync --all` to read everything Walmart still shows."
+    end
+
+    # A bounded window and an open-topped one are different claims, and saying
+    # "back to 2024-01-01" for `--year 2024` would overstate a sync that
+    # deliberately skipped everything after it.
+    def requested_window
       state = archive.sync_state
-      window = state["since"] ? " back to #{day(state["since"])}" : ""
-      "the archive covers the window that was requested#{window}; " \
-        "older history was not asked for. Run `walmart order sync --all` to read everything " \
-        "Walmart still shows."
+      return "the window that was requested" unless state["since"]
+      return "#{day(state["since"])} onwards" unless state["before"]
+
+      "#{day(state["since"])} to #{day(state["before"])} (exclusive)"
     end
 
     # What to do next depends on what stopped the walk, and for two reasons the

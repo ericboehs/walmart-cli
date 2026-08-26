@@ -373,7 +373,7 @@ module Walmart
         run_read(%w[order list])
         text = out.string + err.string
 
-        assert_match(/covers the window that was requested/, text)
+        assert_match(/covers 2026-01-01 onwards/, text)
         assert_match(/--all/, text)
         refute_match(/stopped early/, text)
         refute_match(/archive is incomplete/, text)
@@ -383,7 +383,7 @@ module Walmart
         archive_orders(RECENT, sync: { reason: "cutoff", since: "2025-03-04" })
         run_read(%w[order list])
 
-        assert_match(/back to 2025-03-04/, out.string + err.string)
+        assert_match(/2025-03-04 onwards/, out.string + err.string)
       end
 
       # A script has to be able to tell "everything" from "everything I asked
@@ -434,6 +434,15 @@ module Walmart
         run_read(%w[order list], json: true)
 
         assert_equal 1, JSON.parse(out.string)["coverage"]["damaged"]
+      end
+
+      # An open-topped window and a calendar year are different claims.
+      def test_a_bounded_window_is_described_with_both_ends
+        archive_orders(RECENT, sync: { reason: "cutoff", since: "2024-01-01",
+                                       before: "2025-01-01" })
+        run_read(%w[order list])
+
+        assert_match(/2024-01-01 to 2025-01-01 \(exclusive\)/, out.string + err.string)
       end
 
       private

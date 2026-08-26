@@ -155,6 +155,43 @@ The worker takes two id lists, and they are not interchangeable:
   included, because the page load would be spent only to have the answer thrown
   away at write time.
 
+### Windows are intervals, and `--year` means the calendar year
+
+`order sync --year 2024` sends `since=2024-01-01` *and* `before=2025-01-01`.
+The upper bound is exclusive, and only `--year` has one: the rolling default
+window and `--all` both mean "up to now".
+
+In the worker the two ends are not symmetric. The lower bound is a frontier —
+a page whose dated rows are all below it ends the walk. The upper bound never
+stops anything, because history is read newest first and rows above the window
+are exactly what we page through to reach it; they are skipped without a detail
+fetch and they clear the frontier.
+
+### Planned: accumulated coverage, not a single stop note
+
+Not implemented. Recorded before writing it because the migration needs a
+conservative rule and getting that wrong quietly overstates what the archive
+holds.
+
+The shape:
+
+- Separate `last_attempt` from accumulated `coverage`. A failed or narrow run
+  must never erase an earlier, stronger claim.
+- `coverage` is a set of verified date intervals, merged where they overlap or
+  abut. `--year` contributes a bounded interval; the default window a
+  lower-bounded one; `--all` an unbounded one.
+- A settled run (`complete` or `cutoff`) adds its requested interval. A failed
+  run may add *records* without enlarging guaranteed coverage.
+- Every claim carries `verified_at`. Orders placed after that timestamp are not
+  implied by it.
+- Coverage and archive health are separate axes. A record going missing does
+  not undo the historical fact that the window was walked — but a
+  machine-readable `complete` must not suggest the archive can answer fully
+  while `damaged_ids` or `incompatible_ids` is non-empty. Two names, not one.
+- Migration: an existing note knows `since` but, unless it was written after
+  the bounded-window change, has no upper bound. Treat those as lower-bounded.
+  Do not reinterpret an old `cutoff` as calendar-year coverage.
+
 ### Known limitation: coverage describes the last run, not the archive
 
 `index.json` holds one sync note, and it describes the run that wrote it. Two

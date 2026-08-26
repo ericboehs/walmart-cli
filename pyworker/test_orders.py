@@ -613,3 +613,153 @@ def test_a_protected_id_is_skipped_on_an_incremental_sync_too(monkeypatch):
 def test_protected_ids_must_be_a_list():
     with pytest.raises(ValueError, match="protected_ids"):
         orders.normalize_params({"params": {"protected_ids": "200012345678901"}})
+
+
+# --- Bounded windows ----------------------------------------------------------------
+
+
+def dated_row(order_id, date):
+    return {**ONLINE_ROW, "id": order_id, "orderDate": f"{date}T12:00:00.000Z"}
+
+
+def year_window(year):
+    return {"since": f"{year}-01-01", "before": f"{year + 1}-01-01"}
+
+
+# `--year 2024` said "sync one calendar year" in the help, in the design and in
+# the class comment, and sent only a lower bound -- so in 2026 it archived 2024,
+# 2025 and 2026. Rows are deliberately out of date order here: nothing may
+# depend on Walmart returning them sorted.
+def test_only_the_requested_year_is_fetched(monkeypatch):
+    rows = [
+        dated_row("200000000000001", "2023-06-01"),
+        dated_row("200000000000002", "2025-06-01"),
+        dated_row("200000000000003", "2024-06-01"),
+        dated_row("200000000000004", "2026-06-01"),
+    ]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={row["id"]: order(id=row["id"]) for row in rows},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert [record["order_id"] for record in result["orders"]] == ["200000000000003"]
+
+
+def test_a_row_above_the_window_costs_no_page_load(monkeypatch):
+    rows = [dated_row("200000000000002", "2025-06-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000002": order(id="200000000000002")},
+    )
+
+    sync(monkeypatch, session, **year_window(2024))
+
+    assert [url for url in session.navigated if "/orders/" in url] == []
+
+
+# The upper bound must never stop the walk: rows above the window are exactly
+# what we page through on the way down to the requested year.
+def test_a_page_entirely_above_the_window_keeps_walking(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[dated_row("200000000000002", "2025-06-01")], cursor="C1")],
+        next_pages=[graphql_history([dated_row("200000000000003", "2024-06-01")], cursor=None)],
+        orders_by_id={"200000000000003": order(id="200000000000003")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert [record["order_id"] for record in result["orders"]] == ["200000000000003"]
+    assert result["stopped"]["reason"] == orders.COMPLETE
+
+
+# Only the lower edge is a frontier.
+def test_the_walk_still_stops_below_the_window(monkeypatch):
+    session = FakeSession(
+        pages=[history(orders=[dated_row("200000000000001", "2023-06-01")], cursor="C1")],
+        orders_by_id={},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert result["stopped"]["reason"] == orders.CUTOFF
+
+
+def test_an_open_topped_window_is_unaffected(monkeypatch):
+    rows = [dated_row("200000000000004", "2026-06-01"), dated_row("200000000000003", "2024-06-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={row["id"]: order(id=row["id"]) for row in rows},
+    )
+
+    result = sync(monkeypatch, session, since="2024-01-01")
+
+    assert len(result["orders"]) == 2, "no upper bound means up to now"
+
+
+# The boundary decides which year an order belongs to, and both ends of it are
+# a single character in the comparison. A mutant flipping >= to > survived until
+# these existed.
+def test_the_first_instant_of_the_next_year_is_outside_the_window(monkeypatch):
+    rows = [dated_row("200000000000005", "2025-01-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000005": order(id="200000000000005")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert result["orders"] == [], "before is exclusive"
+
+
+def test_the_first_day_of_the_requested_year_is_inside_the_window(monkeypatch):
+    rows = [dated_row("200000000000006", "2024-01-01")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000006": order(id="200000000000006")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert [r["order_id"] for r in result["orders"]] == ["200000000000006"], "since is inclusive"
+
+
+def test_the_last_day_of_the_requested_year_is_inside_the_window(monkeypatch):
+    rows = [dated_row("200000000000007", "2024-12-31")]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000007": order(id="200000000000007")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert [r["order_id"] for r in result["orders"]] == ["200000000000007"]
+
+
+# The bound is a date and the row's date is whatever Walmart sent, compared as
+# strings. Every timestamped row sorts strictly after a bare date with the same
+# day, so >= and > only diverge when the row itself carries no time -- which the
+# parser passes through unmodified. That row belongs to the next year.
+def test_a_date_only_row_on_the_boundary_is_outside_the_window(monkeypatch):
+    rows = [{**ONLINE_ROW, "id": "200000000000008", "orderDate": "2025-01-01"}]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000008": order(id="200000000000008")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert result["orders"] == []
+
+
+def test_a_date_only_row_on_the_lower_edge_is_inside_the_window(monkeypatch):
+    rows = [{**ONLINE_ROW, "id": "200000000000009", "orderDate": "2024-01-01"}]
+    session = FakeSession(
+        pages=[history(orders=rows, cursor=None)],
+        orders_by_id={"200000000000009": order(id="200000000000009")},
+    )
+
+    result = sync(monkeypatch, session, **year_window(2024))
+
+    assert [r["order_id"] for r in result["orders"]] == ["200000000000009"]

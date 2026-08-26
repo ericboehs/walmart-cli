@@ -69,7 +69,7 @@ module Walmart
         stopped = result["stopped"] || {}
         archive.note_sync(
           reason: stopped["reason"].to_s, oldest_date: stopped["oldest_date"],
-          since: params["since"]
+          since: params["since"], before: params["before"]
         )
 
         report(stored, Array(result["seen"]).length, stopped)
@@ -102,6 +102,10 @@ module Walmart
       def params_for(flags)
         {
           "since" => since(flags),
+          # The other end of the window. --year means one calendar year, which
+          # help, the design and this class all said while the request carried
+          # only a lower bound -- so `--year 2024` archived 2024, 2025 and 2026.
+          "before" => before(flags),
           "full" => flags[:full] == true,
           # Ids we already hold *and can return*. Sending them is what makes a
           # re-sync cheap: the worker skips their detail pages. Index keys were
@@ -141,6 +145,14 @@ module Walmart
         end
 
         (Date.today << (12 * DEFAULT_WINDOW_YEARS)).iso8601
+      end
+
+      # Exclusive upper bound, only for --year. The rolling default window and
+      # --all are both open at the top: they mean "up to now".
+      def before(flags)
+        return nil unless flags[:year] && flags[:all] != true
+
+        "#{flags[:year].to_i + 1}-01-01"
       end
 
       def store(orders, full:)
