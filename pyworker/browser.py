@@ -339,6 +339,25 @@ class Session:
         """
         self.page.on("response", handler)
 
+    def on_request(self, handler) -> None:
+        """Subscribe to requests from our own tab, for the same reasons as above.
+
+        Playwright attaches to dedicated worker targets itself and reports
+        their network activity on the owning page, which is why this exists:
+        the cart mutation is issued from a Web Worker, and the JS hooks we had
+        been using ran in page context where a worker's fetch is simply not
+        visible. That was a fact about the hook, not about the request.
+        """
+        self.page.on("request", handler)
+
+    def on_worker(self, handler) -> None:
+        """Subscribe to workers this page starts.
+
+        Recorded so a capture that sees no worker traffic can tell the two
+        explanations apart: no worker ran, or one ran and we missed it.
+        """
+        self.page.on("worker", handler)
+
     def close(self) -> None:
         # Closing a context we do not own would take the user's other tabs with
         # it. Attached, we close exactly the one tab we opened and leave the
