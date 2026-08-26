@@ -726,3 +726,239 @@ def test_an_unrecognised_body_does_not_enter_the_evidence_file(tmp_path, body):
     assert recorder.mutations == 0
     recorder.write([])
     assert json.loads((tmp_path / "capture.json").read_text())["mutating_requests"] == []
+
+
+# --- the response side ---------------------------------------------------------------
+#
+# The remaining unknown is what a successful updateItems looks like, so the
+# capture now records answers as well as questions. The rules are tighter on
+# this side: a response is read only if it answers a request that already
+# passed every check, and an order-flow body is never fetched at all.
+
+
+class CaptureResponse:
+    """A response that records whether anyone asked for its body."""
+
+    def __init__(self, url, request=None, status=200, text='{"data":{"updateItems":{}}}'):
+        self.url = url
+        self.request = request
+        self.status = status
+        self.ok = 200 <= status < 300
+        self.read = 0
+        self._text = text
+
+    def text(self):
+        self.read += 1
+        if self._text is None:
+            raise RuntimeError("no body")
+        return self._text
+
+
+def _cleared_request(recorder, url=None):
+    """A request the recorder has already accepted, as the response hook requires."""
+    request = CaptureRequest(url or f"{ORCHESTRA}/updateItems/h", ITEMS_BODY)
+    recorder.on_request(request)
+    assert recorder.mutations == 1
+    return request
+
+
+def _forcibly_cleared(recorder, url):
+    """Mark a request as cleared without going through on_request.
+
+    Only for isolating one guard at a time. The first version of the
+    order-flow, allowlist and same-host response tests used an uncleared
+    request, so the correlation check refused them before the guard under test
+    was reached: three tests passing for a reason unrelated to their names, and
+    three mutants surviving because of it. A guard has to be the only thing
+    that can stop the request it is asked about.
+    """
+    request = CaptureRequest(url, ITEMS_BODY)
+    recorder._cleared[id(request)] = request
+    return request
+
+
+def test_the_answer_to_a_cleared_request_is_recorded(tmp_path):
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request))
+    assert len(recorder.responses) == 1
+    assert recorder.responses[0]["status"] == 200
+    assert recorder.responses[0]["operation"] == "updateItems"
+
+
+def test_an_order_flow_response_body_is_never_even_fetched(tmp_path):
+    """Not read and discarded -- not read. Reading it puts it in this process."""
+    recorder = _recorder(tmp_path)
+    for name in ("reserveSlotMutation", "CreateContract", "placeOrderMutation", "updateTipping"):
+        url = f"{ORCHESTRA}/{name}/h"
+        # Cleared on purpose, so refusing is the order-flow guard's doing and
+        # not the correlation check's.
+        response = CaptureResponse(url, _forcibly_cleared(recorder, url))
+        recorder.on_response(response)
+        assert response.read == 0, name
+    assert recorder.responses == []
+    # Removing the order-flow check leaves this at zero and the bodies still
+    # unread, because the allowlist stops them anyway. That is the arrangement
+    # working as intended -- the allowlist is the guarantee and the denylist is
+    # the alarm -- but an alarm that does not sound is not installed, and the
+    # count is the only place it sounds.
+    assert recorder.refused == 4
+
+
+def test_an_unasked_for_operations_response_is_not_read(tmp_path):
+    recorder = _recorder(tmp_path)
+    url = f"{ORCHESTRA}/SomeFutureMutation/h"
+    response = CaptureResponse(url, _forcibly_cleared(recorder, url))
+    recorder.on_response(response)
+    assert response.read == 0
+    assert recorder.responses == []
+
+
+def test_a_response_to_a_request_we_never_cleared_is_counted_not_read(tmp_path):
+    """Correlation says which request this answers; it does not say it was allowed."""
+    recorder = _recorder(tmp_path)
+    response = CaptureResponse(f"{ORCHESTRA}/updateItems/h", CaptureRequest("elsewhere"))
+    recorder.on_response(response)
+    assert response.read == 0
+    assert recorder.responses == []
+    assert recorder.uncorrelated_responses == 1
+
+
+def test_a_response_with_no_request_at_all_is_not_read(tmp_path):
+    recorder = _recorder(tmp_path)
+    response = CaptureResponse(f"{ORCHESTRA}/updateItems/h", None)
+    recorder.on_response(response)
+    assert response.read == 0
+    assert recorder.uncorrelated_responses == 1
+
+
+def test_a_non_walmart_response_is_ignored(tmp_path):
+    recorder = _recorder(tmp_path)
+    url = "https://example.com/orchestra/cartxo/graphql/updateItems/h"
+    response = CaptureResponse(url, _forcibly_cleared(recorder, url))
+    recorder.on_response(response)
+    assert response.read == 0
+    assert recorder.responses == []
+
+
+def test_a_body_that_cannot_be_read_is_a_finding_not_a_crash(tmp_path):
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request, text=None))
+    assert recorder.unreadable_responses == 1
+    assert recorder.responses[0]["body"] is None
+    assert recorder.responses[0]["status"] == 200
+
+
+def test_a_rejection_is_recorded_as_readily_as_a_success(tmp_path):
+    """The failing shape is contract evidence too, and likelier to arrive first."""
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(
+        CaptureResponse(request.url, request, status=400, text='{"errors":[{"message":"no"}]}')
+    )
+    assert recorder.responses[0]["status"] == 400
+    assert recorder.responses[0]["ok"] is False
+
+
+def test_the_document_carries_the_responses(tmp_path):
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request))
+    recorder.write([])
+    written = json.loads((tmp_path / "capture.json").read_text())
+    assert len(written["responses"]) == 1
+    assert written["responses_not_read_because_uncorrelated"] == 0
+
+
+# --- the shape, which is the part that can eventually be quoted -----------------------
+
+
+def test_the_shape_keeps_the_structure_and_none_of_the_values(tmp_path):
+    shape_of = _capture_module().shape_of
+    shape = shape_of({"data": {"updateItems": {"id": "SECRET", "total": 12.5}}})
+    assert shape == {"data": {"updateItems": {"id": "str", "total": "float"}}}
+
+
+def test_the_shape_names_booleans_apart_from_numbers():
+    """bool is an int in Python, and that has already caused two defects here."""
+    shape_of = _capture_module().shape_of
+    assert shape_of({"success": True}) == {"success": "boolean"}
+    assert shape_of({"success": 1}) == {"success": "int"}
+
+
+def test_an_empty_list_is_a_different_observation_from_a_full_one():
+    shape_of = _capture_module().shape_of
+    assert shape_of({"errors": []}) == {"errors": {"list": 0}}
+    assert shape_of({"errors": [{"message": "x"}]}) == {"errors": {"list": 1, "of": {"message": "str"}}}
+
+
+def test_the_shape_walk_is_bounded():
+    """An unbounded walk over a document we have never seen is a way to hang."""
+    shape_of = _capture_module().shape_of
+    module = _capture_module()
+    deep: dict = {}
+    node = deep
+    for _ in range(module.MAX_SHAPE_DEPTH + 20):
+        node["next"] = {}
+        node = node["next"]
+    assert "..." in json.dumps(shape_of(deep))
+
+
+def test_the_shape_of_a_recorded_response_contains_no_recorded_value(tmp_path):
+    """The shape is the promotable artefact, so it must carry nothing."""
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(
+        CaptureResponse(request.url, request, text='{"data":{"cart":{"id":"CART-SECRET-1"}}}')
+    )
+    assert "CART-SECRET-1" not in json.dumps(recorder.responses[0]["body_shape"])
+
+
+def test_a_cart_id_in_a_response_is_scrubbed_like_one_in_a_request(tmp_path):
+    """The request side learned this the hard way; the response side inherits it."""
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    recorder.on_response(
+        CaptureResponse(
+            request.url, request, text='{"data":{"cartId":"cart-id-canary-0000-not-a-real-cart"}}'
+        )
+    )
+    recorder.write([])
+    written = (tmp_path / "capture.json").read_text()
+    assert "cart-id-canary-0000-not-a-real-cart" not in written
+
+
+def test_a_literal_given_on_the_command_line_is_scrubbed_from_a_response(tmp_path):
+    """--scrub-literal is how the driver removes what no key name would catch."""
+    recorder = _capture_module().Recorder(tmp_path, ["Owasso"])
+    request = _cleared_request(recorder)
+    recorder.on_response(CaptureResponse(request.url, request, text='{"data":{"s":"Owasso"}}'))
+    recorder.write([])
+    assert "Owasso" not in (tmp_path / "capture.json").read_text()
+
+
+# --- what the run amounted to ---------------------------------------------------------
+
+
+def test_a_session_that_never_opened_is_not_a_finding_about_walmart():
+    verdict = _capture_module().verdict
+    assert "never opened" in verdict(watched=False, mutations=0, responses=0)
+
+
+def test_no_request_at_all_says_so():
+    verdict = _capture_module().verdict
+    assert "No mutating request" in verdict(watched=True, mutations=0, responses=0)
+
+
+def test_requests_without_responses_is_a_failure_not_a_quiet_success():
+    """The response is the point of the run; getting only requests is not partial credit."""
+    verdict = _capture_module().verdict
+    problem = verdict(watched=True, mutations=3, responses=0)
+    assert problem is not None
+    assert "no response" in problem
+
+
+def test_getting_what_it_came_for_says_nothing():
+    verdict = _capture_module().verdict
+    assert verdict(watched=True, mutations=1, responses=1) is None

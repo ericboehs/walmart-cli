@@ -83,6 +83,40 @@ def is_update_items_body(body: object) -> bool:
     return isinstance(supplied.get("items"), list)
 
 
+# How deep a shape may go before it stops describing and starts copying. A
+# response we have never seen has no known depth, and an unbounded walk over a
+# hostile document is a way to hang the capture.
+MAX_SHAPE_DEPTH = 12
+
+
+def shape_of(value: Any, depth: int = 0) -> Any:
+    """The structure of a payload with every value replaced by its type.
+
+    Separate from scrubbing, and stricter. Scrubbing removes what we know to be
+    sensitive; this removes everything, so what is left cannot leak by being
+    something nobody thought to add to a list of key names. It is the form the
+    contract can eventually be written down in.
+
+    Booleans are named apart from numbers, because bool is an int in Python and
+    that distinction has already caused two defects here. Lists report their
+    length and the shape of their first element: a response whose data is an
+    empty list is a different observation from one with items in it.
+    """
+    if depth >= MAX_SHAPE_DEPTH:
+        return "..."
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return {key: shape_of(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        if not value:
+            return {"list": 0}
+        return {"list": len(value), "of": shape_of(value[0], depth + 1)}
+    return type(value).__name__
+
+
 def default_out_dir() -> Path:
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     return REPO_ROOT / "pyworker" / "recon" / f"cart-mutation-{stamp}"
@@ -119,6 +153,13 @@ class Recorder:
         self.skipped = 0
         self.refused = 0
         self.unclassified = 0
+        self.responses: list[dict[str, Any]] = []
+        self.unreadable_responses = 0
+        self.uncorrelated_responses = 0
+        # The requests we cleared and recorded, held by identity. A response is
+        # only read if it answers one of these. Holding the objects also keeps
+        # them alive, so identity stays meaningful for the life of the capture.
+        self._cleared: dict[int, Any] = {}
 
     def on_worker(self, worker) -> None:
         url = getattr(worker, "url", "") or "(unknown)"
@@ -188,8 +229,81 @@ class Recorder:
             "body": scrub.scrub_json(self._decode(body), self.literals),
         }
         self.events.append(record)
+        self._cleared[id(request)] = request
         origin = "worker" if record["from_worker"] else "page"
         print(f"  [{self.mutations}] {method} {record['operation'] or record['url']}  ({origin})")
+
+    def on_response(self, response) -> None:
+        """Record the answer to a request we already cleared, and nothing else.
+
+        The response side is where the remaining unknown lives: no successful
+        updateItems body has ever been observed, so the cart mutation refuses
+        to run at all. This is the evidence that would change that.
+
+        It is deliberately narrower than the request side. A request is judged
+        on what it is; a response is judged on what it answers. Only responses
+        to requests that already passed every check are read, and the checks
+        are then repeated on the response's own URL rather than inherited --
+        correlation says which request this belongs to, it does not say the
+        request was allowed. An order-flow response body is never fetched, not
+        even to discard it: reading it would put it in this process.
+        """
+        request = getattr(response, "request", None)
+        url = getattr(response, "url", "") or ""
+
+        if not is_walmart(url):
+            return
+        operation = safety.operation_of(url)
+        if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):
+            # Counted, never opened.
+            self.refused += 1
+            return
+        if operation not in ALLOWED_OPERATIONS:
+            return
+        if request is None or id(request) not in self._cleared:
+            # An allowed operation we did not send or did not clear. Worth
+            # knowing about -- it means the request hook missed something --
+            # but not worth reading.
+            self.uncorrelated_responses += 1
+            return
+
+        status = getattr(response, "status", None)
+        try:
+            payload = self._decode(response.text())
+        except Exception:  # noqa: BLE001 - a body we cannot read is still a finding
+            self.unreadable_responses += 1
+            payload = None
+            print(f"  response {status}: body could not be read")
+        else:
+            print(f"  response {status}: {self._summarise(payload)}")
+
+        self.responses.append(
+            {
+                "url": scrub.scrub_url(url),
+                "operation": operation,
+                "status": status,
+                "ok": getattr(response, "ok", None),
+                # The shape with every value removed. This is the part that can
+                # eventually be quoted into a test or a document, because it
+                # carries the contract and none of the contents.
+                "body_shape": shape_of(payload),
+                "body": scrub.scrub_json(payload, self.literals),
+            }
+        )
+
+    @staticmethod
+    def _summarise(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return "not an object"
+        parts = []
+        if payload.get("errors"):
+            parts.append("errors present")
+        data = payload.get("data")
+        if isinstance(data, dict):
+            parts.append(f"data keys: {', '.join(sorted(data)) or 'none'}")
+        elif "data" in payload:
+            parts.append("data is not an object")
+        return "; ".join(parts) or "no data and no errors"
 
     def _from_worker(self, request) -> bool | None:
         """True when Playwright attributes this request to a worker.
@@ -221,6 +335,9 @@ class Recorder:
             "what": "cart mutation performed by hand in the user's own browser",
             "workers_seen": [scrub.scrub_url(url) for url in self.workers],
             "mutating_requests": self.events,
+            "responses": self.responses,
+            "responses_not_read_because_uncorrelated": self.uncorrelated_responses,
+            "responses_that_could_not_be_read": self.unreadable_responses,
             "refused_order_flow_requests": self.refused,
             "requests_not_recorded_because_unasked_for": self.skipped,
             "requests_not_recorded_because_unrecognised_shape": self.unclassified,
@@ -241,7 +358,36 @@ def confirm(out_dir: Path) -> bool:
     print("  3. change the quantity, then remove it again if you like")
     print("  4. come back here and press Enter")
     print()
+    print("Both sides of each updateItems call are recorded: the request, and")
+    print("the answer. Nothing else is read -- an order-flow response body is")
+    print("never fetched, not even to throw away.")
+    print()
     return input("start recording? [y/N] ").strip().lower() in ("y", "yes")
+
+
+def verdict(watched: bool, mutations: int, responses: int) -> str | None:
+    """What the run amounted to, or None if it got what it came for.
+
+    A function rather than a chain of prints so it can be tested. The three
+    negative answers are deliberately distinct: a session that never opened is
+    not a finding about Walmart, and requests without responses is a narrower
+    failure than silence -- the hook is attached and the answers are going
+    somewhere we cannot see.
+    """
+    if not watched:
+        return "nothing was recorded because the session never opened."
+    if mutations == 0:
+        return (
+            "No mutating request was recorded. That is itself a finding: either no "
+            "add happened, or Playwright is not reporting the worker's traffic and "
+            "we need a raw CDP attach instead."
+        )
+    if responses == 0:
+        return (
+            f"{mutations} request(s) recorded but no response was. The response side "
+            "is the whole point of this run, so this is a failure, not a quiet success."
+        )
+    return None
 
 
 def run(args: argparse.Namespace) -> int:
@@ -270,12 +416,15 @@ def run(args: argparse.Namespace) -> int:
         with browser.open_session(options) as session:
             session.on_worker(recorder.on_worker)
             session.on_request(recorder.on_request)
+            session.on_response(recorder.on_response)
             print("\nrecording - drive the browser yourself; do not enter an order flow")
             print("press Enter here when you are done\n")
             watched = True
             with contextlib.suppress(EOFError):
                 input()
-            notes.append(f"recorded {recorder.mutations} mutating requests")
+            notes.append(
+                f"recorded {recorder.mutations} mutating requests and {len(recorder.responses)} responses"
+            )
     except safety.UnsafeNavigation as exc:
         notes.append(f"aborted: {exc}")
         print(f"refused: {exc}", file=sys.stderr)
@@ -289,17 +438,14 @@ def run(args: argparse.Namespace) -> int:
         status = 2
     finally:
         path = recorder.write(notes)
-        print(f"\n{recorder.mutations} mutating request(s), {len(recorder.workers)} worker(s)")
+        print(
+            f"\n{recorder.mutations} mutating request(s), "
+            f"{len(recorder.responses)} response(s), {len(recorder.workers)} worker(s)"
+        )
         print(f"wrote {path}")
-        if not watched:
-            print("nothing was recorded because the session never opened.", file=sys.stderr)
-        elif recorder.mutations == 0:
-            print(
-                "No mutating request was recorded. That is itself a finding: either no "
-                "add happened, or Playwright is not reporting the worker's traffic and "
-                "we need a raw CDP attach instead.",
-                file=sys.stderr,
-            )
+        problem = verdict(watched, recorder.mutations, len(recorder.responses))
+        if problem:
+            print(problem, file=sys.stderr)
 
     return status
 

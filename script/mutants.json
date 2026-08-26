@@ -776,8 +776,8 @@
   {
     "label": "the evidence file labels the operation from the raw url",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "            \"operation\": operation,",
-    "to": "            \"operation\": url.rsplit(\"/\", 1)[-1],",
+    "from": "            \"operation\": operation,\n            \"body\": scrub.scrub_json(self._decode(body), self.literals),",
+    "to": "            \"operation\": url.rsplit(\"/\", 1)[-1],\n            \"body\": scrub.scrub_json(self._decode(body), self.literals),",
     "command": [
       "uv",
       "run",
@@ -1197,6 +1197,174 @@
       "pyworker",
       "pytest",
       "pyworker/test_cart_mutate.py"
+    ]
+  },
+  {
+    "label": "an order-flow response body is fetched",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):\n            # Counted, never opened.\n            self.refused += 1\n            return\n        if operation not in ALLOWED_OPERATIONS:\n            return",
+    "to": "        if operation not in ALLOWED_OPERATIONS:\n            return",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a response to an uncleared request is read",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if request is None or id(request) not in self._cleared:",
+    "to": "        if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the response allowlist is dropped",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if operation not in ALLOWED_OPERATIONS:\n            return\n        if request is None",
+    "to": "        if False:\n            return\n        if request is None",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a non-walmart response is read",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if not is_walmart(url):\n            return\n        operation = safety.operation_of(url)\n        if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):\n            # Counted, never opened.",
+    "to": "        if False:\n            return\n        operation = safety.operation_of(url)\n        if safety.is_forbidden_url(url) or safety.is_forbidden_operation(operation):\n            # Counted, never opened.",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the shape keeps values instead of types",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    return type(value).__name__",
+    "to": "    return value",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the shape calls a boolean a number",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if isinstance(value, bool):\n        return \"boolean\"\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the shape walk is unbounded",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if depth >= MAX_SHAPE_DEPTH:\n        return \"...\"\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "an empty list looks like a full one",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if not value:\n            return {\"list\": 0}\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "an unreadable response body crashes the capture",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        except Exception:  # noqa: BLE001 - a body we cannot read is still a finding\n            self.unreadable_responses += 1",
+    "to": "        except ValueError:\n            self.unreadable_responses += 1",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "responses are left out of the written document",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            \"responses\": self.responses,\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "requests without responses are called a success",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if responses == 0:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the response record labels the operation from the raw url",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "                \"operation\": operation,\n                \"status\": status,",
+    "to": "                \"operation\": url.rsplit(\"/\", 1)[-1],\n                \"status\": status,",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
     ]
   }
 ]

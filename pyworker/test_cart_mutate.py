@@ -8,6 +8,7 @@ do not.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -852,3 +853,65 @@ def test_the_refusal_always_says_nothing_was_sent():
     """The one fact a person needs from a refusal."""
     for reasons in (["one"], ["one", "two"], cart_mutate.unmet_contracts()):
         assert "Nothing was sent." in cart_mutate.not_ready_message(reasons)
+
+
+# --- what opening each gate will require ----------------------------------------------
+#
+# Both gates are constants, and a constant can be toggled. These tests make
+# toggling insufficient: flipping either one without doing the work it stands
+# for fails the suite. They are dormant today and are the point at which the
+# evidence commit gets reviewed by the tests rather than by memory.
+
+
+def test_proving_per_line_delivery_requires_a_per_line_check():
+    """The flag stands for an observed signal, not for a decision to stop worrying.
+
+    Cart-level intent says the cart is a delivery cart. It does not say this
+    line can be delivered. If the flag goes true, there must be a predicate
+    that reads the line, and the action must call it.
+    """
+    if not cart_mutate.PER_LINE_DELIVERY_PROVEN:
+        pytest.skip("still unproven, as recorded")
+
+    assert hasattr(cart_mutate, "assert_line_is_deliverable"), (
+        "PER_LINE_DELIVERY_PROVEN is true but no per-line predicate exists"
+    )
+    source = inspect.getsource(cart_mutate.action_cart_change)
+    assert "assert_line_is_deliverable" in source, (
+        "a per-line predicate exists but the action does not call it"
+    )
+
+
+def test_accepting_a_response_requires_observed_rejections_too():
+    """A success shape is only half the contract.
+
+    Knowing what success looks like does not let us recognise failure: a 200
+    carrying a refusal is the shape most likely to be mistaken for agreement.
+    So whoever fills in the success shape must also record the rejections they
+    saw, and each one must be judged not-accepted by the same code path.
+    """
+    if cart_mutate.ACCEPTED_RESPONSE_SHAPE is None:
+        pytest.skip("still unobserved, as recorded")
+
+    examples = getattr(cart_mutate, "OBSERVED_REJECTIONS", None)
+    assert examples, "a success shape was recorded without any observed rejection beside it"
+    for payload in examples:
+        ack = cart_mutate.acknowledgement(200, payload)
+        assert not ack.accepted, f"an observed rejection was read as success: {payload}"
+
+
+def test_a_declared_failure_inside_a_success_is_never_accepted():
+    """The specific shape that must not slip through: a present, falsy verdict.
+
+    Key presence is not agreement. Skipped while the gate is shut, because
+    there is nothing to check it against, and waiting here for the day there is.
+    """
+    if cart_mutate.ACCEPTED_RESPONSE_SHAPE is None:
+        pytest.skip("still unobserved, as recorded")
+
+    for field in ("success", "ok", "accepted"):
+        for falsy in (False, "false", 0, None):
+            payload = {"data": {"updateItems": {field: falsy}}}
+            assert not cart_mutate.acknowledgement(200, payload).accepted, (
+                f"{field}={falsy!r} was read as success"
+            )
