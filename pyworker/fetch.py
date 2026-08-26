@@ -131,6 +131,13 @@ def main(argv: list[str] | None = None) -> int:
         protocol.error("unsafe", str(exc))
         return 2
     except Exception as exc:  # noqa: BLE001 - last resort; report, never swallow
+        # An exception that names its own error code gets to keep it. That is
+        # how a bot block reaches the user as "challenge_detected" with advice,
+        # instead of as an internal error with a traceback.
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and code:
+            protocol.error(code, str(exc), unverified=mutating)
+            return 3 if mutating else 1
         print(traceback.format_exc(), file=sys.stderr)
         protocol.error(
             "internal",

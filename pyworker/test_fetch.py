@@ -8,9 +8,11 @@ import json
 import pytest
 
 import browser
+import challenge
 import fetch
 import protocol
 import safety
+import search
 
 
 def run_main(request: dict, monkeypatch, capsys) -> tuple[int, list[dict]]:
@@ -214,20 +216,42 @@ def test_search_is_registered_as_a_real_action():
     assert fetch.ACTIONS["search"].__name__ == "action_search"
 
 
-def test_search_reports_the_missing_evidence_not_a_generic_stub():
-    with pytest.raises(NotImplementedError) as raised:
-        fetch.dispatch({"action": "search", "params": {"query": "whole milk"}})
+def test_an_error_that_names_its_code_keeps_it(monkeypatch, capsys):
+    # A bot block must reach the user as challenge_detected with advice, not as
+    # an internal error with a traceback.
+    def blocked(_request):
+        raise challenge.Blocked("walmart asked for a human")
 
-    message = str(raised.value)
-    assert "variables" in message
-    assert "recon.py" in message
+    monkeypatch.setitem(fetch.ACTIONS, "search", blocked)
+
+    code, events = run_main({"action": "search", "params": {"query": "milk"}}, monkeypatch, capsys)
+
+    assert code == 1
+    assert events[-1]["code"] == challenge.CHALLENGE_CODE
 
 
-def test_a_bad_page_is_reported_before_the_bigger_blocker():
-    # A usage mistake hidden behind "not implemented yet" is a mistake the user
-    # discovers twice.
+def test_a_login_required_error_survives_the_dispatcher(monkeypatch, capsys):
+    def signed_out(_request):
+        raise search.NotSignedIn(search.NOT_SIGNED_IN)
+
+    monkeypatch.setitem(fetch.ACTIONS, "search", signed_out)
+
+    _code, events = run_main({"action": "search", "params": {"query": "milk"}}, monkeypatch, capsys)
+
+    assert events[-1]["code"] == "login_required"
+
+
+def test_a_bad_page_is_reported_before_a_browser_opens(monkeypatch):
+    # Validating after launching Chromium spends ten seconds telling the user
+    # they made a typo.
+    monkeypatch.setattr(browser, "open_session", _explode_on_launch)
+
     with pytest.raises(ValueError):
         fetch.dispatch({"action": "search", "params": {"query": "milk", "page": "zero"}})
+
+
+def _explode_on_launch(*_args, **_kwargs):
+    raise AssertionError("parameters must be validated before a browser opens")
 
 
 def test_search_is_not_a_mutating_action():

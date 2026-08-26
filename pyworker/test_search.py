@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 
+import browser
 import challenge
 import search
 
@@ -16,22 +20,28 @@ def test_a_query_is_required():
 
 
 def test_defaults_are_filled_in():
-    params = search.normalize_params({"params": {"query": "whole milk"}})
+    normalized = search.normalize_params({"params": {"query": "whole milk"}})
 
-    assert params == {"query": "whole milk", "page": 1, "limit": search.DEFAULT_LIMIT}
+    assert normalized == {
+        "query": "whole milk",
+        "page": 1,
+        "limit": search.DEFAULT_LIMIT,
+        "sort": search.DEFAULT_SORT,
+        "store_slot_booked": "",
+    }
 
 
 def test_the_query_is_trimmed_but_not_otherwise_touched():
-    params = search.normalize_params({"params": {"query": "  Great Value 2% milk  "}})
+    normalized = search.normalize_params({"params": {"query": "  Great Value 2% milk  "}})
 
-    assert params["query"] == "Great Value 2% milk"
+    assert normalized["query"] == "Great Value 2% milk"
 
 
 def test_page_and_limit_are_read_as_numbers():
-    params = search.normalize_params({"params": {"query": "milk", "page": "3", "limit": "5"}})
+    normalized = search.normalize_params({"params": {"query": "milk", "page": "3", "limit": "5"}})
 
-    assert params["page"] == 3
-    assert params["limit"] == 5
+    assert normalized["page"] == 3
+    assert normalized["limit"] == 5
 
 
 @pytest.mark.parametrize("bad", ["zero", "1.5", "-2", "0"])
@@ -47,21 +57,155 @@ def test_an_absurd_limit_is_refused_rather_than_silently_capped():
         search.normalize_params({"params": {"query": "milk", "limit": 5000}})
 
 
-# --- The blocked seam --------------------------------------------------------
+# --- The request -------------------------------------------------------------
+#
+# Recovered by read-only observation of a signed-in session. The values here are
+# copied, not improved: the flag set is what the web app sends, and changing one
+# to "get more data" changes the response shape our parser was built against.
 
 
-def test_the_request_builder_refuses_to_guess():
-    with pytest.raises(NotImplementedError) as raised:
-        search.build_request({"query": "milk", "page": 1, "limit": 20})
+def params(**overrides):
+    base = {"query": "bananas", "page": 1, "limit": 20, "sort": "best_match", "store_slot_booked": ""}
+    base.update(overrides)
+    return base
 
-    assert "variables" in str(raised.value)
+
+def variables_of(url):
+    return json.loads(parse_qs(urlsplit(url).query)["variables"][0])
 
 
-def test_the_blocker_names_how_to_unblock_it():
-    # An error that does not say what would fix it wastes the next person's
-    # afternoon.
-    assert "recon.py" in search.REQUEST_CONTRACT_UNKNOWN
-    assert "search" in search.REQUEST_CONTRACT_UNKNOWN
+def test_the_request_is_a_persisted_query_get():
+    url = search.build_request(params())
+
+    assert url.startswith("https://www.walmart.com/orchestra/snb/graphql/Search/")
+    assert search.SEARCH_PERSISTED_HASH in url
+    assert "?variables=" in url
+
+
+def test_the_query_and_page_travel_in_the_variables():
+    variables = variables_of(search.build_request(params(query="whole milk", page=3)))
+
+    assert variables["query"] == "whole milk"
+    assert variables["page"] == 3
+
+
+def test_the_page_size_is_the_observed_forty():
+    variables = variables_of(search.build_request(params()))
+
+    assert variables["ps"] == 40
+    assert variables["limit"] == 40
+
+
+def test_scalars_are_consistent_across_the_three_places_they_appear():
+    # The real request repeats them; drift between copies is the kind of thing
+    # a server-side validator notices and a human never does.
+    variables = variables_of(search.build_request(params(query="eggs", page=2)))
+
+    for section in ("searchParams", "fitmentSearchParams"):
+        assert variables[section]["query"] == "eggs"
+        assert variables[section]["page"] == 2
+
+
+def test_observed_flags_are_copied_not_improved():
+    variables = variables_of(search.build_request(params()))
+
+    assert variables["enableUnifiedSchema"] is True
+    # This one is why sellerType was null in the response we built the parser
+    # against. Flipping it would change the shape out from under search_parse.
+    assert variables["enableSellerType"] is False
+    assert variables["enableUnifiedProductFragment"] is False
+
+
+def test_store_scoping_is_passed_through_and_never_invented():
+    empty = variables_of(search.build_request(params()))
+    scoped = variables_of(search.build_request(params(store_slot_booked="OPAQUE")))
+
+    assert empty["storeSlotBooked"] == ""
+    assert scoped["storeSlotBooked"] == "OPAQUE"
+
+
+def test_no_device_identifier_is_synthesized():
+    # The page supplies its own. One we invented would be both a lie and a
+    # fingerprint we chose to carry around.
+    header_names = {name.lower() for name in search.REQUEST_HEADERS}
+
+    assert "device_profile_ref_id" not in header_names
+    assert not any("device" in name for name in header_names)
+
+
+def test_the_operation_headers_are_the_stable_ones():
+    assert search.REQUEST_HEADERS["X-APOLLO-OPERATION-NAME"] == "Search"
+    assert search.REQUEST_HEADERS["x-o-platform"] == "rweb"
+
+
+def test_the_persisted_hash_can_be_pinned_without_a_code_change():
+    url = search.build_request(params(), persisted_hash="deadbeef")
+
+    assert "/Search/deadbeef/search" in url
+
+
+# --- Status handling ----------------------------------------------------------
+
+
+def ok_result(items=None):
+    payload = {
+        "data": {
+            "search": {
+                "searchResult": {
+                    "itemStacks": [{"itemsV2": items if items is not None else [{"usItemId": "1"}]}]
+                }
+            }
+        }
+    }
+    return {"status": 200, "body": json.dumps(payload)}
+
+
+def test_a_healthy_result_is_parsed():
+    data = search.handle_result(ok_result())
+
+    assert [item["item_id"] for item in data["items"]] == ["1"]
+
+
+def test_a_block_outranks_the_status_code():
+    body = json.dumps({"blockScript": "/px/c.js", "jsClientSrc": "/px/x.js", "appId": "PXtest"})
+
+    with pytest.raises(challenge.Blocked):
+        search.handle_result({"status": 200, "body": body})
+
+
+def test_an_unauthenticated_response_asks_for_a_login():
+    with pytest.raises(search.NotSignedIn) as raised:
+        search.handle_result({"status": 401, "body": ""})
+
+    assert raised.value.code == "login_required"
+
+
+def test_a_missing_persisted_query_reports_a_stale_contract():
+    # Walmart rotates these when they ship a build. That must not read as a
+    # parser bug, and the message says exactly what to do.
+    with pytest.raises(search.StaleContract) as raised:
+        search.handle_result({"status": 404, "body": ""})
+
+    assert raised.value.code == "contract_stale"
+    assert "recon.py" in str(raised.value)
+
+
+def test_an_unexpected_status_is_reported_with_its_number():
+    with pytest.raises(RuntimeError) as raised:
+        search.handle_result({"status": 503, "body": "upstream down"})
+
+    assert "503" in str(raised.value)
+
+
+def test_a_non_json_two_hundred_is_not_silently_empty():
+    with pytest.raises(RuntimeError):
+        search.handle_result({"status": 200, "body": "<html>maintenance</html>"})
+
+
+def test_store_scoping_is_reported_so_prices_can_be_qualified():
+    data = search.handle_result({**ok_result(), "store_scoped": True})
+
+    assert data["store_scoped"] is True
 
 
 # --- Interpreting a response --------------------------------------------------
@@ -103,3 +247,79 @@ def test_the_block_check_happens_before_parsing():
 
     with pytest.raises(challenge.Blocked):
         search.interpret_response(payload, status=412)
+
+
+# --- The action end to end (no browser, no network) ---------------------------
+
+
+class FakeSession:
+    """Records what was fetched and hands back a canned page response."""
+
+    def __init__(self, result):
+        self.result = result
+        self.fetched = []
+
+    def fetch_same_origin(self, url, headers=None, **_kwargs):
+        self.fetched.append((url, headers))
+        return dict(self.result)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+OPTIONS = {"profile_dir": "/tmp/profile", "profile_lock": "/tmp/profile.lock"}
+
+
+def install_session(monkeypatch, session):
+    monkeypatch.setattr(browser, "open_session", lambda _options: session)
+
+
+def search_request(**params):
+    return {"action": "search", "options": OPTIONS, "params": params}
+
+
+def test_the_action_issues_one_request_and_returns_items(monkeypatch):
+    session = FakeSession(ok_result([{"usItemId": "1", "name": "Bananas"}]))
+    install_session(monkeypatch, session)
+
+    data = search.action_search(search_request(query="bananas"))
+
+    assert len(session.fetched) == 1
+    assert data["query"] == "bananas"
+    assert [item["name"] for item in data["items"]] == ["Bananas"]
+
+
+def test_the_limit_trims_results_without_changing_the_request(monkeypatch):
+    # Walmart's page size is fixed at 40; --limit is ours, applied after.
+    items = [{"usItemId": str(n), "name": f"item {n}"} for n in range(10)]
+    session = FakeSession(ok_result(items))
+    install_session(monkeypatch, session)
+
+    data = search.action_search(search_request(query="milk", limit=3))
+
+    assert len(data["items"]) == 3
+    assert variables_of(session.fetched[0][0])["limit"] == 40
+
+
+def test_a_bad_parameter_never_opens_a_browser(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise AssertionError("parameters must be validated before a browser opens")
+
+    monkeypatch.setattr(browser, "open_session", explode)
+
+    with pytest.raises(ValueError):
+        search.action_search(search_request(query="milk", page="0"))
+
+
+def test_a_blocked_search_stops_instead_of_retrying(monkeypatch):
+    body = json.dumps({"blockScript": "/px/c.js", "jsClientSrc": "/px/x.js", "appId": "PXtest"})
+    session = FakeSession({"status": 412, "body": body})
+    install_session(monkeypatch, session)
+
+    with pytest.raises(challenge.Blocked):
+        search.action_search(search_request(query="milk"))
+
+    assert len(session.fetched) == 1

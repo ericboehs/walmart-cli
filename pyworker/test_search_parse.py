@@ -48,15 +48,15 @@ def product(**overrides):
                 "priceLines": [
                     {
                         "lineType": "CURRENT_PRICE",
-                        "price": {"PRICE": {"price": 3.12, "priceString": "$3.12"}},
+                        "values": [{"key": "PRICE", "value": {"price": 3.12, "priceString": "$3.12"}}],
                     },
                     {
                         "lineType": "COMPARISON",
-                        "price": {"WAS_PRICE": {"price": 3.48, "priceString": "$3.48"}},
+                        "values": [{"key": "WAS_PRICE", "value": {"price": 3.48, "priceString": "$3.48"}}],
                     },
                     {
                         "lineType": "UNIT_PRICE",
-                        "price": {"UNIT_PRICE": {"priceString": "2.4 ¢/fl oz"}},
+                        "values": [{"key": "UNIT_PRICE", "value": {"priceString": "2.4 ¢/fl oz"}}],
                     },
                 ],
             }
@@ -208,6 +208,28 @@ def test_a_missing_price_block_is_none_not_a_crash():
     assert item["price_display"] is None
 
 
+def test_a_bare_string_price_value_is_still_read():
+    # The observation named the keys with more confidence than the leaf shape,
+    # so a value that is just the rendered string must not crash or print {}.
+    odd = product()
+    odd["priceInfo"]["priceDetails"]["priceLines"] = [
+        {"lineType": "CURRENT_PRICE", "values": [{"key": "PRICE", "value": "$3.12"}]}
+    ]
+
+    item = search_parse.parse_search(response([odd]))["items"][0]
+
+    assert item["price"] == 3.12
+    assert item["price_display"] == "$3.12"
+
+
+def test_an_unrecognized_availability_enum_is_passed_through():
+    # A new enum is not evidence of being out of stock. Guessing the
+    # pessimistic answer hides items a shopper could have bought.
+    weird = product(availabilityStatusV2={"display": "Back soon", "value": "PREORDER"})
+
+    assert search_parse.parse_search(response([weird]))["items"][0]["availability"] == "PREORDER"
+
+
 def test_an_unexpected_price_line_shape_is_ignored():
     broken = product()
     broken["priceInfo"]["priceDetails"]["priceLines"] = ["nonsense", 42, None]
@@ -245,7 +267,7 @@ def test_garbage_input_parses_to_nothing():
 
 def test_a_string_price_is_read_as_a_number():
     odd = product()
-    odd["priceInfo"]["priceDetails"]["priceLines"][0]["price"]["PRICE"]["price"] = "$1,234.50"
+    odd["priceInfo"]["priceDetails"]["priceLines"][0]["values"][0]["value"]["price"] = "$1,234.50"
 
     assert search_parse.parse_search(response([odd]))["items"][0]["price"] == 1234.50
 

@@ -6,12 +6,6 @@ module Walmart
   module Commands
     # `walmart search QUERY [--limit N] [--page N] [--marketplace]`
     #
-    # The display half of search is fully implemented and tested; the request
-    # half is blocked in the worker until the persisted-query variables contract
-    # is observed (see pyworker/search.py). That split is deliberate: rendering
-    # is knowable from the response schema we captured, and asking is not, so
-    # the part we can build honestly is built and the part we cannot says so.
-    #
     # Results are first-party by default. Walmart's search mixes marketplace
     # sellers into the same list, and for groceries "will this arrive with my
     # delivery order" matters more than "does this exist". --marketplace opts
@@ -66,6 +60,7 @@ module Walmart
           report_empty(query, items, marketplace)
         else
           fmt.table(shown.each_with_index.map { |item, index| row(item, index) }, COLUMNS)
+          report_scope(data)
           report_pagination(data, shown.length)
         end
 
@@ -84,6 +79,15 @@ module Walmart
         else
           fmt.empty_result(what: "\"#{query}\"")
         end
+      end
+
+      # Walmart prices and availability are per store. When the worker could not
+      # attach store context, the numbers on screen are generic, and saying so is
+      # cheaper than a shopper discovering it at the register.
+      def report_scope(data)
+        return if data["store_scoped"]
+
+        fmt.hint("prices are not store-specific; run `walmart login` and pin a store for local pricing")
       end
 
       def report_pagination(data, shown)

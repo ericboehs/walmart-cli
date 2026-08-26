@@ -151,16 +151,32 @@ module Walmart
         assert_includes out.string, "yes"
       end
 
-      # The worker refuses to guess the request; the CLI must pass that refusal
-      # through intact rather than reporting an empty catalog.
-      def test_the_blocked_request_contract_surfaces_as_an_error
+      # Walmart rotates the persisted query hash whenever they ship a web build.
+      # That must reach the user as "re-observe the contract", not as a silent
+      # empty catalog and not as a parser bug.
+      def test_a_stale_query_contract_surfaces_as_an_error
         worker = FakeWorker.new(
-          errors: { "search" => WorkerError.new("the request contract has not been observed",
-                                                code: "not_implemented") }
+          errors: { "search" => WorkerError.new("Walmart's search query hash appears to have changed",
+                                                code: "contract_stale") }
         )
 
         error = assert_raises(WorkerError) { run_search(worker: worker) }
-        assert_includes error.message, "has not been observed"
+        assert_includes error.message, "changed"
+      end
+
+      def test_generic_prices_are_flagged_rather_than_presented_as_local
+        run_search(results: [MILK])
+
+        assert_includes err.string, "not store-specific"
+      end
+
+      def test_store_scoped_results_carry_no_caveat
+        worker = FakeWorker.new(
+          results: { "search" => { "items" => [MILK], "pagination" => {}, "store_scoped" => true } }
+        )
+        run_search(worker: worker)
+
+        refute_includes err.string, "not store-specific"
       end
 
       def test_a_bot_block_is_reported_as_a_challenge_not_a_failure

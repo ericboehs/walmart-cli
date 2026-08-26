@@ -82,6 +82,9 @@ class FakePage:
         # Every pump slice, in milliseconds. Recon asserts on these: in the sync
         # API this call is the only thing that lets response handlers run.
         self.waits = []
+        # In-page fetches: what was asked for, and what the page hands back.
+        self.evaluated = []
+        self.evaluate_result = {"status": 200, "body": "{}"}
 
     def wait_for_timeout(self, milliseconds):
         if self.closed:
@@ -109,6 +112,12 @@ class FakePage:
         self.navigations.append(url)
         self.url = url
         return None
+
+    def evaluate(self, script, argument=None):  # noqa: ARG002
+        if self.closed:
+            raise RuntimeError("Target page, context or browser has been closed")
+        self.evaluated.append(argument)
+        return self.evaluate_result
 
 
 class FakeContext:

@@ -422,3 +422,65 @@ def test_the_driver_is_the_fallback_for_an_unusual_layout(monkeypatch, tmp_path)
     monkeypatch.setattr(browser, "_chromium_from_driver", lambda: "/opt/odd/chromium")
 
     assert browser._playwright_chromium_path() == "/opt/odd/chromium"
+
+
+# --- Same-origin fetch --------------------------------------------------------
+
+
+def test_a_same_origin_fetch_runs_in_the_page(make_session):
+    page = FakePage(url="https://www.walmart.com/")
+    page.evaluate_result = {"status": 200, "body": '{"ok": true}'}
+    session = make_session(page)
+
+    result = session.fetch_same_origin(
+        "https://www.walmart.com/orchestra/snb/graphql/Search/abc/search?variables=%7B%7D",
+        headers={"X-APOLLO-OPERATION-NAME": "Search"},
+    )
+
+    assert result["status"] == 200
+    url, headers = page.evaluated[0]
+    assert url.endswith("variables=%7B%7D")
+    assert headers["X-APOLLO-OPERATION-NAME"] == "Search"
+
+
+def test_an_off_origin_fetch_is_refused(make_session):
+    # This method exists to reuse the session's credentials. Sending those
+    # somewhere else is the one thing it must never do.
+    session = make_session(FakePage(url="https://www.walmart.com/"))
+
+    with pytest.raises(safety.UnsafeNavigation):
+        session.fetch_same_origin("https://evil.example.com/collect?c=1")
+
+
+def test_a_lookalike_origin_is_refused(make_session):
+    session = make_session(FakePage(url="https://www.walmart.com/"))
+
+    with pytest.raises(safety.UnsafeNavigation):
+        session.fetch_same_origin("https://www.walmart.com.evil.example/api")
+
+
+def test_a_forbidden_url_is_refused_even_on_our_own_origin(make_session):
+    session = make_session(FakePage(url="https://www.walmart.com/"))
+
+    with pytest.raises(safety.UnsafeNavigation):
+        session.fetch_same_origin("https://www.walmart.com/checkout")
+
+
+def test_the_page_is_brought_on_origin_first(make_session):
+    # A fetch with credentials:'same-origin' from about:blank sends no cookies
+    # and reads as signed out.
+    page = FakePage(url="about:blank")
+    session = make_session(page)
+
+    session.fetch_same_origin("https://www.walmart.com/orchestra/snb/graphql/Search/abc/search")
+
+    assert page.navigations == [browser.WALMART_ORIGIN]
+
+
+def test_an_on_origin_page_is_left_where_it_is(make_session):
+    page = FakePage(url="https://www.walmart.com/cart")
+    session = make_session(page)
+
+    session.fetch_same_origin("https://www.walmart.com/orchestra/snb/graphql/Search/abc/search")
+
+    assert page.navigations == []

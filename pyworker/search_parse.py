@@ -7,11 +7,12 @@ Shape observed live (search recon, 2026-08-26), one 200 response:
 Each entry is a product or an advertising slot; the ad-ish entries have no
 usItemId, which is how they are told apart. Product fields seen: usItemId,
 offerId, name, sellerId, sellerName, availabilityStatus and
-availabilityStatusV2.{display,value}, priceInfo.priceDetails.priceLines[],
-fulfillmentType, fulfillmentSummary[], salesUnit, salesUnitType, imageInfo,
-canonicalUrl, badges, sponsoredProduct. Pagination lives beside the stacks as
-hasMorePages and paginationV2.maxPage, with the echoed request in
-pageProperties.
+availabilityStatusV2.{display,value}, priceInfo.priceDetails.priceLines[] with
+each line carrying lineType and values[] of {key, value} for PRICE, WAS_PRICE,
+and UNIT_PRICE, fulfillmentType, fulfillmentSummary[], salesUnit,
+salesUnitType, imageInfo, canonicalUrl, badges, sponsoredProduct. Pagination
+lives beside the stacks as hasMorePages and paginationV2.maxPage, with the
+echoed request in pageProperties.
 
 Everything here is a pure function over decoded JSON. Nothing in this module
 touches a browser, the network, or the filesystem, so the parser can be tested
@@ -131,6 +132,12 @@ def is_first_party(raw: dict[str, Any]) -> bool:
 
 
 def _availability(raw: dict[str, Any]) -> str | None:
+    """The availability enum, preferring V2's value over its display text.
+
+    An unrecognized string is passed through as itself rather than being
+    flattened to "out of stock": we do not know what a new enum means, and
+    guessing the pessimistic answer hides items a shopper could have bought.
+    """
     v2 = raw.get("availabilityStatusV2")
     if isinstance(v2, dict):
         value = _string(v2.get("value")) or _string(v2.get("display"))
@@ -160,26 +167,29 @@ def _prices(raw: dict[str, Any]) -> dict[str, Any]:
     return found
 
 
-def _line_values(line: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """The (label, value) pairs in a price line, whatever it is wrapped in.
+def _line_values(line: dict[str, Any]) -> list[tuple[str, Any]]:
+    """The (label, value) pairs in a price line.
 
-    Observed shape nests the labelled values under a "price" object, but the
-    labels are also meaningful at the top level of the line. Both are read
-    rather than assuming which one this response used.
+    Observed shape: each line has a lineType and a values[] array of
+    {key, value}, where key is PRICE, WAS_PRICE, or UNIT_PRICE. The value is
+    read as either an object (price plus rendered string) or a bare string,
+    because the observation reported the key names with more confidence than
+    the leaf shape, and a display that prints a dict is worse than one that
+    prints nothing.
     """
-    pairs: list[tuple[str, dict[str, Any]]] = []
-    for container in (line, line.get("price")):
-        if not isinstance(container, dict):
-            continue
-        for key, value in container.items():
-            if isinstance(value, dict):
-                pairs.append((str(key).upper(), value))
+    values = line.get("values")
+    if not isinstance(values, list):
+        return []
+
+    pairs: list[tuple[str, Any]] = []
+    for entry in values:
+        if isinstance(entry, dict) and entry.get("key"):
+            pairs.append((str(entry["key"]).upper(), entry.get("value")))
     return pairs
 
 
-def _record_price(found: dict[str, Any], key: str, value: dict[str, Any]) -> None:
-    amount = _number(value.get("price"))
-    display = _string(value.get("priceString") or value.get("priceDisplay"))
+def _record_price(found: dict[str, Any], key: str, value: Any) -> None:
+    amount, display = _amount_and_display(value)
 
     if key in CURRENT_PRICE_KEYS and found["current"] is None:
         found["current"] = amount
@@ -187,9 +197,18 @@ def _record_price(found: dict[str, Any], key: str, value: dict[str, Any]) -> Non
     elif key in WAS_PRICE_KEYS and found["was"] is None:
         found["was"] = amount
     elif key in UNIT_PRICE_KEYS and found["unit_display"] is None:
-        # Unit price is displayed verbatim ("$0.02/fl oz"): the units matter as
+        # Unit price is displayed verbatim ("2.4 ¢/fl oz"): the units matter as
         # much as the number, and they only exist in the rendered string.
-        found["unit_display"] = display or _string(value.get("priceString"))
+        found["unit_display"] = display
+
+
+def _amount_and_display(value: Any) -> tuple[float | int | None, str | None]:
+    if isinstance(value, dict):
+        return _number(value.get("price")), _string(value.get("priceString") or value.get("priceDisplay"))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value, None
+    text = _string(value)
+    return _number(text), text
 
 
 def _fulfillment(raw: dict[str, Any]) -> dict[str, Any]:

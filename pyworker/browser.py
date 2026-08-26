@@ -277,6 +277,45 @@ class Session:
         safety.assert_navigable(url)
         return self.page.goto(url, **kwargs)
 
+    # Issues a request from inside the page, so cookies, session state, and
+    # whatever first-party instrumentation the site installs all apply exactly
+    # as they do for the real app. Reconstructing that from outside would mean
+    # synthesizing device headers, which we will not do.
+    FETCH_SCRIPT = """
+    async ([url, headers]) => {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: headers,
+        credentials: 'same-origin',
+      });
+      const body = await response.text();
+      return {
+        status: response.status,
+        url: response.url,
+        auth_status: response.headers.get('x-auth-status'),
+        body: body,
+      };
+    }
+    """
+
+    def fetch_same_origin(self, url: str, headers: dict[str, str] | None = None, timeout_ms: int = 30_000):
+        """GET a same-origin URL from inside the authenticated page.
+
+        Same-origin is enforced rather than assumed: the whole point of this
+        method is to reuse the session's own credentials, and sending those to
+        another origin is the one thing it must never do.
+        """
+        safety.assert_navigable(url)
+        if not url.startswith(f"{WALMART_ORIGIN}/"):
+            raise safety.UnsafeNavigation(f"refusing to send session credentials off-origin: {url}")
+
+        page = self.page
+        if not (page.url or "").startswith(WALMART_ORIGIN):
+            self.goto(WALMART_ORIGIN, wait_until="domcontentloaded")
+            page = self.page
+
+        return page.evaluate(self.FETCH_SCRIPT, [url, dict(headers or {})])
+
     def click(self, locator, label: str | None = None, **kwargs):
         """The only click entry point, and it fails closed.
 
