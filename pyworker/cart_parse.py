@@ -22,6 +22,9 @@ from typing import Any
 # Keys under lineItem.priceInfo, in the order a receipt reads.
 LINE_PRICE_KEYS = ("linePrice", "itemPrice", "wasPrice", "unitPrice", "savedPrice")
 
+# Cents. Money arrives as floats and 20.55 - 13.56 is not 6.99 in binary.
+CENT = 0.005
+
 
 class CartUnreadable(Exception):
     """We got something back, but it was not a cart we can trust.
@@ -172,6 +175,7 @@ def _totals(details: Any) -> dict[str, Any]:
     we derived is not the total Walmart will charge.
     """
     details = details if isinstance(details, dict) else {}
+    consumed: set[str] = set()
     wanted = {
         "subtotal": ("subTotal", "subtotal", "itemSubTotal"),
         "total": ("grandTotal", "total", "estimatedTotal"),
@@ -189,7 +193,45 @@ def _totals(details: Any) -> dict[str, Any]:
                 break
         totals[name] = amount
         totals[f"{name}_display"] = display
+        if amount is not None or display is not None:
+            consumed.update(candidates)
+    totals["unexplained"] = _unexplained(totals)
+    # Names, never values. The gap below is only answerable by someone looking
+    # at a real cart, and this tells them where to look without this tool
+    # guessing what a key it has never seen is for.
+    totals["unnamed_keys"] = sorted(key for key in details if key not in consumed)
     return totals
+
+
+def _unexplained(totals: dict[str, Any]) -> float | None:
+    """What Walmart's total holds that the rows Walmart named do not account for.
+
+    Observed live: a $13.56 subtotal against a $20.55 total, with no fee or tax
+    row in sight. Reporting those two numbers alone left $6.99 of someone's
+    money unmentioned, and a shopper cannot check a total whose parts are
+    missing.
+
+    This is a subtraction, not an explanation. It is deliberately not called a
+    fee or a tax: it could be delivery, tax, a bag charge, or a name we have
+    never parsed, and picking one would be inventing a receipt line.
+
+    savings is excluded from the arithmetic. We have not observed whether
+    subtotal is quoted before or after it, so either treatment would be a
+    guess, and a guess here silently moves the residual.
+    """
+    total = totals.get("total")
+    subtotal = totals.get("subtotal")
+    if not isinstance(total, (int, float)) or not isinstance(subtotal, (int, float)):
+        return None
+
+    named = subtotal
+    for key in ("fees", "taxes"):
+        value = totals.get(key)
+        if isinstance(value, (int, float)):
+            named += value
+
+    residual = round(total - named, 2)
+    return None if abs(residual) < CENT else residual
 
 
 def _fulfillment(node: Any) -> dict[str, Any]:

@@ -41,7 +41,22 @@ module Walmart
 
         assert_includes out.string, "Great Value Whole Milk"
         assert_includes out.string, "$6.24"
-        assert_includes out.string, "Delivery"
+      end
+
+      # Dropped from the table on request: it was the widest column and it
+      # carried the least. The parsed values are still in --json, so nothing
+      # that wants them has lost them.
+      def test_the_fulfillment_column_is_gone
+        run_cart(lines: [MILK])
+
+        refute_match(/\bhow\b/, out.string)
+        refute_match(/Delivery/, out.string)
+      end
+
+      def test_json_still_carries_what_the_table_stopped_showing
+        run_cart(lines: [MILK], json: true)
+
+        assert_equal "Delivery", JSON.parse(out.string)["lines"].first["fulfillment_label"]
       end
 
       # Walmart renders "2.5 lb" itself. Rebuilding it from the number and the
@@ -132,6 +147,70 @@ module Walmart
 
       def test_extra_arguments_are_refused
         assert_raises(UsageError) { run_cart(args: ["milk"]) }
+      end
+
+      # --- what Eric's real cart showed ------------------------------------------------
+
+      # Parsed, then thrown away by the renderer: --json carried fees and taxes
+      # while the human output showed a subtotal, a total, and no account of
+      # the difference between them.
+      def test_fees_and_taxes_are_shown_not_only_serialised
+        run_cart(lines: [MILK], totals: TOTALS.merge(
+          "fees" => 6.99, "fees_display" => "$6.99",
+          "taxes" => 1.10, "taxes_display" => "$1.10"
+        ))
+
+        assert_match(/fees\s+\$6\.99/, out.string)
+        assert_match(/taxes\s+\$1\.10/, out.string)
+      end
+
+      def test_the_rows_read_in_receipt_order
+        run_cart(lines: [MILK], totals: TOTALS.merge("fees" => 6.99, "taxes" => 1.10))
+        order = out.string.scan(/^(subtotal|savings|fees|taxes|total)\b/).flatten
+
+        assert_equal %w[subtotal savings fees taxes total], order
+      end
+
+      # Tax is charged on the surcharges above it -- the known example being
+      # the below-order-minimum fee on a cart under $35 -- so it reads after
+      # them. Printing it first implies a smaller base than was actually taxed.
+      def test_tax_is_charged_on_top_of_the_unattributed_amount
+        run_cart(lines: [MILK], totals: { "subtotal" => 13.56, "unexplained" => 6.99,
+                                          "taxes" => 1.10, "total" => 21.65 })
+        order = out.string.scan(/^(subtotal|unexplained|taxes|total)\b/).flatten
+
+        assert_equal %w[subtotal unexplained taxes total], order
+      end
+
+      # $13.56 of items against a $20.55 total, and nothing said where the rest
+      # went.
+      def test_an_unexplained_difference_is_named_as_unexplained
+        run_cart(lines: [MILK], totals: { "subtotal" => 13.56, "total" => 20.55,
+                                          "unexplained" => 6.99 })
+
+        assert_match(/unexplained\s+\$6\.99/, out.string)
+        assert_match(/not accounted for by the rows Walmart named/, err.string)
+      end
+
+      # It is a subtraction, not an explanation.
+      def test_the_difference_is_never_given_a_name_we_invented
+        run_cart(lines: [MILK], totals: { "subtotal" => 13.56, "total" => 20.55,
+                                          "unexplained" => 6.99 })
+
+        refute_match(/other charges|delivery fee|estimated tax/i, out.string + err.string)
+      end
+
+      def test_a_fully_explained_cart_says_nothing_about_a_difference
+        run_cart(lines: [MILK], totals: TOTALS)
+
+        refute_match(/unexplained/, out.string + err.string)
+      end
+
+      def test_a_credit_reads_as_a_credit
+        run_cart(lines: [MILK], totals: { "subtotal" => 20.00, "total" => 18.00,
+                                          "unexplained" => -2.0 })
+
+        assert_match(/unexplained\s+-\$2\.00/, out.string)
       end
 
       private

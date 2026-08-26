@@ -563,12 +563,82 @@
     "label": "the order-flow operation guard stops matching suffixed names",
     "file": "pyworker/safety.py",
     "from": "    return any(term in normalized for term in FORBIDDEN_OPERATIONS)",
-    "to": "    return normalized in FORBIDDEN_OPERATIONS"
+    "to": "    return normalized in FORBIDDEN_OPERATIONS",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
   },
   {
     "label": "the operation is read from the whole url including the query",
     "file": "pyworker/safety.py",
     "from": "    parts = [segment for segment in urlparse(url).path.split(\"/\") if segment]",
-    "to": "    parts = [segment for segment in url.split(\"/\") if segment]"
+    "to": "    parts = [segment for segment in url.split(\"/\") if segment]",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_safety.py"
+    ]
+  },
+  {
+    "label": "the gap between subtotal and total goes unmentioned",
+    "file": "pyworker/cart_parse.py",
+    "from": "    totals[\"unexplained\"] = _unexplained(totals)",
+    "to": "    totals[\"unexplained\"] = None",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_parse.py"
+    ]
+  },
+  {
+    "label": "float noise is reported as a discrepancy",
+    "file": "pyworker/cart_parse.py",
+    "from": "    return None if abs(residual) < CENT else residual",
+    "to": "    return residual",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_parse.py"
+    ]
+  },
+  {
+    "label": "savings is folded into the unexplained arithmetic",
+    "file": "pyworker/cart_parse.py",
+    "from": "    for key in (\"fees\", \"taxes\"):",
+    "to": "    for key in (\"fees\", \"taxes\", \"savings\"):",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_cart_parse.py"
+    ]
+  },
+  {
+    "label": "fees and taxes are dropped by the renderer again",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "      BEFORE_TAX_ROWS = %w[subtotal savings fees].freeze",
+    "to": "      BEFORE_TAX_ROWS = %w[subtotal savings].freeze"
+  },
+  {
+    "label": "tax is printed before the amount it is charged on",
+    "file": "lib/walmart/commands/cart.rb",
+    "from": "        parts << unexplained_row(totals)\n        parts << [\"taxes\", amount_of(totals, \"taxes\")]",
+    "to": "        parts << [\"taxes\", amount_of(totals, \"taxes\")]\n        parts << unexplained_row(totals)"
   }
 ]

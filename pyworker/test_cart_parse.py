@@ -259,3 +259,59 @@ def test_fulfillment_context_is_kept():
 
     assert fulfillment["intent"] == "DELIVERY"
     assert fulfillment["store_id"] == "1234"
+
+
+# --- the gap between subtotal and total --------------------------------------------
+
+
+# Observed live: $13.56 of items against a $20.55 total, with no fee or tax row
+# in sight. Printing those two numbers alone left $6.99 of someone's money
+# unmentioned.
+def test_the_gap_between_subtotal_and_total_is_reported():
+    totals = cart_parse._totals({"subTotal": 13.56, "grandTotal": 20.55})
+    assert totals["unexplained"] == 6.99
+
+
+def test_named_rows_reduce_the_gap():
+    totals = cart_parse._totals({"subTotal": 13.56, "grandTotal": 20.55, "totalFees": 5.99, "taxTotal": 1.00})
+    assert totals["unexplained"] is None
+
+
+def test_a_fully_explained_total_reports_no_gap():
+    assert cart_parse._totals({"subTotal": 10.00, "grandTotal": 10.00})["unexplained"] is None
+
+
+# Floats: 20.55 - 13.56 is not 6.99 in binary, and a residual of 1e-15 is not a
+# discrepancy worth showing anyone.
+def test_float_noise_is_not_a_discrepancy():
+    assert cart_parse._totals({"subTotal": 0.1 + 0.2, "grandTotal": 0.3})["unexplained"] is None
+
+
+def test_a_credit_is_reported_with_its_sign():
+    assert cart_parse._totals({"subTotal": 20.00, "grandTotal": 18.00})["unexplained"] == -2.0
+
+
+# savings is excluded from the arithmetic on purpose: we have not observed
+# whether subtotal is quoted before or after it, so either treatment is a guess
+# and a guess silently moves the residual.
+def test_savings_does_not_move_the_residual():
+    with_savings = cart_parse._totals({"subTotal": 13.56, "grandTotal": 20.55, "totalSavings": 4.0})
+    assert with_savings["unexplained"] == 6.99
+
+
+def test_a_total_we_cannot_read_produces_no_arithmetic():
+    assert cart_parse._totals({"subTotal": 13.56})["unexplained"] is None
+    assert cart_parse._totals({"grandTotal": 20.55})["unexplained"] is None
+    assert cart_parse._totals("not a dict")["unexplained"] is None
+
+
+# Names, never values. The gap above is only answerable by someone looking at a
+# real cart, and this says where to look without guessing what a key means.
+def test_unrecognised_price_keys_are_named():
+    totals = cart_parse._totals({"subTotal": 1.0, "grandTotal": 2.0, "belowMinimumFee": {"value": 1.0}})
+    assert totals["unnamed_keys"] == ["belowMinimumFee"]
+
+
+def test_keys_we_understood_are_not_reported_as_unnamed():
+    totals = cart_parse._totals({"subTotal": 1.0, "grandTotal": 2.0, "totalFees": 1.0})
+    assert "totalFees" not in totals["unnamed_keys"]

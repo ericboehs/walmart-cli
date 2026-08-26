@@ -17,10 +17,22 @@ module Walmart
         [:quantity, "qty", :right],
         [:line_price, "line", :right],
         [:each, "each", :right],
-        [:fulfillment, "how", :left],
         [:seller, "seller", :left],
         [:name, "item", :left]
       ].freeze
+
+      # In the order a receipt reads. fees and taxes were parsed and then
+      # dropped by the renderer, so a cart whose total included them showed a
+      # subtotal, a total, and no account of the difference -- while --json
+      # carried the rows all along. A renderer that silently discards parsed
+      # data is worse than one that never parsed it, because the gap looks
+      # like Walmart's.
+      #
+      # Tax is not in this list. It sits below the unattributed line, because
+      # tax is charged on the surcharges above it -- and the known example of
+      # such a surcharge is the below-order-minimum fee on a cart under $35.
+      # Printing tax first would imply it was computed on a smaller base.
+      BEFORE_TAX_ROWS = %w[subtotal savings fees].freeze
 
       def run(path, args)
         subcommand = path[1] || "show"
@@ -60,7 +72,6 @@ module Walmart
           quantity: line["quantity_label"] || line["quantity"],
           line_price: money(line["line_price"]),
           each: money(line["item_price"]),
-          fulfillment: line["fulfillment_label"] || line["fulfillment_type"],
           seller: line["seller_name"],
           name: line["name"]
         }
@@ -70,15 +81,35 @@ module Walmart
       # would produce a confident number that is wrong about tax and fees, and
       # a wrong total is worse than a missing one.
       def report_totals(totals)
-        parts = [
-          ["subtotal", totals["subtotal_display"] || money(totals["subtotal"])],
-          ["savings", totals["savings_display"] || money(totals["savings"])],
-          ["total", totals["total_display"] || money(totals["total"])]
-        ].select(&:last)
+        parts = BEFORE_TAX_ROWS.map { |name| [name, amount_of(totals, name)] }
+        parts << unexplained_row(totals)
+        parts << ["taxes", amount_of(totals, "taxes")]
+        parts << ["total", amount_of(totals, "total")]
+        parts = parts.compact.select(&:last)
         return if parts.empty?
 
         fmt.say("")
-        parts.each { |label, value| fmt.say(format("%-9<label>s %<value>s", label: label, value: value)) }
+        parts.each { |label, value| fmt.say(format("%-11<label>s %<value>s", label: label, value: value)) }
+        note_unexplained(totals)
+      end
+
+      def amount_of(totals, name) = totals["#{name}_display"] || money(totals[name])
+
+      # Deliberately not called a fee, a tax, or "other charges". It is a
+      # subtraction, and naming it would be inventing a receipt line we have
+      # never seen Walmart send.
+      def unexplained_row(totals)
+        value = totals["unexplained"]
+        return nil if value.nil?
+
+        ["unexplained", money(value)]
+      end
+
+      def note_unexplained(totals)
+        return if totals["unexplained"].nil?
+
+        fmt.hint("#{money(totals["unexplained"])} of the total is not accounted for by the rows " \
+                 "Walmart named. This tool will not guess what it covers.")
       end
 
       # Walmart's own complaints about the cart. A sold-out line still renders,
@@ -90,6 +121,8 @@ module Walmart
 
       def money(value)
         return nil if value.nil?
+        # A credit reads as -$2.00, never as $-2.00.
+        return format("-$%.2f", value.abs) if value.negative?
 
         format("$%.2f", value)
       end
