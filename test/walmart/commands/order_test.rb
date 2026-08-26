@@ -312,6 +312,41 @@ module Walmart
         assert_equal "2025-01-01", state["before"]
       end
 
+      # The exit code became state-aware while the words stayed reason-only, so
+      # the exact states SyncNote was added to catch exited 3 in silence -- and
+      # the next `order list` called the archive incomplete, putting immediate
+      # and persisted prose back in the disagreement we had just fixed.
+      # --all is the only ordinary invocation with no lower bound, so a cutoff
+      # reported against it cannot mean what cutoff means.
+      def test_an_incoherent_stop_is_explained_not_only_penalised
+        code = run_sync(args: ["--all"], stopped: { "reason" => "cutoff" })
+
+        assert_equal ExitCodes::UNVERIFIED, code
+        assert_match(/window this cannot describe/, err.string)
+        assert_match(/unverified/, err.string)
+      end
+
+      # It must not pretend to know which half is wrong.
+      def test_the_contradiction_is_named_without_a_guessed_diagnosis
+        run_sync(args: ["--all"], stopped: { "reason" => "cutoff" })
+
+        refute_match(/stopped early/, err.string)
+        assert_match(/"cutoff"/, err.string)
+      end
+
+      def test_a_real_cutoff_inside_a_window_still_says_nothing
+        code = run_sync(args: %w[--year 2024], stopped: { "reason" => "cutoff" })
+
+        assert_equal ExitCodes::OK, code
+        refute_match(/window this cannot describe/, err.string)
+      end
+
+      def test_a_truncated_stop_still_gets_its_own_words
+        run_sync(args: %w[--year 2024], stopped: { "reason" => "page_limit" })
+
+        assert_match(/page ceiling/, err.string)
+      end
+
       private
 
       def sync_worker(orders, stopped: { "reason" => "complete" }, seen: nil)

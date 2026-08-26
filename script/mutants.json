@@ -126,8 +126,8 @@
   {
     "label": "every stop reports success",
     "file": "lib/walmart/commands/order.rb",
-    "from": "      note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED",
-    "to": "      ExitCodes::OK"
+    "from": "      def exit_code_for(note) = note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED",
+    "to": "      def exit_code_for(note) = ExitCodes::OK"
   },
   {
     "label": "ruby forgets a stop reason the worker can raise",
@@ -534,5 +534,29 @@
     "file": "lib/walmart/commands/order_read.rb",
     "from": "        incompatible_notice\n",
     "to": ""
+  },
+  {
+    "label": "the words go back to trusting the spelling of the reason",
+    "file": "lib/walmart/commands/order.rb",
+    "from": "        return if note.settled?\n        return explain_incoherent(note) unless note.coherent?\n",
+    "to": "        return if SyncNote::SETTLED_REASONS.include?(note.reason)\n"
+  },
+  {
+    "label": "a malformed sync note is rounded to never-synced",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "      return new(reason: INVALID) unless state.is_a?(Hash)",
+    "to": "      return new(reason: nil) unless state.is_a?(Hash)"
+  },
+  {
+    "label": "a malformed sync note is treated as a coherent stop",
+    "file": "lib/walmart/sync_note.rb",
+    "from": "      return false if invalid?\n",
+    "to": ""
+  },
+  {
+    "label": "a non-hash sync value crashes the archive again",
+    "file": "lib/walmart/archive.rb",
+    "from": "      raw.is_a?(Hash) ? raw : {}",
+    "to": "      raw || {}"
   }
 ]

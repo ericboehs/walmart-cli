@@ -74,6 +74,7 @@ module Walmart
     # twice.
     def message
       return never_synced_message unless archive.synced?
+      return invalid_note_message if archive.note.invalid?
       # Any settled run that was given a window, not only a cutoff. A bounded
       # walk that reached the end of history is just as scoped, and it said
       # nothing at all.
@@ -87,6 +88,14 @@ module Walmart
     end
 
     private
+
+    # Corruption, not absence. The archive may well hold records; what is lost
+    # is the account of how much of history they represent.
+    def invalid_note_message
+      "the record of the last sync is unreadable, so how much history this archive covers " \
+        "is unknown. The orders already stored are unaffected. " \
+        "Run `walmart order sync` to write a fresh one."
+    end
 
     # A cutoff is not a warning. The walk did what it was asked and stopped at
     # the edge of the requested window, so the sentence states the scope and

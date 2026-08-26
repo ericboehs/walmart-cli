@@ -726,6 +726,43 @@ module Walmart
       refute_predicate store, :windowed?
     end
 
+    # A damaged note crashed every archive read -- before the next sync could
+    # replace it -- so the archive was unusable until someone hand-edited JSON.
+    def test_a_malformed_sync_note_does_not_crash_a_read
+      ["[]", "7", '"wrong"', "true"].each do |raw|
+        store = archive_with_raw_sync(raw)
+
+        assert_predicate store, :synced?, "#{raw}: something was recorded"
+        assert_predicate store, :incomplete?, "#{raw}: and we cannot say it settled"
+        refute_predicate store, :complete?
+        assert_match(/record of the last sync is unreadable/, Coverage.new(store).message)
+      end
+    end
+
+    def test_a_malformed_note_is_not_reported_as_never_synced
+      store = archive_with_raw_sync("[]")
+
+      refute_match(/nothing has been synced yet/, Coverage.new(store).message)
+    end
+
+    # The records are fine; only the account of them is lost.
+    def test_a_malformed_note_does_not_hide_the_orders
+      FileUtils.mkdir_p(File.dirname(paths.index_file))
+      archive.write(ORDER)
+      raw = JSON.parse(File.read(paths.index_file))
+      File.write(paths.index_file, JSON.dump(raw.merge("sync" => 7)))
+      store = Archive.new(paths: paths)
+
+      assert_equal 1, store.entries.length
+      assert_equal ["200012345678901"], store.readable_ids
+    end
+
+    def archive_with_raw_sync(raw)
+      FileUtils.mkdir_p(File.dirname(paths.index_file))
+      File.write(paths.index_file, %({"version":1,"orders":{},"sync":#{raw}}))
+      Archive.new(paths: paths)
+    end
+
     def test_sync_state_survives_a_restart
       archive.note_sync(reason: "rate_limited")
 

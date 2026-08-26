@@ -167,16 +167,22 @@ module Walmart
       end
 
       def report(stored, seen, stopped, params)
-        reason = stopped["reason"].to_s
+        # One note, both consumers. The exit code was already state-aware while
+        # the words were still reason-only, so the impossible states SyncNote
+        # exists to catch exited 3 in silence -- and the next `order list`
+        # called the archive incomplete, putting immediate and persisted prose
+        # back in the disagreement we had just fixed for status.
+        note = SyncNote.new(reason: stopped["reason"].to_s,
+                            since: params["since"], before: params["before"])
 
         if json?
           fmt.emit_json("archived" => stored, "seen" => seen, "stopped" => stopped)
-          return exit_code_for(reason, params)
+          return exit_code_for(note)
         end
 
         fmt.say(summary(stored, seen))
-        explain(reason)
-        exit_code_for(reason, params)
+        explain(note)
+        exit_code_for(note)
       end
 
       def summary(stored, seen)
@@ -191,9 +197,13 @@ module Walmart
       # An interrupted walk has to say so in words, not only in an exit code.
       # Someone reading a terminal is the last line of defence against an
       # archive that thinks it is whole.
-      def explain(reason)
-        case reason
-        when *SyncNote::SETTLED_REASONS then nil
+      def explain(note)
+        # Silent only when the run actually settled, never merely because the
+        # reason has the spelling of one that can.
+        return if note.settled?
+        return explain_incoherent(note) unless note.coherent?
+
+        case note.reason
         when "challenge_detected"
           fmt.hint("stopped early: Walmart asked for a human. " \
                    "Run `walmart login`, clear it, then sync again.")
@@ -208,7 +218,7 @@ module Walmart
           fmt.hint("stopped early at the page ceiling (#{Order::PAGE_CEILING} pages); " \
                    "history older than this cannot be reached by re-running.")
         else
-          fmt.hint("stopped early (#{reason}); history before this point was not read. " \
+          fmt.hint("stopped early (#{note.reason}); history before this point was not read. " \
                    "Run sync again to re-read from the newest page.")
         end
       end
@@ -220,9 +230,15 @@ module Walmart
       # read cannot disagree about whether the run succeeded. They did once: a
       # sync exited 0 and the following `order list` called that same run a
       # truncation.
-      def exit_code_for(reason, params)
-        note = SyncNote.new(reason: reason, since: params["since"], before: params["before"])
-        note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED
+      def exit_code_for(note) = note.settled? ? ExitCodes::OK : ExitCodes::UNVERIFIED
+
+      # Names the contradiction without guessing which half is wrong. We cannot
+      # tell whether the reason or the window is the mistaken one, and claiming
+      # either would be inventing a diagnosis.
+      def explain_incoherent(note)
+        fmt.warn("the worker reported #{note.reason.inspect} for a window this cannot describe " \
+                 "(since #{note.since.inspect}, before #{note.before.inspect})")
+        fmt.hint("treating the sync as unverified; the archive will report itself incomplete")
       end
     end
   end

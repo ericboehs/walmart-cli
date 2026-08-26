@@ -193,11 +193,18 @@ module Walmart
       index["sync"]
     end
 
-    def sync_state = index["sync"] || {}
+    # Always a Hash, so every field lookup below is safe. Whether the stored
+    # value *was* a Hash is a separate question, asked through note.
+    def sync_state
+      raw = index["sync"]
+      raw.is_a?(Hash) ? raw : {}
+    end
 
     # The stop note as a value object. Settlement is a property of the whole
     # note, not of the reason alone -- see SyncNote.
-    def note = SyncNote.from(sync_state)
+    # Built from the raw value, not from sync_state, so a malformed note is
+    # visible rather than flattened into an empty Hash.
+    def note = SyncNote.from(index["sync"])
 
     # Whether a walk has ever run against this archive.
     #
@@ -205,7 +212,7 @@ module Walmart
     # is a third state and the most misleading one to round off. An archive
     # that has never synced is not complete, and it is not incomplete either --
     # there is nothing to fill in.
-    def synced? = !sync_state.empty?
+    def synced? = note.recorded?
 
     # True when the last walk ended for a reason that leaves history unseen.
     #

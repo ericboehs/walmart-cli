@@ -22,6 +22,12 @@ module Walmart
     COMPLETE = "complete"
     CUTOFF = "cutoff"
 
+    # The note on disk was not a record at all. Kept as its own state rather
+    # than rounded to never-synced: corruption is not absence, and telling
+    # someone nothing has been synced when the note is damaged sends them to
+    # create something they already have.
+    INVALID = "invalid_sync_note"
+
     # Reasons that can settle, given a coherent note. Membership is necessary
     # and not sufficient; ask settled?, not this.
     SETTLED_REASONS = [COMPLETE, CUTOFF].freeze
@@ -34,10 +40,21 @@ module Walmart
       @before = presence(before)
     end
 
+    # Total over any input. index.json is a file on disk and "sync" can be an
+    # array, a number or a string; each of those reached a different crash or,
+    # worse, read as never-synced.
     def self.from(state)
-      state ||= {}
+      return new(reason: nil) if state.nil?
+      return new(reason: INVALID) unless state.is_a?(Hash)
+
       new(reason: state["reason"], since: state["since"], before: state["before"])
     end
+
+    # A sync has run and left a note. A malformed note counts: something
+    # happened, and we cannot say what.
+    def recorded? = !reason.empty?
+
+    def invalid? = reason == INVALID
 
     # Asked for part of history rather than all of it.
     def windowed? = !(since.nil? && before.nil?)
@@ -48,6 +65,7 @@ module Walmart
     # an empty or inverted interval cannot contain an order; and a cutoff needs
     # something to have been cut off at.
     def coherent?
+      return false if invalid?
       return false if before && since.nil?
       return false if before && since && before <= since
       return false if reason == CUTOFF && since.nil?

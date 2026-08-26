@@ -80,5 +80,48 @@ module Walmart
     def test_a_missing_state_is_not_settled
       refute_predicate SyncNote.from(nil), :settled?
     end
+
+    # --- any value at all -----------------------------------------------------------
+
+    # index.json is a file on disk and "sync" can hold anything. An Integer
+    # crashed Archive#synced?, an Array crashed the field lookup, and a String
+    # rendered "stopped early ()". Total over every input, and corruption is
+    # kept distinct from absence rather than rounded to it.
+    SICK_STATES = {
+      "an array" => [],
+      "a populated array" => [{ "reason" => "complete" }],
+      "an integer" => 7,
+      "a string" => "wrong",
+      "a boolean" => true
+    }.freeze
+
+    SICK_STATES.each do |name, value|
+      define_method(:"test_#{name.tr(" ", "_")}_is_an_invalid_note") do
+        built = SyncNote.from(value)
+
+        assert_predicate built, :invalid?
+        assert_predicate built, :recorded?, "corruption is not absence"
+        refute_predicate built, :coherent?
+        refute_predicate built, :settled?
+        refute_predicate built, :all_history?
+      end
+    end
+
+    def test_no_note_at_all_is_absence_not_corruption
+      [nil, {}].each do |value|
+        built = SyncNote.from(value)
+
+        refute_predicate built, :recorded?
+        refute_predicate built, :invalid?
+      end
+    end
+
+    def test_a_real_note_is_neither
+      built = SyncNote.from("reason" => "complete")
+
+      assert_predicate built, :recorded?
+      refute_predicate built, :invalid?
+      assert_predicate built, :settled?
+    end
   end
 end

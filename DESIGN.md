@@ -189,6 +189,20 @@ contradiction this project has already shipped once.
   would otherwise be waved through. Not settled means `UNVERIFIED`, which is
   the honest answer when the note contradicts itself.
 
+`SyncNote.from` is total over any input. `index.json` is a file on disk and
+`sync` can hold an array, a number or a string; each of those crashed a
+different reader or, worse, read as never-synced. A malformed note is its own
+state (`invalid_sync_note`): recorded, incoherent, never settled. Corruption is
+not absence — telling someone nothing has been synced when the note is damaged
+sends them to create something they already have, and the records themselves are
+untouched.
+
+One note is built per run and answers for both the exit code and the words. The
+status went state-aware first and the prose stayed reason-only, so the exact
+contradictions `SyncNote` exists to catch exited 3 in silence. An incoherent
+note is named without a guessed diagnosis: we cannot tell whether the reason or
+the window is the mistaken half, and claiming either would be inventing one.
+
 ### Integrity is reported separately from coverage
 
 How much history was asked for and how much of what we hold can be produced are
