@@ -26,7 +26,7 @@ module Walmart
       def login(args)
         _positional, flags = parse_flags(args, boolean: %w[manual force], valued: %w[wait])
         manual = flags[:manual] == true
-        wait = positive_integer_flag(flags, :wait, default: DEFAULT_WAIT_SECONDS)
+        wait = positive_integer_flag(flags, :wait, unit: "seconds", default: DEFAULT_WAIT_SECONDS)
 
         credentials = manual ? nil : secrets.credentials_payload
         announce(manual, credentials)

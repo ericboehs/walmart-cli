@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of thirteen defects
+The layout of the suite is not arbitrary. It is the residue of sixteen defects
 found in two days, eleven of which were sitting inside checks that were passing
 at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -24,6 +24,9 @@ Each of these was written deliberately, read fine, and passed:
 | the redaction tests | they pinned the *mechanism* — depth, lists, spelling — and nothing pinned the *membership*, so deleting `paymentMethods` from the denylist left the whole suite green while card details survived into the archive |
 | smoke's only stopped-sync case | it used the reason `page_changed`, which no worker can emit, so the one end-to-end stop test exercised the catch-all branch and said nothing about `page_limit` or `no_next_page` — the two most likely real stops |
 | `SETTLED`, the list deciding whether a sync reports success | nothing named its contents, so adding a real stop reason to it made a truncated sync exit 0 with all 405 checks green |
+| `order list` on an empty archive | it assumed empty meant never-synced, so after a sync Walmart blocked before it read anything, the tool said "nothing is archived yet — run sync first". Sync had run; re-running unattended is what drew the block |
+| the shared `positive_integer_flag` message | it hardcoded "seconds", true of its only caller when written and wrong for the four that followed, so `order list --limit 0` asked for a whole number of seconds. No test asserted any wording |
+| the first draft of the per-command help table | hand-written from plausibility rather than from `parse_flags`: it invented two flags that do not exist and omitted five that do |
 | the first draft of the page-ceiling test | it asked for 10,000 pages and got 200, which is equally satisfied by ignoring the parameter — which is what the code did, because the test passed the wrong argument shape |
 
 The `item` and `cart show` one shipped, in two commands, on every JSON
@@ -139,6 +142,11 @@ set; `rake mutants` runs it.
 - **Any ordering claim needs at least three elements with deliberately
   adversarial keys.** Two cannot distinguish a key sort from a reversal, and
   correlated keys cannot distinguish one key from another.
+- **Documentation is code that cannot fail, so give it a parity test.** The help
+  table was written from what the flags plausibly were, and it both invented
+  flags and omitted them — a flag the tool documents and then rejects is worse
+  than an undocumented one. `test/walmart/help_test.rb` compares the table
+  against what `parse_flags` accepts, per file, in both directions.
 - **A name is a claim; the mechanism under it is a separate fact.** `MAX_PAGES`
   said ceiling and the code said default — `_bounded(request_value, MAX_PAGES)`
   honoured any number the caller named. Both read as agreeing until you ask who

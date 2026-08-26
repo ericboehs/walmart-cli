@@ -11,7 +11,41 @@ module Walmart
       class Probe < Base
         def parse(args, **kwargs) = parse_flags(args, **kwargs)
         def ask(question) = confirm!(question)
-        def positive_integer(flags, default:) = positive_integer_flag(flags, :wait, default: default)
+
+        def positive_integer(flags, default:, unit: "seconds")
+          positive_integer_flag(flags, :wait, unit: unit, default: default)
+        end
+      end
+
+      # The message this raises had "seconds" hardcoded, which was true of the
+      # one caller that existed when it was written and wrong for the four that
+      # came later: `walmart order list --limit 0` explained that --limit needed
+      # a whole number of seconds. No test asserted any wording, so nothing was
+      # ever going to notice. These do.
+      def test_the_error_names_the_unit_the_caller_asked_for
+        error = assert_raises(UsageError) do
+          probe.positive_integer({ wait: "0" }, unit: "orders", default: 5)
+        end
+
+        assert_includes error.message, "positive whole number of orders"
+        refute_includes error.message, "seconds"
+      end
+
+      def test_the_error_quotes_what_the_user_actually_typed
+        error = assert_raises(UsageError) do
+          probe.positive_integer({ wait: "abc" }, unit: "pages", default: 1)
+        end
+
+        assert_includes error.message, "--wait"
+        assert_includes error.message, '"abc"'
+      end
+
+      # A default unit would let the next caller inherit someone else's, which
+      # is exactly how this happened the first time.
+      def test_a_caller_must_state_its_unit
+        assert_raises(ArgumentError) do
+          probe.send(:positive_integer_flag, { wait: "5" }, :wait, default: 1)
+        end
       end
 
       def test_positional_and_valued_flags

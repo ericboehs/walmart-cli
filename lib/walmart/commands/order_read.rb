@@ -77,7 +77,7 @@ module Walmart
         entries.select { |entry| entry["date"].to_s.start_with?(year.to_s) }
       end
 
-      def limit(flags) = positive_integer_flag(flags, :limit, default: DEFAULT_LIMIT)
+      def limit(flags) = positive_integer_flag(flags, :limit, unit: "orders", default: DEFAULT_LIMIT)
 
       def list_row(entry)
         {
@@ -260,15 +260,23 @@ module Walmart
       # document: a consumer piping stdout to a parser gets a parse error from
       # zero bytes, and the exit code says success, so the failure surfaces
       # somewhere the script author never looked.
+      #
+      # "Empty" and "never synced" are not the same state, and this branch used
+      # to treat them as one. A sync that Walmart blocked before it read a
+      # single order leaves an archive with no entries and a stop note, and the
+      # advice for that is not "run sync first" -- it is whatever cleared the
+      # thing that stopped it. Observed, not imagined: an accidental live run
+      # left exactly this state, and the tool said "nothing is archived yet".
       def empty(what)
         return emit_record([]) if json?
 
-        if archive.entries.empty?
+        if archive.synced?
+          fmt.empty_result(what: what, where: "the archive",
+                           reason: "the last sync did not read any orders")
+          coverage_notice
+        else
           fmt.empty_result(what: what, where: "the archive", reason: "nothing is archived yet")
           fmt.hint("run `walmart order sync` first")
-        else
-          fmt.empty_result(what: what, where: "the archive")
-          coverage_notice
         end
         ExitCodes::OK
       end

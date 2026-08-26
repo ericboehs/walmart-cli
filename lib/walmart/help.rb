@@ -13,7 +13,77 @@ module Walmart
   # is lexical, so a bare COMMANDS here resolves to Walmart::Help::COMMANDS and
   # fails at runtime rather than at load.
   module Help
+    # Per-command flags, for `walmart order sync --help`.
+    #
+    # Written here rather than in each command because help is a wording
+    # concern and this is where the wording lives -- and because a table has a
+    # completeness test, while a method per command has nothing that notices
+    # the one nobody wrote. `order sync` is the entry that motivated it: --year,
+    # --all and --full were documented in the README and in a comment, and the
+    # tool itself would not say them.
+    COMMAND_FLAGS = {
+      %w[order sync] => [
+        ["--year YYYY", "sync one calendar year (2000-2100)"],
+        ["--all", "sync everything Walmart still shows, not the default two years"],
+        ["--full", "re-read and rewrite orders already archived"]
+      ],
+      %w[order list] => [
+        ["--limit N", "show at most N orders"],
+        ["--year YYYY", "only orders from one calendar year"],
+        ["--all", "no limit"]
+      ],
+      %w[order show] => [["<order-id>", "the id printed by `walmart order list`"]],
+      %w[order search] => [
+        ["<text>", "match item names in archived orders"],
+        ["--limit N", "show at most N orders"],
+        ["--all", "no limit"]
+      ],
+      %w[search] => [
+        ["<text>", "what to search Walmart's catalog for"],
+        ["--limit N", "show at most N results"],
+        ["--page N", "results page to read"],
+        ["--marketplace", "include marketplace sellers, not only Walmart's own"]
+      ],
+      %w[item] => [["<id-or-url>", "a usItemId or a walmart.com/ip/... URL"]],
+      %w[login] => [
+        ["--wait N", "seconds to wait for the sign-in to complete"],
+        ["--manual", "sign in by hand rather than filling stored credentials"],
+        ["--force", "sign in again even if a session already looks valid"]
+      ],
+      %w[logout] => [],
+      %w[config show] => [],
+      %w[config path] => [],
+      %w[config init] => [],
+      %w[cart show] => [],
+      %w[doctor] => []
+    }.freeze
+
     private
+
+    def print_command_help(words, code)
+      path = help_topic(words)
+      return print_help(code) unless path
+
+      return print_command_help_json(path, code) if json?
+
+      summary = CLI::COMMANDS.dig(path, 1)
+      flags = COMMAND_FLAGS.fetch(path)
+      @stdout.puts("walmart #{path.join(" ")} - #{summary}\n\n")
+      @stdout.puts(flags.empty? ? "  no command flags\n\n" : "#{flag_lines(flags)}\n\n")
+      @stdout.puts("Global flags are listed by `walmart help`.")
+      code
+    end
+
+    def print_command_help_json(path, code)
+      context(@options).formatter.emit_json(
+        "command" => path.join(" "),
+        "summary" => CLI::COMMANDS.dig(path, 1),
+        "flags" => COMMAND_FLAGS.fetch(path).map do |flag, description|
+          { "flag" => flag, "summary" => description }
+        end
+      )
+      code
+    end
 
     def print_help(code)
       return print_help_json(code) if json?
@@ -57,6 +127,13 @@ module Walmart
 
     def command_doc(path, summary)
       { "command" => path.join(" "), "summary" => summary }
+    end
+
+    # command_lines takes paths (arrays); these are already strings, and
+    # reusing it turned `order sync --help` into an internal error.
+    def flag_lines(pairs)
+      width = pairs.map { |flag, _| flag.length }.max.to_i
+      pairs.map { |flag, description| "  #{flag.ljust(width)}  #{description}" }.join("\n")
     end
 
     def command_lines(pairs)

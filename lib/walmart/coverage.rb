@@ -48,11 +48,28 @@ module Walmart
 
       state = archive.sync_state
       window = state["oldest_date"] ? " (nothing older than #{day(state["oldest_date"])})" : ""
-      "the archive is incomplete#{window}: the last sync stopped early (#{state["reason"]}). " \
-        "Run `walmart order sync` to fill it in."
+      "the archive is incomplete#{window}: the last sync stopped early " \
+        "(#{state["reason"]}). #{advice_for(state["reason"])}"
     end
 
     private
+
+    # What to do next depends on what stopped the walk, and for two reasons the
+    # generic "run sync again" is actively wrong. A challenge is cleared by a
+    # human in a browser, and running sync again unattended is the traffic
+    # pattern that drew it. Throttling wants a wait, not a retry -- this tool
+    # never retries a block automatically and should not suggest a person do it
+    # immediately either.
+    def advice_for(reason)
+      case reason
+      when "challenge_detected"
+        "Walmart asked for a human: run `walmart login`, clear it, then sync again."
+      when "rate_limited"
+        "Walmart is throttling this session; wait a few minutes, then sync again."
+      else
+        "Run `walmart order sync` to fill it in."
+      end
+    end
 
     # Records can exist without a sync note -- a rebuilt index after a corrupt
     # one, for instance -- so this is not covered by the empty-archive case.

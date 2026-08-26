@@ -44,8 +44,8 @@ module Walmart
           "search",
           params: {
             "query" => query,
-            "page" => positive_integer_flag(flags, :page, default: 1),
-            "limit" => positive_integer_flag(flags, :limit, default: DEFAULT_LIMIT)
+            "page" => positive_integer_flag(flags, :page, unit: "pages", default: 1),
+            "limit" => positive_integer_flag(flags, :limit, unit: "results", default: DEFAULT_LIMIT)
           }
         )
       end

@@ -84,6 +84,9 @@ module Walmart
       options, words = parse_globals(@argv)
       @options = options
 
+      # `order sync --help` used to print the global list, so --year, --all and
+      # --full existed in the README and nowhere the tool would tell you about.
+      return print_command_help(words, ExitCodes::OK) if help?(words) && command_help?(words)
       return print_help(ExitCodes::OK) if words.empty? || help?(words)
       return print_version(options) if words.first == "version"
 
@@ -157,6 +160,17 @@ module Walmart
 
     def help?(words)
       words.first == "help" || words.include?("--help") || words.include?("-h")
+    end
+
+    # True when the words name a command we have per-command help for, so
+    # `walmart --help` and `walmart nonsense --help` still get the global list.
+    def command_help?(words)
+      !help_topic(words).nil?
+    end
+
+    def help_topic(words)
+      named = words.reject { |word| word.start_with?("-") || word == "help" }
+      Help::COMMAND_FLAGS.keys.find { |path| named.first(path.length) == path }
     end
 
     def match_command(words)

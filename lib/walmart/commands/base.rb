@@ -92,12 +92,18 @@ module Walmart
       # `--wait abc` used to become 0, and the user then read "no signed-in
       # session after 0s" and blamed the worker. A flag whose value we cannot
       # understand is a usage error, not a zero.
-      def positive_integer_flag(flags, name, default:)
+      #
+      # `unit` is required rather than defaulted because it was hardcoded to
+      # "seconds" here, which was true of the only caller at the time and wrong
+      # for the four that followed -- `--limit 0` on an order list explained
+      # that it needed a whole number of seconds. A default would have let the
+      # fifth caller inherit someone else's unit just as silently.
+      def positive_integer_flag(flags, name, unit:, default:)
         raw = flags[name]
         return default if raw.nil? || raw == true
 
         unless raw.to_s.match?(/\A\d+\z/) && raw.to_s.to_i.positive?
-          raise UsageError, "--#{name} needs a positive whole number of seconds (got #{raw.inspect})"
+          raise UsageError, "--#{name} needs a positive whole number of #{unit} (got #{raw.inspect})"
         end
 
         raw.to_s.to_i

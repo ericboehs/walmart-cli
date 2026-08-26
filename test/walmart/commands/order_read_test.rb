@@ -77,6 +77,36 @@ module Walmart
         assert_includes err.string, "walmart order sync"
       end
 
+      # Observed, not imagined. An accidental live run drew a challenge before
+      # reading a single order, leaving an archive with no entries and a stop
+      # note -- and the tool said "nothing is archived yet, run sync first".
+      # Sync had run. Walmart blocked it. Running it again unattended is the
+      # traffic pattern that drew the block, so that advice was worse than
+      # unhelpful. Empty and never-synced are different states.
+      def test_an_empty_archive_that_was_blocked_says_so_instead_of_run_sync_first
+        archive_orders(sync: { cursor: nil, reason: "challenge_detected", oldest_date: nil })
+        run_read(%w[order list])
+
+        assert_includes err.string, "challenge_detected"
+        assert_includes err.string, "walmart login"
+        refute_includes err.string, "run `walmart order sync` first"
+      end
+
+      def test_a_throttled_empty_archive_advises_waiting_rather_than_retrying
+        archive_orders(sync: { cursor: nil, reason: "rate_limited", oldest_date: nil })
+        run_read(%w[order list])
+
+        assert_includes err.string, "wait a few minutes"
+      end
+
+      # The ordinary stop keeps the ordinary advice.
+      def test_an_empty_archive_stopped_at_the_page_ceiling_still_says_run_sync
+        archive_orders(sync: { cursor: "abc", reason: "page_limit", oldest_date: nil })
+        run_read(%w[order list])
+
+        assert_includes err.string, "walmart order sync"
+      end
+
       # --- show ------------------------------------------------------------------
 
       def test_an_order_shows_its_items

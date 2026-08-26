@@ -77,8 +77,17 @@ module Walmart
         return nil if flags[:all] == true
 
         if flags[:year]
-          year = positive_integer_flag(flags, :year, default: 0)
-          raise UsageError, "--year expects a four-digit year" unless year.between?(2000, 2100)
+          # Not positive_integer_flag: --year takes a year, not a count of
+          # things, and "a positive whole number of a year" is what borrowing
+          # that message produced. One check, one sentence, and the sentence
+          # states the actual contract.
+          year = flags[:year]
+          raise UsageError, "--year expects a four-digit year" if year == true
+
+          unless year.to_s.match?(/\A\d{4}\z/) && year.to_i.between?(2000, 2100)
+            raise UsageError, "--year expects a four-digit year between 2000 and 2100 " \
+                              "(got #{year.inspect})"
+          end
 
           return "#{year}-01-01"
         end
