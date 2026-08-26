@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "uri"
 require "fileutils"
 require_relative "errors"
 require_relative "paths"
@@ -21,6 +22,10 @@ module Walmart
       "headless" => true,
       # Preferred browser channel: "chrome", "chromium", or nil to autodetect.
       "browser_channel" => nil,
+      # When set, attach to a Chrome the user is already running and signed into
+      # rather than launching one (DESIGN.md: be a real browser, not a fake
+      # human). Loopback only -- see assert_cdp_url.
+      "cdp_url" => nil,
       # Short read cache for search/item/my-items. Cart reads are never cached.
       "cache_ttl_seconds" => 300,
       # Rolling window for `order sync` when neither --year nor --all is given.
@@ -37,6 +42,8 @@ module Walmart
 
     COLOR_MODES = %w[auto always never].freeze
     BROWSER_CHANNELS = [nil, "chrome", "chromium", "msedge"].freeze
+    # Hosts a CDP endpoint may live on. Parsed, never substring-matched.
+    LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1", "[::1]"].freeze
 
     attr_reader :paths
 
@@ -133,11 +140,35 @@ module Walmart
       assert_positive_integer("worker_timeout_seconds")
       assert_member("color", COLOR_MODES)
       assert_member("browser_channel", BROWSER_CHANNELS)
+      assert_cdp_url
       assert_store_shape
       self
     end
 
     private
+
+    # A CDP endpoint is unauthenticated: anything that can reach it can drive
+    # the browser and read its cookies. Refusing a non-loopback host here is
+    # what stops a config edit from exposing a signed-in browser to the network.
+    def assert_cdp_url
+      value = data["cdp_url"]
+      return if value.nil? || value == ""
+
+      uri = begin
+        URI.parse(value.to_s)
+      rescue URI::InvalidURIError
+        nil
+      end
+      unless uri && %w[http https].include?(uri.scheme) && uri.host
+        raise ConfigError, "cdp_url must be an http(s) URL, got #{value.inspect}"
+      end
+      return if LOOPBACK_HOSTS.include?(uri.host)
+
+      raise ConfigError,
+            "cdp_url must point at loopback (#{LOOPBACK_HOSTS.join(", ")}), got #{uri.host.inspect}: " \
+            "a remote debugging port is unauthenticated, so exposing it off-host " \
+            "hands the browser session to anyone who can reach it"
+    end
 
     def assert_boolean(key)
       value = data[key]

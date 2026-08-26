@@ -151,6 +151,27 @@ tool still never retries a block automatically.
 The account holder carries the risk that automated access breaches walmart.com's
 Terms of Use, and that the penalty lands on the account he buys groceries with.
 
+### Attaching to a browser you signed into yourself
+
+The approach that needs no forgery: run a Chrome, sign in as yourself, and let
+the CLI use that session.
+
+```sh
+walmart browser start                        # a Chrome with a debugging port
+# sign in to Walmart in that window, by hand, and clear any press-and-hold
+walmart config set cdp_url http://127.0.0.1:9222
+walmart doctor
+```
+
+`browser start` uses a **separate profile**, not your everyday one. Chrome 136+
+refuses a debugging port on the default profile, and for good reason: the port
+is unauthenticated, so anything that can reach it can drive the browser and read
+its cookies. Keeping this profile to one site keeps that blast radius to one
+site. `cdp_url` is rejected unless it points at loopback.
+
+While attached, the CLI opens its own tab and closes only that tab. It never
+closes your browser and never navigates a tab you were using.
+
 There is no plaintext-config fallback, by design.
 
 **After a challenge, do not re-run the command.** Clear it with `walmart login`

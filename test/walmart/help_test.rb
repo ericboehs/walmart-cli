@@ -9,6 +9,14 @@ module Walmart
   # tool would tell you about. Flags a user cannot discover from the tool are
   # flags that do not exist for most users.
   class HelpTest < Minitest::Test
+    # %w and %i both, because a file written with %i[port] scanned as "declares
+    # no flags" and was then compared against a help table that documented one.
+    # The mismatch happened to fail loudly; had the command been undocumented
+    # too, two empty lists would have agreed and the file would have been
+    # unchecked. A scanner that finds nothing must not be read as a file with
+    # nothing in it, which is why the scanner's reach is asserted separately.
+    FLAG_LIST = /(?:valued|boolean):\s*%[wi]\[([^\]]*)\]/
+
     def test_command_help_lists_the_flags_that_command_takes
       out, = run_cli(%w[order sync --help])
 
@@ -122,6 +130,23 @@ module Walmart
       end
     end
 
+    # The scanner above is a regex over source. If it stops matching -- a new
+    # literal form, a refactor onto another helper -- every file it can no
+    # longer read looks flagless, and looking flagless is indistinguishable from
+    # being flagless. So: every file that calls parse_flags with a flag list at
+    # all must yield at least one flag to the scanner.
+    def test_the_flag_scanner_can_still_read_every_file_it_audits
+      unreadable = by_file.keys.reject do |file|
+        source = File.read(File.expand_path("../../#{file}", __dir__))
+        next true unless source.match?(/(?:valued|boolean):/)
+
+        declared_flags(file).any?
+      end
+
+      assert_empty unreadable, "the flag scanner reads no flags from these files, " \
+                               "so their help text is being compared against nothing"
+    end
+
     private
 
     # Command paths grouped by the file implementing them.
@@ -134,7 +159,7 @@ module Walmart
 
     def declared_flags(file)
       source = File.read(File.expand_path("../../#{file}", __dir__))
-      source.scan(/(?:valued|boolean):\s*%w\[([^\]]*)\]/).flatten.flat_map(&:split).uniq
+      source.scan(FLAG_LIST).flatten.flat_map(&:split).uniq
     end
 
     def readme = File.read(File.expand_path("../../README.md", __dir__))

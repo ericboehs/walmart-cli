@@ -52,16 +52,37 @@ module Walmart
       %w[config show] => [],
       %w[config path] => [],
       %w[config init] => [],
+      %w[config set] => %w[headless true],
+      %w[config unset] => %w[headless],
+      # Reads a loopback port that is not listening, which is the honest state
+      # on a machine with no browser started. `start` is deliberately absent:
+      # covering it would mean spawning a real Chrome from the suite.
+      %w[browser status] => [],
       %w[logout] => [],
       %w[version] => []
     }.freeze
 
+    # Exercising this would spawn a real detached Chrome from the test suite.
+    # Excluded on purpose, and the exclusion is checked below so it cannot
+    # quietly become a place to park a command nobody wanted to cover.
+    UNCOVERABLE = { %w[browser start] => "spawns a real browser process" }.freeze
+
     def test_every_registered_command_is_covered_here
       registered = CLI::COMMANDS.keys.map { |path| path }
-      missing = registered - INVOCATIONS.keys
+      missing = registered - INVOCATIONS.keys - UNCOVERABLE.keys
 
       assert_empty missing, "add an invocation for #{missing.inspect}, or this proves nothing " \
                             "about the command someone just added"
+    end
+
+    # An exemption that outlives the command it exempts is a hole with a comment
+    # over it.
+    def test_every_exemption_still_names_a_real_command_and_says_why
+      UNCOVERABLE.each do |path, reason|
+        assert CLI::COMMANDS.key?(path), "#{path.join(" ")} is exempted but no longer registered"
+        refute_empty reason.to_s
+        refute INVOCATIONS.key?(path), "#{path.join(" ")} is both covered and exempted"
+      end
     end
 
     def test_no_command_returns_something_kernel_exit_cannot_take

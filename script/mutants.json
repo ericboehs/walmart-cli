@@ -170,5 +170,51 @@
     "file": "lib/walmart/secrets.rb",
     "from": "        if value.empty?\n          @empty_accounts |= [account.to_s]\n          return nil\n        end\n\n        Secret.new(value)",
     "to": "        Secret.new(value)"
+  },
+  {
+    "label": "an attached session closes the user's whole browser context",
+    "file": "pyworker/browser.py",
+    "from": "        if not self._owns_context:\n            if self._page is not None:\n                self._page.close()\n            return\n\n        self._context.close()",
+    "to": "        self._context.close()",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "an attached session drives whatever tab the user had open",
+    "file": "pyworker/browser.py",
+    "from": "    page = context.new_page()\n    session = Session(context, options, page=page, owns_context=False)",
+    "to": "    page = context.pages[0] if context.pages else context.new_page()\n    session = Session(context, options, page=page, owns_context=False)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "a cdp_url may point anywhere, not only at loopback",
+    "file": "lib/walmart/config.rb",
+    "from": "      return if LOOPBACK_HOSTS.include?(uri.host)",
+    "to": "      return if LOOPBACK_HOSTS.any? { |host| uri.to_s.include?(host) }"
+  },
+  {
+    "label": "config set writes a boolean as the string it arrived as",
+    "file": "lib/walmart/commands/config_cmd.rb",
+    "from": "        when true, false then coerce_boolean(key, raw)",
+    "to": "        when true, false then raw"
+  },
+  {
+    "label": "the CLI suggests a command that was never declared",
+    "file": "lib/walmart/commands/browser.rb",
+    "from": "fmt.say(\"  walmart config set cdp_url #{url}\")",
+    "to": "fmt.say(\"  walmart config write cdp_url #{url}\")"
   }
 ]

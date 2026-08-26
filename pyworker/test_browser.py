@@ -484,3 +484,173 @@ def test_an_on_origin_page_is_left_where_it_is(make_session):
     session.fetch_same_origin("https://www.walmart.com/orchestra/snb/graphql/Search/abc/search")
 
     assert page.navigations == []
+
+
+class FakeTab:
+    def __init__(self, name="ours"):
+        self.name = name
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakeAttachedContext:
+    def __init__(self, existing_pages):
+        self.pages = list(existing_pages)
+        self.closed = False
+        self.new_pages = 0
+
+    def new_page(self):
+        self.new_pages += 1
+        page = FakeTab("ours")
+        self.pages.append(page)
+        return page
+
+    def close(self):
+        self.closed = True
+
+
+class FakeConnectedBrowser:
+    def __init__(self, contexts):
+        self.contexts = contexts
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakeCdpPlaywright:
+    def __init__(self, browser_obj=None, error=None):
+        self.browser_obj = browser_obj
+        self.error = error
+        self.urls = []
+        self.chromium = self
+
+    def connect_over_cdp(self, url):
+        self.urls.append(url)
+        if self.error:
+            raise self.error
+        return self.browser_obj
+
+
+def _attached(existing_pages=()):
+    context = FakeAttachedContext(existing_pages)
+    pw = FakeCdpPlaywright(FakeConnectedBrowser([context]))
+    options = browser.BrowserOptions(
+        profile_dir="/p", profile_lock="/p.lock", cdp_url="http://127.0.0.1:9222"
+    )
+    return pw, context, options
+
+
+# The user's browser has the user's tabs in it. Driving pages[0] would navigate
+# whatever they happen to be reading.
+def test_attaching_opens_our_own_tab_instead_of_taking_one():
+    users_tab = FakeTab("the user's bank")
+    pw, context, options = _attached([users_tab])
+
+    with browser.attach_context(pw, options) as session:
+        assert session.page is not users_tab
+        assert session.page.name == "ours"
+
+    assert context.new_pages == 1
+
+
+# The single worst thing this feature could do.
+def test_leaving_an_attached_session_never_closes_the_users_browser():
+    users_tab = FakeTab("the user's bank")
+    pw, context, options = _attached([users_tab])
+    connected = pw.browser_obj
+
+    with browser.attach_context(pw, options) as session:
+        ours = session.page
+
+    assert ours.closed, "our own tab should be cleaned up"
+    assert not users_tab.closed, "the user's tab must survive"
+    assert not context.closed, "the user's context must survive"
+    assert not connected.closed, "the user's browser must survive"
+
+
+def test_an_attached_session_closing_itself_also_spares_the_browser():
+    users_tab = FakeTab("the user's bank")
+    pw, context, options = _attached([users_tab])
+
+    with browser.attach_context(pw, options) as session:
+        session.close()
+
+        assert not context.closed
+        assert not users_tab.closed
+
+
+def test_an_owned_session_still_closes_its_own_context():
+    context = FakeAttachedContext([])
+    session = browser.Session(context, browser.BrowserOptions(profile_dir="/p", profile_lock="/l"))
+
+    session.close()
+
+    assert context.closed
+
+
+def test_a_refused_connection_names_the_command_that_fixes_it():
+    pw = FakeCdpPlaywright(error=RuntimeError("ECONNREFUSED"))
+    options = browser.BrowserOptions(
+        profile_dir="/p", profile_lock="/p.lock", cdp_url="http://127.0.0.1:9222"
+    )
+
+    with pytest.raises(browser.BrowserUnavailable) as caught, browser.attach_context(pw, options):
+        pass
+
+    assert "9222" in str(caught.value)
+    assert "walmart browser start" in str(caught.value)
+
+
+def test_a_browser_with_no_window_is_reported_rather_than_crashed():
+    pw = FakeCdpPlaywright(FakeConnectedBrowser([]))
+    options = browser.BrowserOptions(
+        profile_dir="/p", profile_lock="/p.lock", cdp_url="http://127.0.0.1:9222"
+    )
+
+    with (
+        pytest.raises(browser.BrowserUnavailable, match="no browsing context"),
+        browser.attach_context(pw, options),
+    ):
+        pass
+
+
+def test_attached_is_decided_by_the_url_alone():
+    base = {"profile_dir": "/p"}
+
+    assert not browser.BrowserOptions.from_request(base).attached
+    assert not browser.BrowserOptions.from_request({**base, "cdp_url": ""}).attached
+    assert browser.BrowserOptions.from_request({**base, "cdp_url": "http://x:9222"}).attached
+
+
+# Attached, we own no directory and no lock, so taking one would be a lie about
+# what this process is doing.
+def test_an_attached_session_takes_no_profile_lock(tmp_path, monkeypatch):
+    lock = tmp_path / "profile.lock"
+    context = FakeAttachedContext([])
+    pw = FakeCdpPlaywright(FakeConnectedBrowser([context]))
+    monkeypatch.setattr(browser, "sync_playwright", lambda: _NullCM(pw), raising=False)
+
+    options = browser.BrowserOptions(
+        profile_dir=str(tmp_path / "never-created"),
+        profile_lock=str(lock),
+        cdp_url="http://127.0.0.1:9222",
+    )
+    with browser.attach_context(pw, options):
+        pass
+
+    assert not lock.exists()
+    assert not (tmp_path / "never-created").exists()
+
+
+class _NullCM:
+    def __init__(self, value):
+        self.value = value
+
+    def __enter__(self):
+        return self.value
+
+    def __exit__(self, *exc):
+        return False

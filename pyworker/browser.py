@@ -10,6 +10,7 @@ Rules from DESIGN.md enforced here:
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import re
@@ -231,6 +232,10 @@ class BrowserOptions:
     browser_channel: str | None = None
     slow_mo: int = 0
     viewport: tuple[int, int] = (1440, 900)
+    # When set, attach to a Chrome the user launched and is signed into,
+    # instead of launching one. See DESIGN.md: the session is genuinely human
+    # because a human made it.
+    cdp_url: str | None = None
 
     @classmethod
     def from_request(cls, options: dict[str, Any], headless: bool | None = None) -> BrowserOptions:
@@ -245,7 +250,13 @@ class BrowserOptions:
             profile_lock=options.get("profile_lock") or (options["profile_dir"] + ".lock"),
             headless=requested,
             browser_channel=options.get("browser_channel"),
+            cdp_url=options.get("cdp_url") or None,
         )
+
+    @property
+    def attached(self) -> bool:
+        """True when we are a guest in someone else's browser."""
+        return bool(self.cdp_url)
 
 
 class Session:
@@ -256,20 +267,35 @@ class Session:
     reaching for the raw object is not a guard.
     """
 
-    def __init__(self, context, options: BrowserOptions):
+    def __init__(self, context, options: BrowserOptions, page=None, owns_context: bool = True):
         self._context = context
         self.options = options
+        self._page = page
+        self._owns_context = owns_context
 
     @property
     def page(self):
-        pages = self._context.pages
-        return pages[0] if pages else self._context.new_page()
+        # When attached to the user's own browser, _page is the tab we opened
+        # and it is the only one we may touch. Falling back to pages[0] there
+        # would drive whatever the user happens to be reading.
+        if self._page is None:
+            pages = self._context.pages
+            self._page = pages[0] if pages else self._context.new_page()
+        return self._page
 
     def on_response(self, handler) -> None:
         """Subscribe to responses. Used by reconnaissance recording."""
         self._context.on("response", handler)
 
     def close(self) -> None:
+        # Closing a context we do not own would take the user's other tabs with
+        # it. Attached, we close exactly the one tab we opened and leave the
+        # browser running; the CDP connection is dropped when Playwright stops.
+        if not self._owns_context:
+            if self._page is not None:
+                self._page.close()
+            return
+
         self._context.close()
 
     def goto(self, url: str, **kwargs):
@@ -354,14 +380,55 @@ class Session:
 
 
 @contextmanager
+def attach_context(pw, options: BrowserOptions):
+    """Attach to a Chrome the user is already running and signed into.
+
+    We are a guest here. Two rules follow from that and neither is negotiable:
+    we open our own tab rather than driving one the user is using, and we never
+    close the browser or its context. Everything still goes through goto(), so
+    the navigation guard applies -- more so than usual, because this browser has
+    the user's real session in it.
+    """
+    try:
+        browser = pw.chromium.connect_over_cdp(options.cdp_url)
+    except Exception as exc:  # noqa: BLE001 - reported as an actionable failure
+        raise BrowserUnavailable(
+            f"could not attach to Chrome at {options.cdp_url}: {exc}. Start it with: walmart browser start"
+        ) from exc
+
+    if not browser.contexts:
+        raise BrowserUnavailable(
+            f"attached to Chrome at {options.cdp_url} but it has no browsing context; "
+            "open a window in that Chrome and try again"
+        )
+
+    context = browser.contexts[0]
+    page = context.new_page()
+    session = Session(context, options, page=page, owns_context=False)
+    try:
+        yield session
+    finally:
+        # Never browser.close() here. It is the user's browser, and the
+        # connection drops on its own when Playwright stops.
+        with contextlib.suppress(Exception):  # the user may have closed it already
+            page.close()
+
+
+@contextmanager
 def open_session(options: BrowserOptions):
-    """Launch (or reuse) the dedicated persistent profile."""
+    """Attach to the user's Chrome, or launch the dedicated persistent profile."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:  # pragma: no cover - environment problem
         raise BrowserUnavailable(
             "playwright is not installed; run: cd pyworker && uv sync && uv run playwright install chromium"
         ) from exc
+
+    if options.attached:
+        # No profile lock and no directory work: we own neither.
+        with sync_playwright() as pw, attach_context(pw, options) as session:
+            yield session
+        return
 
     os.makedirs(options.profile_dir, exist_ok=True)
     os.chmod(options.profile_dir, 0o700)

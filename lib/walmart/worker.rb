@@ -143,6 +143,7 @@ module Walmart
         "profile_lock" => @paths.profile_lock,
         "headless" => @config ? @config.fetch("headless", true) : true,
         "browser_channel" => @config&.fetch("browser_channel", nil),
+        "cdp_url" => @config&.fetch("cdp_url", nil),
         "pinned_store" => @config&.store
       }
     end

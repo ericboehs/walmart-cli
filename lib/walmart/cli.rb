@@ -6,6 +6,7 @@ require_relative "redact"
 require_relative "version"
 require_relative "commands/doctor"
 require_relative "commands/config_cmd"
+require_relative "commands/browser"
 require_relative "commands/cart"
 require_relative "commands/item"
 require_relative "commands/login"
@@ -43,6 +44,10 @@ module Walmart
       %w[config show] => [Commands::ConfigCmd, "print current settings"],
       %w[config path] => [Commands::ConfigCmd, "print the config file path"],
       %w[config init] => [Commands::ConfigCmd, "write a default config file"],
+      %w[config set] => [Commands::ConfigCmd, "change one setting"],
+      %w[config unset] => [Commands::ConfigCmd, "restore one setting to its default"],
+      %w[browser start] => [Commands::Browser, "start a Chrome you sign into yourself"],
+      %w[browser status] => [Commands::Browser, "report whether that Chrome is running"],
       %w[search] => [Commands::Search, "search Walmart's catalog"],
       %w[cart show] => [Commands::Cart, "read the live shared cart"],
       %w[order sync] => [Commands::Order, "archive orders and receipts"],

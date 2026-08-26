@@ -189,5 +189,46 @@ module Walmart
       FileUtils.mkdir_p(File.dirname(paths.config_file))
       File.write(paths.config_file, JSON.pretty_generate(data))
     end
+
+    # cdp_url points at an unauthenticated debugging port. Anything that can
+    # reach it can drive the browser and read every cookie in the profile, so
+    # the only acceptable hosts are loopback ones -- and the host is parsed,
+    # never substring-matched, because "127.0.0.1.evil.com" contains "127.0.0.1".
+    def test_a_cdp_url_may_only_point_at_loopback
+      %w[http://127.0.0.1:9222 http://localhost:9222 http://[::1]:9222].each do |url|
+        assert_equal url, Config.new(paths: paths, data: { "cdp_url" => url }).validate!.fetch("cdp_url")
+      end
+    end
+
+    def test_a_cdp_url_on_another_host_is_refused_with_the_reason
+      error = assert_raises(ConfigError) do
+        Config.new(paths: paths, data: { "cdp_url" => "http://192.168.1.50:9222" }).validate!
+      end
+
+      assert_match(/loopback/, error.message)
+      assert_match(/unauthenticated/, error.message)
+    end
+
+    def test_a_lookalike_loopback_host_is_refused
+      ["http://127.0.0.1.evil.com:9222", "http://localhost.evil.com:9222",
+       "http://evil.com/127.0.0.1"].each do |url|
+        assert_raises(ConfigError, "#{url} must not pass as loopback") do
+          Config.new(paths: paths, data: { "cdp_url" => url }).validate!
+        end
+      end
+    end
+
+    def test_a_cdp_url_that_is_not_http_is_refused
+      ["ftp://127.0.0.1", "file:///etc/passwd", "not a url at all", "127.0.0.1:9222"].each do |url|
+        assert_raises(ConfigError, "#{url} must not be accepted") do
+          Config.new(paths: paths, data: { "cdp_url" => url }).validate!
+        end
+      end
+    end
+
+    def test_an_absent_cdp_url_is_the_ordinary_case
+      assert_nil Config.new(paths: paths, data: {}).validate!.fetch("cdp_url")
+      assert_nil Config.new(paths: paths, data: { "cdp_url" => nil }).validate!.fetch("cdp_url")
+    end
   end
 end

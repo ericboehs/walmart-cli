@@ -18,7 +18,8 @@ module Walmart
     EXPECTED = {
       "lib/walmart/commands/login.rb" => { wait: "seconds" },
       "lib/walmart/commands/order_read.rb" => { limit: "orders" },
-      "lib/walmart/commands/search.rb" => { page: "pages", limit: "results" }
+      "lib/walmart/commands/search.rb" => { page: "pages", limit: "results" },
+      "lib/walmart/commands/browser.rb" => { port: "a TCP port" }
     }.freeze
 
     CALL = /positive_integer_flag\(\s*flags,\s*:(\w+),\s*unit:\s*"([^"]+)"/

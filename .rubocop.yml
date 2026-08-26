@@ -24,6 +24,13 @@ Metrics/MethodLength:
 Metrics/AbcSize:
   Max: 30
 
+# Help is one long data table plus the code that prints it. The table grows by
+# one entry per command, by design, and splitting it would put the flags of some
+# commands somewhere else -- which is how a documentation table starts drifting
+# from what the parser accepts.
+Metrics/ModuleLength:
+  Max: 160
+
 Metrics/ClassLength:
   Max: 200
   # A test class is a list of cases, not a unit of design; splitting one to

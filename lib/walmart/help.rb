@@ -52,6 +52,14 @@ module Walmart
       ],
       %w[logout] => [],
       %w[config show] => [],
+      %w[config set] => [
+        ["<setting> <value>", "one setting from `walmart config show`"]
+      ],
+      %w[config unset] => [["<setting>", "restore one setting to its default"]],
+      %w[browser start] => [
+        ["--port N", "debugging port to listen on (default 9222)"]
+      ],
+      %w[browser status] => [["--port N", "debugging port to check (default 9222)"]],
       %w[config path] => [],
       %w[config init] => [],
       %w[cart show] => [],
