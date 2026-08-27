@@ -1596,3 +1596,223 @@ def test_the_note_counts_what_was_recorded_not_what_had_arrived_by_enter(tmp_pat
     written = json.loads((tmp_path / "capture.json").read_text())
     assert written["mutating_requests"], "the fake's request never reached the recorder"
     assert "recorded 1 mutating requests and 1 responses" in written["notes"]
+
+
+# --- a failure the shell can see ------------------------------------------------------
+#
+# run() printed its verdict to stderr and returned 0. Every unusable run --
+# nothing recorded, no response, no readable body -- looked like a success to
+# anything that checked the exit code instead of reading the prose. The first
+# live capture exited 0.
+
+
+def _run_capture(tmp_path, monkeypatch, session):
+    capture = _capture_module()
+    monkeypatch.setattr(capture.browser, "BrowserOptions", lambda **kwargs: object())
+    monkeypatch.setattr(capture.browser, "open_session", lambda _options: session)
+    monkeypatch.setattr(capture, "wait_for_enter", lambda *a, **k: None)
+    args = argparse.Namespace(
+        out=str(tmp_path), profile=str(tmp_path / "p"), cdp_url="http://127.0.0.1:9222", yes=True
+    )
+    return capture.run(args), json.loads((tmp_path / "capture.json").read_text())
+
+
+class _QuietSession:
+    """A session where nothing happens: no requests, no responses."""
+
+    def __init__(self):
+        self.page = _PumpingPage()
+
+    def on_worker(self, handler):
+        pass
+
+    def on_request(self, handler):
+        pass
+
+    def on_response(self, handler):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_a_run_that_recorded_nothing_exits_nonzero(tmp_path, monkeypatch):
+    status, written = _run_capture(tmp_path, monkeypatch, _QuietSession())
+
+    assert status != 0, "a run with no mutating request reported failure and exited 0"
+    assert written["mutating_requests"] == []
+
+
+def test_a_run_whose_body_could_not_be_read_exits_nonzero(tmp_path, monkeypatch):
+    url = f"{ORCHESTRA}/updateItems/45fca98d0f0fb2ffc2ccf8a3290b8914"
+    request = CaptureRequest(url, '{"variables":{"input":{"items":[{"quantity":1}]}}}')
+    session = _TeardownSession(request, CaptureResponse(url, request, text=None))
+
+    status, written = _run_capture(tmp_path, monkeypatch, session)
+
+    assert status != 0, "a 200 with an unreadable body is not a success"
+    assert written["responses"][0]["body_shape"] == _capture_module().UNREADABLE
+
+
+def test_a_run_that_got_what_it_came_for_exits_zero(tmp_path, monkeypatch):
+    url = f"{ORCHESTRA}/updateItems/45fca98d0f0fb2ffc2ccf8a3290b8914"
+    request = CaptureRequest(url, '{"variables":{"input":{"items":[{"quantity":1}]}}}')
+    session = _TeardownSession(request, CaptureResponse(url, request, text='{"data":{}}'))
+
+    status, _ = _run_capture(tmp_path, monkeypatch, session)
+
+    assert status == 0
+
+
+# --- Enter means the clicking is done, not the network --------------------------------
+#
+# wait_for_enter returns the moment stdin answers. A response still in flight
+# then met a closing context, which is the unreadable-at-teardown failure by
+# another route -- and the human has no way to know whether the answer landed.
+
+
+def _settling_recorder(tmp_path):
+    recorder = _recorder(tmp_path)
+    request = _cleared_request(recorder)
+    return recorder, request
+
+
+def test_settling_waits_for_an_answer_that_is_still_in_flight(tmp_path):
+    capture = _capture_module()
+    recorder, request = _settling_recorder(tmp_path)
+    page = _PumpingPage()
+    assert recorder.pending == 1
+
+    # The answer arrives during the settle window, as a slow reply would.
+    def answer_after_two_pumps(ms):
+        page.waits.append(ms)
+        if len(page.waits) == 2:
+            recorder.on_response(CaptureResponse(request.url, request, text='{"data":{}}'))
+
+    page.wait_for_timeout = answer_after_two_pumps
+
+    outstanding = capture.settle(page, recorder, seconds=5.0)
+
+    assert outstanding == 0
+    assert recorder.responses, "the late response was not recorded"
+
+
+class _BoundedPage(_PumpingPage):
+    """A page that spends the time it is asked to wait, and not forever.
+
+    Written after the deadline test spun instead of failing when a mutant
+    removed the deadline -- the same lesson as the pump test, twice in one
+    afternoon. Two things are needed and the first attempt had only one. The
+    count stops an unbounded loop. The sleep is what makes the count mean
+    something: a fake that returns instantly lets a *correct* loop run
+    thousands of times inside a real deadline, so the limit fired on working
+    code. A fake standing in for something that waits has to wait.
+    """
+
+    LIMIT = 20
+
+    def wait_for_timeout(self, ms):
+        super().wait_for_timeout(ms)
+        time.sleep(ms / 1000.0)
+        if len(self.waits) > self.LIMIT:
+            raise AssertionError(f"settling pumped {self.LIMIT} times: it has no deadline")
+
+
+def test_settling_gives_up_at_the_deadline_rather_than_hanging(tmp_path):
+    capture = _capture_module()
+    recorder, _ = _settling_recorder(tmp_path)
+    started = time.monotonic()
+
+    outstanding = capture.settle(_BoundedPage(), recorder, seconds=0.3)
+
+    assert outstanding == 1
+    assert time.monotonic() - started < 5, "settling did not respect its deadline"
+
+
+def test_an_unanswered_request_is_not_a_success():
+    verdict = _capture_module().verdict
+    problem = verdict(watched=True, mutations=1, responses=0, readable=0, pending=1)
+
+    assert problem is not None
+    assert "unanswered" in problem
+
+
+class _LateAnswerSession:
+    """Request arrives while waiting; the answer only arrives while settling.
+
+    This is the shape of the real thing: Walmart replies a moment after the
+    human has stopped clicking. A run that stops listening at Enter records the
+    request and never the response.
+    """
+
+    def __init__(self, request, response):
+        self.page = _PumpingPage()
+        self._request, self._response = request, response
+        self._handlers = {}
+        self.page.wait_for_timeout = self._pump
+
+    def _pump(self, ms):
+        self.page.waits.append(ms)
+        self._handlers["response"](self._response)
+
+    def fire_request(self):
+        self._handlers["request"](self._request)
+
+    def on_worker(self, handler):
+        self._handlers["worker"] = handler
+
+    def on_request(self, handler):
+        self._handlers["request"] = handler
+
+    def on_response(self, handler):
+        self._handlers["response"] = handler
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_a_response_arriving_after_enter_is_still_recorded(tmp_path, monkeypatch):
+    capture = _capture_module()
+    url = f"{ORCHESTRA}/updateItems/45fca98d0f0fb2ffc2ccf8a3290b8914"
+    request = CaptureRequest(url, '{"variables":{"input":{"items":[{"quantity":1}]}}}')
+    session = _LateAnswerSession(request, CaptureResponse(url, request, text='{"data":{}}'))
+
+    monkeypatch.setattr(capture.browser, "BrowserOptions", lambda **kwargs: object())
+    monkeypatch.setattr(capture.browser, "open_session", lambda _options: session)
+    # Enter is pressed with the request sent and unanswered.
+    monkeypatch.setattr(capture, "wait_for_enter", lambda *a, **k: session.fire_request())
+
+    args = argparse.Namespace(
+        out=str(tmp_path), profile=str(tmp_path / "p"), cdp_url="http://127.0.0.1:9222", yes=True
+    )
+    status = capture.run(args)
+    written = json.loads((tmp_path / "capture.json").read_text())
+
+    assert written["responses"], "the answer arrived after Enter and was thrown away"
+    assert status == 0
+
+
+# --- an abort is a more specific answer than a bad result -----------------------------
+
+
+def test_an_unavailable_browser_keeps_its_own_exit_code(tmp_path, monkeypatch):
+    """status 2 means the environment was wrong; 1 would say the run was merely useless."""
+    capture = _capture_module()
+
+    def unavailable(_options):
+        raise capture.browser.BrowserUnavailable("no Chrome on 9222")
+
+    monkeypatch.setattr(capture.browser, "BrowserOptions", lambda **kwargs: object())
+    monkeypatch.setattr(capture.browser, "open_session", unavailable)
+
+    args = argparse.Namespace(
+        out=str(tmp_path), profile=str(tmp_path / "p"), cdp_url="http://127.0.0.1:9222", yes=True
+    )
+
+    assert capture.run(args) == 2

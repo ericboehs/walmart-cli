@@ -48,6 +48,7 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -337,6 +338,15 @@ class Recorder:
         # them alive, so identity stays meaningful for the life of the capture.
         self._cleared: dict[int, Any] = {}
 
+    @property
+    def pending(self) -> int:
+        """Requests we recorded and have not yet seen answered.
+
+        The run is not finished while this is nonzero, however finished the
+        human is.
+        """
+        return len(self._cleared)
+
     def on_worker(self, worker) -> None:
         url = getattr(worker, "url", "") or "(unknown)"
         self.workers.append(url)
@@ -581,6 +591,31 @@ def confirm(out_dir: Path) -> bool:
 
 PUMP_SLICE_SECONDS = 0.2
 
+# How long to keep listening after Enter for answers to requests already sent.
+#
+# Enter means "I have finished clicking", not "the network has finished". The
+# pump stops callback starvation *during* the wait, but a response that is
+# still in flight when the human presses Enter used to meet a closing context,
+# which is the same unreadable-at-teardown failure by a different route. The
+# run is not over while an answer is outstanding.
+#
+# Bounded, because a request that is never going to be answered must not hold
+# the session open. Reaching the bound is a finding, not a retry.
+SETTLE_SECONDS = 15.0
+
+
+def settle(page, recorder, seconds: float = SETTLE_SECONDS) -> int:
+    """Pump until every cleared request has an answer, or the deadline passes.
+
+    Returns the number still outstanding. Nothing is re-sent and nothing is
+    clicked: this only keeps the thread inside Playwright so callbacks that are
+    already coming can arrive.
+    """
+    deadline = time.monotonic() + seconds
+    while recorder.pending and time.monotonic() < deadline:
+        page.wait_for_timeout(PUMP_SLICE_SECONDS * 1000)
+    return recorder.pending
+
 
 def wait_for_enter(page, read_line=None) -> None:
     """Wait for Enter while Playwright keeps dispatching callbacks.
@@ -616,7 +651,13 @@ def wait_for_enter(page, read_line=None) -> None:
         page.wait_for_timeout(PUMP_SLICE_SECONDS * 1000)
 
 
-def verdict(watched: bool, mutations: int, responses: int, readable: int | None = None) -> str | None:
+def verdict(
+    watched: bool,
+    mutations: int,
+    responses: int,
+    readable: int | None = None,
+    pending: int = 0,
+) -> str | None:
     """What the run amounted to, or None if it got what it came for.
 
     A function rather than a chain of prints so it can be tested. The three
@@ -632,6 +673,16 @@ def verdict(watched: bool, mutations: int, responses: int, readable: int | None 
             "No mutating request was recorded. That is itself a finding: either no "
             "add happened, or Playwright is not reporting the worker's traffic and "
             "we need a raw CDP attach instead."
+        )
+    # Reported before both checks below: an answer that never arrived is a
+    # different problem from an answer that could not be read, and the remedy
+    # is different too -- one is "the run ended too early", the others
+    # are "nothing answered at all" and "the body was gone when we looked".
+    if pending:
+        return (
+            f"{pending} request(s) were still unanswered when the run ended. The session "
+            "closed before Walmart replied, so the response contract is no better known "
+            "than before."
         )
     if responses == 0:
         return (
@@ -681,6 +732,12 @@ def run(args: argparse.Namespace) -> int:
             print("press Enter here when you are done\n")
             watched = True
             wait_for_enter(session.page)
+            # Enter means the clicking is done, not the network. Anything
+            # already sent gets a bounded chance to be answered before the
+            # context closes.
+            outstanding = settle(session.page, recorder)
+            if outstanding:
+                notes.append(f"{outstanding} request(s) unanswered after {SETTLE_SECONDS:g}s")
     except safety.UnsafeNavigation as exc:
         notes.append(f"aborted: {exc}")
         print(f"refused: {exc}", file=sys.stderr)
@@ -717,9 +774,17 @@ def run(args: argparse.Namespace) -> int:
             recorder.mutations,
             len(recorder.responses),
             readable=sum(1 for r in recorder.responses if r["body_shape"] not in SENTINELS),
+            pending=recorder.pending,
         )
         if problem:
             print(problem, file=sys.stderr)
+            # A failure the shell can see. This printed the diagnosis and
+            # returned 0, so every unusable run looked like a success to
+            # anything that checked the exit code instead of reading the prose.
+            #
+            # `or` rather than assignment: an abort or an unavailable browser
+            # is already 2, and that is the more specific answer.
+            status = status or 1
 
     return status
 

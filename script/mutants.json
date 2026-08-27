@@ -1742,5 +1742,75 @@
     "file": "lib/walmart/commands/store.rb",
     "from": "        raise Error, \"Walmart's cart did not name a store, so there is nothing to pin\" if active.nil?",
     "to": "        active ||= \"\""
+  },
+  {
+    "label": "a failed capture exits 0 again",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            status = status or 1",
+    "to": "            pass",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a stronger exit status is overwritten by 1",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            status = status or 1",
+    "to": "            status = 1",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the run stops listening the moment Enter is pressed",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            outstanding = settle(session.page, recorder)",
+    "to": "            outstanding = 0",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "settling waits forever for an answer",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    while recorder.pending and time.monotonic() < deadline:",
+    "to": "    while recorder.pending:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "an unanswered request is not reported",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if pending:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
   }
 ]
