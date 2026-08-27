@@ -13,6 +13,7 @@ require_relative "commands/login"
 require_relative "commands/order"
 require_relative "commands/order_read"
 require_relative "commands/search"
+require_relative "commands/store"
 
 module Walmart
   # Argument parsing and dispatch.
@@ -56,14 +57,14 @@ module Walmart
       %w[order list] => [Commands::OrderRead, "list archived orders"],
       %w[order show] => [Commands::OrderRead, "show one archived order"],
       %w[order search] => [Commands::OrderRead, "search the archive"],
-      %w[item] => [Commands::Item, "show one item by id or URL"]
+      %w[item] => [Commands::Item, "show one item by id or URL"],
+      %w[store show] => [Commands::Store, "compare the pinned store with Walmart's active store"],
+      %w[store pin] => [Commands::Store, "pin the active grocery store"]
     }.freeze
 
     # Declared now so `--help` tells the truth about where the project is,
     # rather than pretending unimplemented commands work.
     PLANNED = {
-      %w[store show] => "compare the pinned store with Walmart's active store",
-      %w[store pin] => "pin the active grocery store",
       %w[cart add-from-order] => "reorder items from an archived order",
       %w[my-items list] => "browse Walmart's My Items",
       %w[my-items search] => "search Walmart's My Items"

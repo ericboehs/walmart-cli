@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 72 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 73 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -31,6 +31,7 @@ Each of these was written deliberately, read fine, and passed:
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
+| a design document as a specification | DESIGN.md asked `store pin` to save a name and a ZIP; no Walmart response has ever contained either, so building it as written would have meant inventing two field mappings |
 | piping a live read through `tail` | the one successful `cart show` of the day was truncated to its last 25 lines, and the second attempt was met with a challenge; a live read is not a repeatable command |
 | a bare `input()` in the capture script | Playwright's sync API only dispatches handlers while this thread is inside it, so the wait was a stopped recorder; `scripts/recon.py` had a `pump` for exactly this, with a test explaining it, and the newer script blocked anyway |
 | `"body_shape": "null"` | written for a response whose body had raised on read, which is indistinguishable from a server that answered null |
@@ -123,7 +124,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-72 defects in the table below. 164 mutants in `script/mutants.json`.
+73 defects in the table below. 167 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -313,6 +314,9 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A design is a plan, not evidence.** Where a document asks for a field
+  nobody has observed, the field does not get invented to satisfy it -- the
+  document gets a note saying what was seen.
 - **A live observation is not a repeatable command.** Capture it whole to a
   file and inspect the file. Anything scarce that goes through `head`, `tail`
   or `grep` on its way to a terminal has been spent, and the second attempt is

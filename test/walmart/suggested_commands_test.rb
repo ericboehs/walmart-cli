@@ -43,7 +43,7 @@ module Walmart
     # no prior step.
     def test_the_guard_catches_an_invented_command_not_only_a_planned_one
       refute runnable?("config teleport"), "a command nobody ever declared must not pass"
-      refute runnable?("store pin"), "a declared-but-unbuilt command must not pass"
+      refute runnable?("my-items list"), "a declared-but-unbuilt command must not pass"
       assert runnable?("config set"), "a real command must pass"
     end
 
@@ -67,8 +67,16 @@ module Walmart
     end
 
     # The specific regression, named so it cannot come back quietly.
-    def test_nothing_suggests_the_unimplemented_store_pin
-      refute_includes mentions.map { |_file, _line, path| path }, "store pin"
+    #
+    # It used to name `store pin`, which was the original offender and is now
+    # implemented. The example moved rather than the test being deleted: the
+    # rule is about unimplemented commands, and the day its example becomes
+    # real is the day the test would otherwise start passing for free.
+    def test_nothing_suggests_an_unimplemented_command
+      planned = CLI::PLANNED.keys.map { |path| path.join(" ") }
+      suggested = mentions.map { |_file, _line, path| path }
+
+      assert_empty suggested & planned, "a planned command is being suggested as if it worked"
     end
 
     private

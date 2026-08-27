@@ -167,13 +167,15 @@ module Walmart
         if config.store_pinned?
           store = config.store
           Check.new(name: "store", status: :ok,
-                    detail: "#{store["name"]} (#{store["store_id"]}) #{store["zip"]}")
+                    detail: [store["name"], "(#{store["store_id"]})", store["zip"]]
+                            .compact.reject { |part| part.to_s.empty? }.join(" "))
         else
-          # No hint: `store pin` is not implemented, and pointing at it is how
-          # doctor sent people to an unknown command. A warn with no remedy is
-          # honest; a warn with a remedy that does not exist is not.
+          # The remedy exists now, so it is named. It did not when this was
+          # written, and the comment then said why pointing at it would be
+          # wrong -- a warn with a remedy that does not exist is worse than a
+          # warn with none.
           Check.new(name: "store", status: :warn,
-                    detail: "no store pinned (store pin is not implemented yet)")
+                    detail: "no store pinned", hint: "run: walmart store pin")
         end
       end
 

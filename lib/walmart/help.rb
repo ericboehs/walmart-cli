@@ -67,6 +67,8 @@ module Walmart
         ["<item-id> [n]", "add n (default 1); a negative n takes that many out"]
       ],
       %w[cart remove] => [["<item-id>", "take the whole line out of the cart"]],
+      %w[store show] => [],
+      %w[store pin] => [],
       %w[doctor] => []
     }.freeze
 

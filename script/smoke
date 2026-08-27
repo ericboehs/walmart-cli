@@ -64,7 +64,8 @@ WORKER_REPLIES = {
       { "item_id" => "10450114", "name" => "Great Value Whole Milk, 1 Gallon",
         "quantity" => 1, "quantity_display" => "1", "price" => 3.12 }
     ],
-    "totals" => { "subtotal" => 3.12 }, "problems" => []
+    "totals" => { "subtotal" => 3.12 }, "problems" => [],
+    "fulfillment" => { "intent" => "DELIVERY", "store_id" => "499", "type" => nil }
   },
   "order.sync" => {
     "orders" => [
@@ -392,6 +393,13 @@ class Plan
       Case.new(label: "search", argv: %w[search milk], exit_code: 0, expect: /Great Value/),
       Case.new(label: "item", argv: %w[item 10450114], exit_code: 0, expect: /Walmart\.com \(Walmart\)/),
       Case.new(label: "cart show", argv: %w[cart show], exit_code: 0, expect: /Great Value/),
+      Case.new(label: "store show (unpinned)", argv: %w[store show], exit_code: 0,
+               expect: /no store pinned/),
+      # Ordering matters: `store show` below reads what this wrote, so the pair
+      # proves the pin reached the config file rather than a live object.
+      Case.new(label: "store pin", argv: %w[store pin], exit_code: 0, expect: /499/),
+      Case.new(label: "store show (pinned)", argv: %w[store show], exit_code: 0,
+               expect: /pinned store: 499/),
       Case.new(label: "order sync", argv: %w[order sync], exit_code: 0, expect: /archived 1 order/),
       # Ordering matters here: this runs after `order sync` against the same
       # XDG root, so it proves the record survived a write and a read of a

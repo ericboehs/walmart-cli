@@ -33,7 +33,9 @@ module Walmart
                   "variants" => { "has_variants" => false, "count" => 0 } },
       "cart.show" => { "lines" => [{ "item_id" => "1", "name" => "Milk", "quantity" => 1,
                                      "price" => 1.0 }],
-                       "totals" => { "subtotal" => 1.0 }, "problems" => [] },
+                       "totals" => { "subtotal" => 1.0 }, "problems" => [],
+                       "fulfillment" => { "intent" => "DELIVERY", "store_id" => "499",
+                                          "type" => nil } },
       "order.sync" => { "orders" => [], "seen" => [], "stopped" => { "reason" => "complete" } },
       "cart.add" => { "item_id" => "1", "outcome" => "applied", "quantity_before" => 1,
                       "quantity_after" => 2, "quantity_intended" => 2, "changed" => true,
@@ -67,6 +69,9 @@ module Walmart
       # covering it would mean spawning a real Chrome from the suite.
       %w[browser status] => [],
       %w[logout] => [],
+      # pin reads the same cart.show stub above, which names a store.
+      %w[store show] => [],
+      %w[store pin] => [],
       %w[version] => []
     }.freeze
 

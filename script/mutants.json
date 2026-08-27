@@ -1724,5 +1724,23 @@
     "file": "script/mutate",
     "from": "        raise Hang, \"no answer in #{TIMEOUT_SECONDS}s: #{(command || @command).join(\" \")}\"",
     "to": "        return [\"\", nil]"
+  },
+  {
+    "label": "a failed cart read still pins a store",
+    "file": "lib/walmart/commands/store.rb",
+    "from": "        raise Error, error_message(data) if data.is_a?(Hash) && data[\"error\"]",
+    "to": "        nil"
+  },
+  {
+    "label": "pinning invents a name and a zip",
+    "file": "lib/walmart/commands/store.rb",
+    "from": "        config.store = { \"store_id\" => active }",
+    "to": "        config.store = { \"store_id\" => active, \"name\" => \"Walmart\", \"zip\" => \"74000\" }"
+  },
+  {
+    "label": "a cart with no store pins a blank one",
+    "file": "lib/walmart/commands/store.rb",
+    "from": "        raise Error, \"Walmart's cart did not name a store, so there is nothing to pin\" if active.nil?",
+    "to": "        active ||= \"\""
   }
 ]

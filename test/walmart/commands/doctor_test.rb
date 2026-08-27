@@ -104,11 +104,16 @@ module Walmart
       # and this one read as perfectly reasonable -- "warns with the next step"
       # is a sensible thing to want. Nothing here asked whether the next step
       # was a command that exists.
-      def test_unpinned_store_warns_without_naming_a_command_that_does_not_exist
+      # Was: warns *without* naming a command, because `store pin` did not
+      # exist and a remedy that does not exist is worse than no remedy. It
+      # exists now, so the same check runs the other way round.
+      def test_unpinned_store_warns_and_names_the_command_that_fixes_it
         run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }))
 
         assert_includes out.string, "no store pinned"
-        refute_includes out.string + err.string, "walmart store pin"
+        # Hints are stderr, so that piping the table somewhere does not carry
+        # advice into a file that wanted data.
+        assert_includes err.string, "walmart store pin"
       end
 
       # The lock file is never unlinked, so after the first login it is there

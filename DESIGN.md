@@ -500,7 +500,9 @@ the mobile app. Each line should include a stable cart-line identifier, exact
 item/variant, quantity or weighted unit, current price/estimate, seller,
 fulfillment, availability, and any warning Walmart currently attaches.
 
-The formatter prints the verified pinned store name and ZIP above mutations.
+The formatter prints the verified pinned store above mutations. The name and
+ZIP described here have never been observed, so what it can print is the store
+id; see the note under "Store pinning".
 JSON includes a structured `store` object rather than relying on prose.
 
 Mutation result states follow the proven amazon-cli pattern:
@@ -519,11 +521,16 @@ session and saves only:
 
 ```json
 {
-  "store_id": "...",
-  "name": "...",
-  "zip": "..."
+  "store_id": "..."
 }
 ```
+
+The name and ZIP in the original design are not written, because neither has
+ever been observed in a Walmart response. The only store field seen so far is
+`storeId`, in the cart's fulfillment node, which is where `store pin` reads it.
+Adding the other two would mean choosing field names nobody here has seen, and
+a plausible mapping is still a guess. `store show` says they are absent rather
+than leaving a blank that looks like an empty answer from Walmart.
 
 It does not save a street address or delivery address. `store show` compares
 pinned and active values. Read commands may show a loud mismatch warning; cart
