@@ -1912,5 +1912,11 @@
     "file": "test/walmart/recon_tools_test.rb",
     "from": "    SCRIPTS = Dir[File.expand_path(\"../../scripts/*\", __dir__)].select { |path| File.file?(path) }",
     "to": "    SCRIPTS = Dir[File.expand_path(\"../../scripts/*.py\", __dir__)].select { |path| File.file?(path) }"
+  },
+  {
+    "label": "the observation design may claim anything",
+    "file": "test/walmart/recon_tools_test.rb",
+    "from": "      assert_equal claims_none, built.empty?,",
+    "to": "      assert_equal claims_none, claims_none,"
   }
 ]

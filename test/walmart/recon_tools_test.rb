@@ -101,6 +101,21 @@ module Walmart
                          "not by restoring the file"
     end
 
+    # docs/DOM-OBSERVATION.md opens by saying no tool exists and nothing has
+    # been observed. That is true today and will stop being true, and a status
+    # line nobody checks is the exact failure this repository keeps recording:
+    # a promise outliving its mechanism. So the mechanism is here.
+    OBSERVATION_DESIGN = File.expand_path("../../docs/DOM-OBSERVATION.md", __dir__)
+
+    def test_the_observation_design_still_says_no_tool_exists_only_while_none_does
+      claims_none = File.read(OBSERVATION_DESIGN).include?("No tool exists")
+      built = Dir[File.expand_path("../../scripts/observe*", __dir__)]
+
+      assert_equal claims_none, built.empty?,
+                   "docs/DOM-OBSERVATION.md and scripts/ disagree about whether the " \
+                   "observation tool exists: #{built.map { |p| File.basename(p) }.inspect}"
+    end
+
     private
 
     # Comments and docstrings discuss these verbs at length -- this file's own
