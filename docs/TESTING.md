@@ -146,7 +146,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-95 defects in the table below. 191 mutants in `script/mutants.json`.
+95 defects in the table below. 199 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every

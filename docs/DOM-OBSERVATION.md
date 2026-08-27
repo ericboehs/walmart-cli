@@ -1,6 +1,7 @@
 # Observing the cart DOM: the minimisation contract
 
-Status: **design under review, revised once. No tool exists. Nothing has been
+Status: **contract accepted. The output vocabulary exists and is tested
+(`pyworker/observation.py`). No tool exists that reads a page. Nothing has been
 observed.**
 
 This document is the thing to argue with. It exists because the observation it

@@ -1944,5 +1944,117 @@
     "file": "test/walmart/documentation_parity_test.rb",
     "from": "      /read cannot be evidence about a write/ => \"a read-only observation can prove a write's precondition\"",
     "to": "      /nobody writes this sentence/ => \"a read-only observation can prove a write's precondition\""
+  },
+  {
+    "label": "the writer accepts a string",
+    "file": "pyworker/observation.py",
+    "from": "    raise Unserialisable(\"unknown_type\")",
+    "to": "    return str(node)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "an unknown key is dropped instead of rejected",
+    "file": "pyworker/observation.py",
+    "from": "            if key not in KEYS:\n                raise Unserialisable(\"unknown_key\")",
+    "to": "            if key not in KEYS:\n                continue",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "the rejection quotes what it rejected",
+    "file": "pyworker/observation.py",
+    "from": "            if key not in KEYS:\n                raise Unserialisable(\"unknown_key\")",
+    "to": "            if key not in KEYS:\n                raise Unserialisable(f\"unknown_key: {key!r}\")",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "a bare int is serialised as a count",
+    "file": "pyworker/observation.py",
+    "from": "    if isinstance(node, (Count, Depth)):\n        return node.value",
+    "to": "    if isinstance(node, (Count, Depth)):\n        return node.value\n    if isinstance(node, int):\n        return node",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "a bool is serialised as a number",
+    "file": "pyworker/observation.py",
+    "from": "    if isinstance(node, bool):\n        return node\n",
+    "to": "",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "a count accepts a bool",
+    "file": "pyworker/observation.py",
+    "from": "        if type(self.value) is not int or self.value < 0:\n            raise TypeError(\"a count is a non-negative int\")",
+    "to": "        if not isinstance(self.value, int) or self.value < 0:\n            raise TypeError(\"a count is a non-negative int\")",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "an unknown tag is echoed",
+    "file": "pyworker/observation.py",
+    "from": "    try:\n        return Tag(str(name).lower())\n    except (ValueError, AttributeError):\n        return Sentinel.REDACTED",
+    "to": "    try:\n        return Tag(str(name).lower())\n    except (ValueError, AttributeError):\n        return str(name)",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
+  },
+  {
+    "label": "the probe list grows by one",
+    "file": "pyworker/observation.py",
+    "from": "    HREF = \"href\"",
+    "to": "    HREF = \"href\"\n    CLASS = \"class\"",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ]
   }
 ]
