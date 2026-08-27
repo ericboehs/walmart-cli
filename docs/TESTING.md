@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 101 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 106 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,11 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| a fake that ignored `exact` | exact=True and exact=False were indistinguishable, so the test proving names match exactly proved nothing |
+| a fake locator that forgot which element it was | `get_by_role` returned a locator with no node, so `is_disabled` answered False whatever the page said |
+| a bound tested with one node | the per-node term could be deleted and the estimate still covered a one-node run |
+| `raise ... from exc` after mapping to a fixed code | the library's text survives on `__cause__` and reappears in any traceback |
+| a source alarm that assumed a call shape | it scanned for `get_attribute(...)` while the real call passes the method to a reader, so it was watching a spelling |
 | an ancestor "chain" that was an unordered bag | depths could repeat, reverse, skip, or start at the line itself, and it still serialised as though someone had walked the tree |
 | any ARIA role accepted as a quantity control | a link captioned "Decrease quantity" is not a quantity control; vocabulary membership is not semantics |
 | an internal argument left unvalidated | the cardinality factory checked its count and trusted its budget, so a string budget raised whatever the comparison raised, not a fixed code |
@@ -152,7 +157,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-101 defects in the table below. 217 mutants in `script/mutants.json`.
+106 defects in the table below. 241 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -345,6 +350,11 @@ more than another assertion on behaviour.
 - **A test can be reporting on code that no longer exists.** Bytecode caching
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
+- **A fake that ignores an argument deletes the test of that argument.**
+- **Losing the text means losing it,** not filing it on `__cause__`.
+- **A needle too short to search for needs a structural guarantee.** "2" is
+  inside the tag `h2` and inside the depth token `d2`; containment in a
+  predeclared set holds whatever the needle is.
 - **Membership of a vocabulary is not being the thing it describes.** Matters
   most where the next step after identifying something is pressing it.
 - **A chain has an order.** A list of findings is not a path unless the walk

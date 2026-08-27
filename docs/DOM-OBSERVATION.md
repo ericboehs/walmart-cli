@@ -1,8 +1,9 @@
 # Observing the cart DOM: the minimisation contract
 
-Status: **contract accepted. The output vocabulary is implemented and tested
-in `pyworker/observation.py`. There is no page-reading observer and no runnable
-command. Nothing has been observed.**
+Status: **the vocabulary (`pyworker/observation.py`) and the walker
+(`pyworker/observe_walk.py`) are implemented and tested offline against fakes.
+There is no runnable command, nothing constructs a browser, and nothing has
+been observed.**
 
 This document is the thing to argue with. It exists because the observation it
 describes is the most privacy-dangerous operation this project has proposed,

@@ -1914,12 +1914,6 @@
     "to": "    SCRIPTS = Dir[File.expand_path(\"../../scripts/*.py\", __dir__)].select { |path| File.file?(path) }"
   },
   {
-    "label": "the observation design may claim anything",
-    "file": "test/walmart/recon_tools_test.rb",
-    "from": "      assert_equal claims_none, built.empty?,",
-    "to": "      assert_equal claims_none, claims_none,"
-  },
-  {
     "label": "the unenumerable-attribute retraction is dropped",
     "file": "test/walmart/documentation_parity_test.rb",
     "from": "      /unrecognised.{0,20}and counted/ => \"attribute names cannot be enumerated without reading the DOM\",",
@@ -2299,5 +2293,340 @@
     ],
     "from": "      Dir[File.join(root, \"scripts\", \"observe*\")] + Dir[File.join(root, \"pyworker\", \"observe*.py\")]",
     "to": "      Dir[File.join(root, \"scripts\", \"observe*\")]"
+  },
+  {
+    "label": "the design may stop saying the observer cannot be run",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "      assert status_claims_no_observer?(File.read(OBSERVATION_DESIGN)),",
+    "to": "      assert true,"
+  },
+  {
+    "label": "an entrypoint on the observer goes unnoticed",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "        refute_match(/if __name__/, body, \"#{File.basename(path)} has an entrypoint\")",
+    "to": "        refute_match(/if __nope__/, body, \"#{File.basename(path)} has an entrypoint\")"
+  },
+  {
+    "label": "the observer may build a browser",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "        refute_match(/sync_playwright|connect_over_cdp|new_context|launch\\(/, body,",
+    "to": "        refute_match(/sync_nothing_at_all/, body,"
+  },
+  {
+    "label": "the node bound is discovered after reading",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if matches is obs.Cardinality.OVER_BUDGET:\n        raise Unreadable(obs.Inconclusive.BOUND_HIT, obs.Limit.NODES)",
+    "to": "    pass"
+  },
+  {
+    "label": "the worst case is not charged before the per-node phase",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if worst_case_reads(found) > reader.remaining + reader.reads:\n        raise Unreadable(obs.Inconclusive.BOUND_HIT, obs.Limit.PROBES)",
+    "to": "    pass"
+  },
+  {
+    "label": "the worst case forgets the per-node probes",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    return 1 + (nodes * per_node) + classify + ancestors + control + quantity",
+    "to": "    return 1 + classify + ancestors + control + quantity"
+  },
+  {
+    "label": "reads are not charged",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if self.remaining < cost:\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)",
+    "to": "        pass"
+  },
+  {
+    "label": "a browser exception escapes with its text",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        except Exception:\n            # Deliberately not `except PlaywrightError`: anything at all that\n            # goes wrong becomes the same token. Naming the library's classes\n            # here would leave every other failure to escape with its text.\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE) from None",
+    "to": "        except Exception as exc:\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE) from exc"
+  },
+  {
+    "label": "a count that is not a count is trusted",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if type(value) is not int or type(value) is bool or value < 0:\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)",
+    "to": "        pass"
+  },
+  {
+    "label": "two matching elements are not ambiguous",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if len(hits) > 1:\n        raise Unreadable(obs.Inconclusive.AMBIGUOUS)",
+    "to": "    pass"
+  },
+  {
+    "label": "a substring wins over an exact match",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if value == item_id:\n            return (attribute, obs.Relation.EQUALS_ITEM_ID)\n        if best is None and item_id in value:",
+    "to": "        if item_id in value:\n            return (attribute, obs.Relation.CONTAINS_ITEM_ID)\n        if best is None and value == item_id:"
+  },
+  {
+    "label": "the attribute order is whatever the loop found last",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if best is None and item_id in value:",
+    "to": "        if item_id in value:"
+  },
+  {
+    "label": "candidates are counted per attribute instead of per element",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    candidates = page.locator(CANDIDATES)\n    found = reader.count(candidates)",
+    "to": "    candidates = page.locator(CANDIDATES)\n    found = sum(reader.count(page.locator(f\"[{a.value}]\")) for a in ATTRIBUTES)"
+  },
+  {
+    "label": "the item id goes into the selector",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    candidates = page.locator(CANDIDATES)",
+    "to": "    candidates = page.locator(f\"[data-item-id='{target.item_id}']\")"
+  },
+  {
+    "label": "an unexpected control name is read anyway",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        control = line.get_by_role(obs.Role.BUTTON.value, name=name.value, exact=True)",
+    "to": "        control = line.get_by_role(obs.Role.BUTTON.value, name=name.value, exact=False)"
+  },
+  {
+    "label": "an unknown control name is not inconclusive",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    raise Unreadable(obs.Inconclusive.UNKNOWN_NAME)",
+    "to": "    return obs.ControlFinding(obs.Role.BUTTON, obs.Sentinel.REDACTED, True, False)"
+  },
+  {
+    "label": "a substring of the quantity counts as the quantity",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "                if type(text) is str and text.strip() == wanted:",
+    "to": "                if type(text) is str and wanted in str(text):"
+  },
+  {
+    "label": "preconditions run after the first read",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    try:\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    return walk(page, target, reader)",
+    "to": "    try:\n        reader.count(page.locator(CANDIDATES))\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    except Unreadable as stopped:\n        return obs.InconclusiveResult(reason=stopped.reason, limit=stopped.limit)\n    return walk(page, target, reader)"
+  },
+  {
+    "label": "a boolean quantity passes the precondition",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if type(quantity) is not int or type(quantity) is bool or quantity < 1:",
+    "to": "    if not isinstance(quantity, int) or quantity < 1:"
+  },
+  {
+    "label": "a non-digit item id passes the precondition",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if not isinstance(item_id, str) or not item_id.strip().isdigit():",
+    "to": "    if not isinstance(item_id, str):"
+  },
+  {
+    "label": "more than one line is still eligible",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if not isinstance(lines, list) or len(lines) != 1:",
+    "to": "    if not isinstance(lines, list) or not lines:"
+  },
+  {
+    "label": "the shared seller predicate is bypassed",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if not cart_mutate.is_first_party_line(line):\n        raise Refused(obs.Refusal.NOT_FIRST_PARTY)",
+    "to": "    pass"
+  },
+  {
+    "label": "the shared store predicate is bypassed",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        cart_mutate.assert_deliverable_from_the_pinned_store(cart, pinned_store)",
+    "to": "        pass"
+  },
+  {
+    "label": "the observer is not watched by the interaction alarm",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "    WATCHED = SCRIPTS + OBSERVERS",
+    "to": "    WATCHED = SCRIPTS"
+  },
+  {
+    "label": "a page dump in the observer goes unnoticed",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "    PAGE_DUMP = /\\.content\\s*\\(|screenshot|accessibility|inner_html|\\.snapshot\\s*\\(/",
+    "to": "    PAGE_DUMP = /nothing_of_the_sort/"
   }
 ]

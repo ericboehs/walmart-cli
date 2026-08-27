@@ -29,6 +29,14 @@ module Walmart
     # for being written in something else.
     SCRIPTS = Dir[File.expand_path("../../scripts/*", __dir__)].select { |path| File.file?(path) }
 
+    # The observer is not in scripts/ -- it has no entrypoint and cannot be run
+    # -- but it is the code that will one day be pointed at a real cart page,
+    # so it is held to the same alarm. A file escapes the interaction check by
+    # living somewhere the check does not look, and that is not a property
+    # anyone chose.
+    OBSERVERS = Dir[File.expand_path("../../pyworker/observ*.py", __dir__)]
+    WATCHED = SCRIPTS + OBSERVERS
+
     # Playwright's interaction surface, as far as we use or might use it.
     # Anything that moves a pointer, moves focus, changes a value, or hands
     # arbitrary code to the page.
@@ -81,15 +89,64 @@ module Walmart
     end
 
     def test_no_recon_script_calls_an_interaction_method
-      offenders = SCRIPTS.select { |path| code(path).match?(INTERACTION) }
+      offenders = WATCHED.select { |path| code(path).match?(INTERACTION) }
 
       assert_empty offenders.map { |path| File.basename(path) },
                    "a recon script acts. Observation does not require it, and the last " \
                    "script that acted did so on a DOM nobody had observed."
     end
 
+    def test_the_observer_is_watched_by_the_same_alarm_as_the_scripts
+      # Named, because a derived list that quietly became empty would make the
+      # test above pass by having nothing to check.
+      assert_includes WATCHED, File.expand_path("../../pyworker/observe_walk.py", __dir__)
+      assert_includes WATCHED, File.expand_path("../../pyworker/observation.py", __dir__)
+    end
+
+    PAGE_DUMP = /\.content\s*\(|screenshot|accessibility|inner_html|\.snapshot\s*\(/
+
+    # Synthetic, because an alarm with no sample is one nobody has heard. Each
+    # line is a way somebody could reasonably write the worst artefact this
+    # project could produce.
+    DUMPS = [
+      "    html = page.content()",
+      "    page.screenshot(path=out)",
+      "    tree = page.accessibility.snapshot()",
+      "    markup = node.inner_html()",
+      "    shot = locator.snapshot ()"
+    ].freeze
+
+    def test_the_page_dump_alarm_can_actually_sound
+      DUMPS.each { |line| assert_match PAGE_DUMP, line }
+      refute_match PAGE_DUMP, "    value = reader.read(node.get_attribute, name)"
+      refute_match PAGE_DUMP, "    text = reader.read(nodes.nth(index).text_content)"
+    end
+
+    def test_the_observer_never_dumps_a_page
+      offenders = OBSERVERS.select { |path| code(path).match?(PAGE_DUMP) }
+
+      assert_empty offenders.map { |path| File.basename(path) },
+                   "a page dump is the one artefact this project must never produce"
+    end
+
+    def test_the_observer_probes_only_the_attribute_names_it_declared
+      body = code(File.expand_path("../../pyworker/observe_walk.py", __dir__))
+      # Every line mentioning the probe, whatever shape the call takes. The
+      # first version of this looked for `get_attribute(...)` and found
+      # nothing, because the real call hands the method to the reader and
+      # passes the name alongside it. An alarm that assumes a call shape is an
+      # alarm watching a spelling.
+      probes = body.lines.grep(/get_attribute/)
+
+      refute_empty probes, "if nothing probes attributes this alarm is watching nothing"
+      probes.each do |probe|
+        assert_match(/attribute\.value/, probe,
+                     "an attribute probe named something other than the declared list")
+      end
+    end
+
     def test_every_recon_navigation_goes_through_the_gate
-      offenders = SCRIPTS.select { |path| code(path).match?(UNGATED_GOTO) }
+      offenders = WATCHED.select { |path| code(path).match?(UNGATED_GOTO) }
 
       assert_empty offenders.map { |path| File.basename(path) },
                    "page.goto skips safety.assert_navigable; session.goto does not"
@@ -113,15 +170,35 @@ module Walmart
     # is the kind of nearly-true sentence that stops being read. What must
     # stay absent is anything that can read a page or be run.
     OBSERVATION_DESIGN = File.expand_path("../../docs/DOM-OBSERVATION.md", __dir__)
-    NO_OBSERVER = "There is no page-reading observer and no runnable command."
+    NO_OBSERVER = "There is no runnable command, nothing constructs a browser, " \
+                  "and nothing has been observed."
 
-    def test_the_observation_design_still_says_no_tool_exists_only_while_none_does
-      claims_none = status_claims_no_observer?(File.read(OBSERVATION_DESIGN))
-      built = observer_paths(File.expand_path("../..", __dir__))
+    def test_the_observation_design_still_says_nothing_runnable_exists
+      assert status_claims_no_observer?(File.read(OBSERVATION_DESIGN)),
+             "the design's status line has stopped saying the observer cannot be run; " \
+             "either that is false, or this test is the thing that is out of date"
+    end
 
-      assert_equal claims_none, built.empty?,
-                   "docs/DOM-OBSERVATION.md and the tree disagree about whether the " \
-                   "observer exists: #{built.map { |p| File.basename(p) }.inspect}"
+    # The observer is code now, so "does it exist" stopped being the question.
+    # What must stay true is that it cannot be run and cannot open a browser by
+    # itself -- a module somebody has to wire up deliberately, reviewed before
+    # it ever sees a page.
+    def test_the_observer_has_no_way_to_be_run
+      observer_paths(File.expand_path("../..", __dir__)).each do |path|
+        body = code(path)
+
+        refute_match(/if __name__/, body, "#{File.basename(path)} has an entrypoint")
+        refute_match(/argparse|sys\.argv/, body, "#{File.basename(path)} parses arguments")
+        refute_match(/sync_playwright|connect_over_cdp|new_context|launch\(/, body,
+                     "#{File.basename(path)} builds a browser")
+        refute_match(/^\s*import\s+browser|from\s+browser\s+import/, body,
+                     "#{File.basename(path)} reaches for a session")
+      end
+    end
+
+    def test_no_observer_lives_in_scripts_where_the_runnable_things_are
+      assert_empty Dir[File.expand_path("../../scripts/observe*", __dir__)],
+                   "scripts/ is where a thing gets run from; the observer is not ready for that"
     end
 
     # Both sides of that assertion are true today, so it would pass with either
@@ -148,8 +225,8 @@ module Walmart
     def test_the_status_check_would_notice_the_sentence_going_missing
       refute status_claims_no_observer?("Status: the observer is implemented and runnable.")
       assert status_claims_no_observer?(
-        "Status: contract accepted. There is no page-reading\nobserver and no " \
-        "runnable command. Nothing has been observed."
+        "Status: the walker is implemented. There is no runnable command,\nnothing " \
+        "constructs a browser, and nothing has been observed."
       )
     end
 
