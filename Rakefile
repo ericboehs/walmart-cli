@@ -19,7 +19,15 @@ end
 
 desc "Run the Python worker tests"
 task :pytest do
-  sh "cd #{PYWORKER} && uv run --quiet pytest"
+  # Bytecode off, and not as a tidiness preference.
+  #
+  # An edit that lands in the same second as an import can leave a .pyc that
+  # Python considers current, and the suite then reports on code that no longer
+  # exists. It happened here: a fix to _read_label was already on disk while the
+  # test kept failing against the previous version. The mutation harness rewrites
+  # files far faster than once a second, so a mutant could be judged against
+  # stale bytecode and reported caught or survived either way.
+  sh "cd #{PYWORKER} && PYTHONDONTWRITEBYTECODE=1 uv run --quiet pytest"
 end
 
 desc "Lint and format-check the Python worker and scripts"

@@ -753,3 +753,79 @@ def test_no_cdp_url_is_the_ordinary_launch_path():
 def test_a_refused_url_never_becomes_options_at_all():
     with pytest.raises(browser.BrowserUnavailable):
         browser.BrowserOptions.from_request({"profile_dir": "/p", "cdp_url": "http://evil.com:9222"})
+
+
+# --- a guard on one constructor of two is a guard on none of them ---------------------
+
+
+def test_a_directly_built_options_still_validates_its_cdp_url():
+    """The check lived only on from_request, and both recon scripts build this
+    directly -- so --cdp-url could point anywhere, and an off-loopback debugging
+    endpoint hands a signed-in browser to whoever can route to it."""
+    with pytest.raises(browser.BrowserUnavailable):
+        browser.BrowserOptions(
+            profile_dir="/tmp/p", profile_lock="/tmp/p.lock", cdp_url="http://10.0.0.5:9222"
+        )
+
+
+def test_a_directly_built_options_keeps_a_loopback_url():
+    options = browser.BrowserOptions(
+        profile_dir="/tmp/p", profile_lock="/tmp/p.lock", cdp_url="http://127.0.0.1:9222"
+    )
+
+    assert options.cdp_url == "http://127.0.0.1:9222"
+    assert options.attached
+
+
+def test_a_directly_built_options_without_cdp_is_unattached():
+    options = browser.BrowserOptions(profile_dir="/tmp/p", profile_lock="/tmp/p.lock")
+
+    assert options.cdp_url is None
+    assert not options.attached
+
+
+# --- the accessible name, not the glyph -----------------------------------------------
+
+
+class GlyphButton:
+    """A button rendered as a bare "-" whose aria-label says something else.
+
+    The ordering bug this pins: inner_text was read first, so the gate was
+    shown "-" and approved it, while a screen reader -- and the person -- would
+    have been told the other thing.
+    """
+
+    def __init__(self, text, aria):
+        self.text, self.aria = text, aria
+        self.clicked = False
+
+    def inner_text(self, timeout=None):
+        return self.text
+
+    def get_attribute(self, name):
+        return {"aria-label": self.aria, "title": None, "value": None}.get(name)
+
+    def click(self, **kwargs):
+        self.clicked = True
+
+
+@pytest.fixture
+def session_for_label():
+    return browser.Session(None, browser.BrowserOptions(profile_dir="/p", profile_lock="/l"))
+
+
+def test_the_accessible_name_beats_the_visible_glyph(session_for_label):
+    button = GlyphButton("-", "Proceed to check out")
+
+    with pytest.raises(safety.UnsafeNavigation):
+        session_for_label.click(button)
+
+    assert not button.clicked
+
+
+def test_a_harmless_glyph_button_is_still_clickable(session_for_label):
+    button = GlyphButton("-", "Decrease quantity")
+
+    session_for_label.click(button)
+
+    assert button.clicked

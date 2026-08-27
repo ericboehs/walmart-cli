@@ -84,6 +84,17 @@ module Walmart
         end
       end
 
+      # Worker output is untrusted and a malformed value could carry page text.
+      # The operator needs the shape that was wrong, not the string itself.
+      def test_a_refusal_reports_the_shape_and_not_the_value
+        secret = "499 Main St, Owasso"
+        context = build_context(worker: worker_returning({ "fulfillment" => { "store_id" => [secret] } }))
+        error = assert_raises(Error) { Store.new(context).run(%w[store pin], []) }
+
+        refute_includes error.message, secret, "the refusal echoed the untrusted value"
+        assert_includes error.message, "Array"
+      end
+
       # Walmart's to keep. "0499".to_i is a different store.
       def test_a_leading_zero_survives_pinning
         run_store("pin", worker: worker_returning({ "fulfillment" => { "store_id" => "0499" } }))

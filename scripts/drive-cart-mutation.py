@@ -1,37 +1,55 @@
 #!/usr/bin/env python3
-"""Make one quantity change to one cart line, and record what Walmart answers.
+"""Make one quantity change to one cart line -- SHUT, and not yet runnable.
+
+DO NOT OPEN THE GATE TO MAKE THIS WORK. Read the list below first.
 
 This is the companion to scripts/capture-cart-mutation.py, which observes while
-a human clicks. That one stays as it is: it drives nothing, and the promise is
-worth keeping, because a recorder you can run without thinking is a different
-tool from one that acts. This script acts, deliberately, and says so.
+a human clicks and drives nothing. This one drives. Review found that the first
+version of it was not safe to run, and the honest fix was not a patch: it was
+this gate plus a redesign that has not been written yet.
 
-WHY IT EXISTS. The updateItems request has been observed. The response never
-has, so `walmart cart add` and `cart remove` refuse before they open a browser:
-there is no way to tell a change that worked from one that silently did
-nothing. That gate does not open on argument. It opens on a recorded response
-shape, and getting one means a real change to a real cart.
+WHY IT IS SHUT. It acted on a DOM contract nobody has observed. The script said
+so itself -- "the cart DOM has never been recorded" -- and then treated a
+selector as usable whenever exactly one element matched. Matching once is not
+being the right element. Cardinality is not identity, and every rule in this
+repository about not inventing a mapping applies with more force when the
+mapping is being clicked rather than parsed.
 
-WHAT IT DOES. Attaches to a Chrome you started and signed into, opens the cart,
-finds one line by item id, clicks that line's quantity control exactly once,
-waits for the answer, and puts the quantity back. Two mutations, both of them
-yours, ending where they started.
+WHAT ELSE HAS TO BE TRUE BEFORE IT RUNS, none of which is true today:
 
-WHAT IT WILL NOT DO. The cart is the only page it opens. Every navigation goes
-through safety.assert_navigable and every click through assert_clickable, so a
-control whose accessible name reads like an order flow is refused however the
-page is laid out. It never acts on a control it cannot find exactly once: if
-the page does not look the way it expects, it stops and tells you to run the
-human-driven capture instead. It does not retry:
-a refusal that arrives on its own is evidence, and one that had to be provoked
-is a request we had no reason to make.
+  1. The cart DOM observed read-only first, minimised and reviewed: which
+     element is a line, which control changes quantity, what the labels are,
+     and where the current quantity is written. DOM_CONTRACT_PROVEN below.
+  2. A pre-read of the line's current quantity, before any click. `--delta -1` on a line whose
+     quantity is 1 does not decrement it, it removes it, and this had no idea
+     which case it was in.
+  3. A restore that is conditional on knowing what happened. This restored
+     because a click had been attempted, in a `finally`, even when waiting for
+     the first answer had raised -- a second absolute write sent while the
+     first was still in flight, with no ordering guarantee about which one
+     Walmart applies last.
+  4. A post-read verification after each write, proving the quantity is exactly
+     what was intended. Nothing here read the cart back, so "restored" meant
+     "clicked something", which is the same defect as a 200 meaning success.
+  5. The same first-party, exact-line, pinned-store and delivery-intent guards
+     that pyworker/cart_mutate.py applies. Calling this recon does not make the
+     write it performs any less real, and a second path to a mutation that
+     skips the checks on the first path is how the checks stop meaning
+     anything.
+  6. An explicit state machine -- PRECHECKED, FIRST_UNVERIFIED, FIRST_VERIFIED,
+     RESTORE_UNVERIFIED, RESTORED -- with tests asserting both the number of
+     writes and the final quantity, and UNVERIFIED exiting 3 with the cart
+     state stated loudly on stderr rather than buried in a notes array.
 
-WHAT IT WRITES. Metadata and value-free shapes, through the same recorder the
-capture tool uses: url, method, resource type, operation, status, and body
-shape. No bodies, no headers. Output is 0600 in a gitignored directory.
+RETRACTED. The first version of this docstring promised "two mutations, both of
+them yours, ending where they started". The code could not make that promise:
+it could leave a line one lower than it found it, or removed, and say
+"restored". A promise a function cannot keep is worse than no promise, because
+it is the thing a reviewer reads instead of the code.
 
-    walmart browser start          # sign in, clear any press-and-hold
-    ./scripts/drive-cart-mutation.py --item-id 33282303 --yes
+WHAT IS STILL TRUE. The cart is the only page it would open, navigation and
+clicks go through the safety gates, and it refuses any control it cannot find
+exactly once. Those are necessary and they were never sufficient.
 """
 
 from __future__ import annotations
@@ -48,6 +66,18 @@ import browser  # noqa: E402
 import safety  # noqa: E402
 
 CART_URL = f"{browser.WALMART_ORIGIN}/cart"
+
+# The gate. Shut, and not openable by editing this line alone.
+#
+# False means: no one has observed Walmart's cart DOM, so every selector below
+# is a guess, and a guess that gets clicked is a write to a real cart. See the
+# numbered list in the module docstring -- the DOM is item 1 of six, and this
+# flag is only the first of them.
+#
+# The same shape as ACCEPTED_RESPONSE_SHAPE and PER_LINE_DELIVERY_PROVEN: one
+# gate per unknown, and this unknown is "which element is the thing I think it
+# is".
+DOM_CONTRACT_PROVEN = False
 
 # How to find one cart line, in order of preference.
 #
@@ -82,13 +112,25 @@ def capture_module():
     Two recorders would be two things to keep honest, and the shape rules are
     the part most likely to drift. The file name has a hyphen, so it is loaded
     by path rather than imported.
+
+    Cached, and not only for speed. Re-executing the script handed back a fresh
+    module every call, so run() and its tests held different objects with the
+    same name: a test that replaced default_out_dir replaced it on a module
+    nobody was using, and the run wrote to the real recon directory instead of
+    the temporary one. Two copies of a module is two of everything in it.
     """
-    path = ROOT / "scripts" / "capture-cart-mutation.py"
-    spec = importlib.util.spec_from_file_location("capture_cart_mutation", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("capture_cart_mutation", module)
-    spec.loader.exec_module(module)
-    return module
+    global _CAPTURE
+    if _CAPTURE is None:
+        path = ROOT / "scripts" / "capture-cart-mutation.py"
+        spec = importlib.util.spec_from_file_location("capture_cart_mutation", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["capture_cart_mutation"] = module
+        spec.loader.exec_module(module)
+        _CAPTURE = module
+    return _CAPTURE
+
+
+_CAPTURE = None
 
 
 def find_line(page, item_id: str):
@@ -132,11 +174,21 @@ def find_control(page, line, delta: int):
         control = line.get_by_role("button", name=label)
         count = control.count()
         if count == 1:
-            name = control.get_attribute("aria-label") or label
-            # Belt and braces: the name came off the page, so it is not ours
-            # to trust. A "Decrease quantity" button that Walmart has since
-            # relabelled into an order flow is not a quantity button, and this
-            # is the gate that notices.
+            # The search word is not the control's name. Passing `label` here
+            # asked the click gate whether the string "decrease" was safe --
+            # which it always is, whatever the button actually says. A button
+            # whose accessible name is an order flow and which merely *matches*
+            # "decrease" would have sailed through a gate that was, in effect,
+            # inspecting the query.
+            #
+            # So: read the real name, and refuse when it cannot be read. An
+            # unreadable label is not an absent risk.
+            name = control.get_attribute("aria-label")
+            if not name or not str(name).strip():
+                raise Refused(
+                    f"a control matching {label!r} has no readable accessible name; "
+                    "refusing to click something this cannot describe"
+                )
             safety.assert_clickable(name)
             return control, name
         if count > 1:
@@ -205,6 +257,20 @@ def restore(page, recorder, item_id: str, delta: int, settle) -> str:
         )
 
 
+REFUSAL = """refusing: this script is shut.
+
+It would click a control chosen by guessed selectors, on a cart DOM nobody has
+observed, without reading the line's current quantity first and without
+verifying either write afterwards. On a line whose quantity is 1 a decrement
+removes the line, and it could not tell that case from any other.
+
+See the module docstring for the six things that must be true before
+DOM_CONTRACT_PROVEN can change. Until then, to observe a cart mutation:
+
+    ./scripts/capture-cart-mutation.py --yes    # you click, it watches
+"""
+
+
 CONSENT = """This will change your cart.
 
 It clicks one quantity control on item {item_id} ({delta:+d}), records the shape
@@ -234,11 +300,21 @@ def confirm(item_id: str, delta: int, read_line=None) -> bool:
 
 def run(args) -> int:
     capture = capture_module()
+    # Before consent, before the browser, before anything that could touch the
+    # cart. A gate that is checked after the prompt is a gate that has already
+    # let the user believe the tool is ready.
+    if not DOM_CONTRACT_PROVEN:
+        print(REFUSAL, file=sys.stderr)
+        return 2
+
     if not args.yes and not confirm(args.item_id, args.delta):
         print("declined; nothing was clicked", file=sys.stderr)
         return 2
 
-    out = Path(args.out) if args.out else None
+    # Recorder(None) would build `None / "capture.json"` and blow up in the
+    # finally, which is where the diagnosis lives -- so the documented example
+    # without --out crashed instead of reporting.
+    out = Path(args.out) if args.out else capture.default_out_dir()
     recorder = capture.Recorder(out)
     notes: list[str] = [f"driven: item {args.item_id}, delta {args.delta:+d}"]
     status = 0
@@ -247,7 +323,10 @@ def run(args) -> int:
     try:
         options = browser.BrowserOptions(
             profile_dir=args.profile,
-            profile_lock=str(Path(args.profile) / ".lock"),
+            # The same lock path the capture script and the worker use. A
+            # different one is not a lock: two tools would each hold their own
+            # and drive the same profile.
+            profile_lock=args.profile + ".lock",
             headless=False,
             cdp_url=args.cdp_url,
         )

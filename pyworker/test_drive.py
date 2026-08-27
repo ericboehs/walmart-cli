@@ -10,6 +10,7 @@ script is treated as a guess that must match exactly once.
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import json
 import sys
@@ -23,7 +24,16 @@ sys.path.insert(0, str(ROOT / "pyworker"))
 import safety  # noqa: E402
 
 
+@functools.lru_cache(maxsize=1)
 def _driver():
+    """One module object for the whole suite.
+
+    A fresh exec per call gave each test its own copy, so monkeypatching one
+    left the copy under test untouched -- which is how a test meant to redirect
+    output into tmp_path wrote to the real recon directory instead. monkeypatch
+    undoes its own attributes, so sharing is safe; two modules of the same name
+    never are.
+    """
     path = ROOT / "scripts" / "drive-cart-mutation.py"
     spec = importlib.util.spec_from_file_location("drive_cart_mutation", path)
     module = importlib.util.module_from_spec(spec)
@@ -276,6 +286,7 @@ def test_an_unanswered_request_is_noted():
 
 def test_declining_the_prompt_clicks_nothing(tmp_path, monkeypatch, capsys):
     driver = _driver()
+    monkeypatch.setattr(driver, "DOM_CONTRACT_PROVEN", True)
     opened = []
     monkeypatch.setattr(driver.browser, "BrowserOptions", lambda **k: object())
     monkeypatch.setattr(driver.browser, "open_session", lambda _o: opened.append(1))
@@ -312,7 +323,15 @@ def test_the_prompt_says_the_cart_will_change():
 
 
 def test_an_unavailable_browser_exits_two_and_writes_what_it_knows(tmp_path, monkeypatch):
+    """Reached by opening the gate here, which is the only place it opens.
+
+    Everything below the gate is unreachable in production now. It is still
+    tested, because the gate is meant to open one day and a path nobody
+    exercises rots quietly -- but each of these tests has to say out loud that
+    it opened it, or it is a test of the gate wearing another name.
+    """
     driver = _driver()
+    monkeypatch.setattr(driver, "DOM_CONTRACT_PROVEN", True)
 
     def unavailable(_options):
         raise driver.browser.BrowserUnavailable("no Chrome on 9222")
@@ -337,6 +356,7 @@ def test_a_run_that_clicked_but_learned_nothing_exits_nonzero(tmp_path, monkeypa
     """The whole point is the response. Clicking without one is a failed run."""
     driver = _driver()
     page = cart_with_one_line()
+    monkeypatch.setattr(driver, "DOM_CONTRACT_PROVEN", True)
 
     class Session:
         def __init__(self):
@@ -376,6 +396,13 @@ def _driver_capture():
     return _driver().capture_module()
 
 
+def test_the_capture_module_is_one_object_not_a_fresh_copy_each_call():
+    """Two copies of a module is two of everything in it, including the gates."""
+    driver = _driver()
+
+    assert driver.capture_module() is driver.capture_module()
+
+
 # --- the only page it ever opens ------------------------------------------------------
 
 
@@ -406,6 +433,7 @@ def test_the_navigation_gate_is_on_the_path_that_acts(tmp_path, monkeypatch):
     """
     driver = _driver()
     page = cart_with_one_line()
+    monkeypatch.setattr(driver, "DOM_CONTRACT_PROVEN", True)
 
     class Session:
         def __init__(self):
@@ -443,3 +471,137 @@ def test_the_navigation_gate_is_on_the_path_that_acts(tmp_path, monkeypatch):
     assert driver.run(args) == 2
     assert page.goto_urls == [], "it navigated to a forbidden destination"
     assert page.clicked == []
+
+
+# --- the gate -------------------------------------------------------------------------
+#
+# Review found this script was not safe to run: it acted on a DOM contract
+# nobody has observed, restored on the strength of having attempted a click,
+# and never read the cart back to see what it had done. It is shut until the
+# six conditions in its docstring are met.
+
+
+def test_the_gate_is_shut():
+    assert _driver().DOM_CONTRACT_PROVEN is False
+
+
+def test_a_shut_gate_refuses_before_the_browser_is_opened(tmp_path, monkeypatch):
+    """Before consent, before the browser, before anything that could write."""
+    driver = _driver()
+    opened = []
+    monkeypatch.setattr(driver.browser, "BrowserOptions", lambda **k: opened.append("options"))
+    monkeypatch.setattr(driver.browser, "open_session", lambda _o: opened.append("session"))
+    monkeypatch.setattr("builtins.input", lambda _p: pytest.fail("it asked before it refused"))
+    args = argparse.Namespace(
+        item_id="33282303",
+        delta=-1,
+        out=str(tmp_path),
+        profile=str(tmp_path),
+        cdp_url="http://127.0.0.1:9222",
+        yes=False,
+    )
+
+    assert driver.run(args) == 2
+    assert opened == []
+    assert not (tmp_path / "capture.json").exists(), "a refused run wrote a capture"
+
+
+def test_yes_does_not_open_the_gate(tmp_path, monkeypatch):
+    """--yes skips the prompt. A flag that can be toggled must not be the gate."""
+    driver = _driver()
+    opened = []
+    monkeypatch.setattr(driver.browser, "BrowserOptions", lambda **k: opened.append("options"))
+    monkeypatch.setattr(driver.browser, "open_session", lambda _o: opened.append("session"))
+    args = argparse.Namespace(
+        item_id="33282303",
+        delta=-1,
+        out=str(tmp_path),
+        profile=str(tmp_path),
+        cdp_url="http://127.0.0.1:9222",
+        yes=True,
+    )
+
+    assert driver.run(args) == 2
+    assert opened == []
+
+
+def test_the_refusal_names_the_worst_case_rather_than_being_vague():
+    """ "Not ready" invites someone to flip the flag. "It can delete a line" does not."""
+    driver = _driver()
+
+    assert "quantity is 1" in driver.REFUSAL
+    assert "removes the line" in driver.REFUSAL
+    assert "capture-cart-mutation.py" in driver.REFUSAL, "a refusal should name the way that works"
+
+
+def test_the_docstring_lists_what_must_be_observed():
+    driver = _driver()
+
+    for required in ("DOM_CONTRACT_PROVEN", "pre-read", "post-read", "cart_mutate.py", "RETRACTED"):
+        assert required in driver.__doc__, f"the docstring stopped mentioning {required}"
+
+
+def test_the_click_gate_sees_the_control_not_the_search_word():
+    """Passing the query to the gate asks whether "decrease" is safe.
+
+    It always is. The question is whether the *button* is, and the button is
+    the thing that gets clicked.
+    """
+    driver = _driver()
+    page = cart_with_one_line()
+    page.buttons["decrease"] = FakeLocator(page, count=1, label="Proceed to check out")
+    line, _ = driver.find_line(page, "33282303")
+
+    with pytest.raises(safety.UnsafeNavigation):
+        driver.find_control(page, line, -1)
+
+
+def test_a_control_with_no_readable_name_is_refused():
+    """An unreadable label is not an absent risk."""
+    driver = _driver()
+    page = cart_with_one_line()
+    page.buttons["decrease"] = FakeLocator(page, count=1, label=None)
+    line, _ = driver.find_line(page, "33282303")
+
+    with pytest.raises(driver.Refused) as exc:
+        driver.find_control(page, line, -1)
+
+    assert "readable" in str(exc.value)
+
+
+def test_the_profile_lock_matches_the_other_tools():
+    """A lock at a different path is not a lock: each tool would hold its own."""
+    source = (ROOT / "scripts" / "drive-cart-mutation.py").read_text()
+    capture = (ROOT / "scripts" / "capture-cart-mutation.py").read_text()
+
+    assert 'profile_lock=args.profile + ".lock"' in source
+    assert 'profile_lock=args.profile + ".lock"' in capture
+    assert "Path(args.profile) / " not in source
+
+
+def test_a_run_without_out_writes_somewhere_real(tmp_path, monkeypatch):
+    """Recorder(None) built `None / "capture.json"` and blew up in the finally.
+
+    The finally is where the diagnosis lives, so the documented example -- the
+    one without --out -- crashed instead of reporting.
+    """
+    driver = _driver()
+    monkeypatch.setattr(driver, "DOM_CONTRACT_PROVEN", True)
+    monkeypatch.setattr(driver.browser, "BrowserOptions", lambda **k: object())
+
+    def unavailable(_options):
+        raise driver.browser.BrowserUnavailable("no Chrome")
+
+    monkeypatch.setattr(driver.browser, "open_session", unavailable)
+    monkeypatch.setattr(driver.capture_module(), "default_out_dir", lambda: tmp_path / "fallback")
+    args = argparse.Namespace(
+        item_id="33282303",
+        delta=-1,
+        out=None,
+        profile=str(tmp_path),
+        cdp_url="http://127.0.0.1:9222",
+        yes=True,
+    )
+
+    assert driver.run(args) == 2
+    assert (tmp_path / "fallback" / "capture.json").exists()

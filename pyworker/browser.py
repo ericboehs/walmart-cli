@@ -238,6 +238,16 @@ class BrowserOptions:
     # because a human made it.
     cdp_url: str | None = None
 
+    def __post_init__(self):
+        # Here rather than in from_request, because a dataclass has more than
+        # one way in. The check lived only on the classmethod, so both recon
+        # scripts -- which build this directly -- could pass --cdp-url pointing
+        # anywhere, and an off-loopback debugging endpoint hands a signed-in
+        # browser to whoever can route to it.
+        #
+        # A guard on one constructor of two is a guard on none of them.
+        object.__setattr__(self, "cdp_url", _checked_cdp_url(self.cdp_url))
+
     @classmethod
     def from_request(cls, options: dict[str, Any], headless: bool | None = None) -> BrowserOptions:
         """Build options from a worker request.
@@ -440,12 +450,21 @@ class Session:
         return locator.click(**kwargs)
 
     def _read_label(self, locator) -> str | None:
-        """Best-effort label from the DOM. Returns None when nothing is readable."""
+        """Best-effort accessible name. Returns None when nothing is readable.
+
+        Order matters, and it used to be wrong. inner_text came first, so a
+        button rendered as a bare glyph -- "-", "+", an icon -- was described to
+        the click gate by its glyph while its aria-label said something else
+        entirely. The gate then approved "-". The accessible name is what a
+        screen reader would announce and what a person would understand
+        themselves to be clicking, so it is asked first and the visible text is
+        the last resort.
+        """
         readers = (
-            lambda: locator.inner_text(timeout=1000),
             lambda: locator.get_attribute("aria-label"),
-            lambda: locator.get_attribute("value"),
             lambda: locator.get_attribute("title"),
+            lambda: locator.get_attribute("value"),
+            lambda: locator.inner_text(timeout=1000),
         )
         for reader in readers:
             try:

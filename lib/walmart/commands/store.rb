@@ -68,7 +68,14 @@ module Walmart
 
         id = data.is_a?(Hash) ? data.dig("fulfillment", "store_id") : nil
         return nil if id.nil? || (id.is_a?(String) && id.strip.empty?)
-        raise Error, "Walmart named a store this cannot use: #{id.inspect}" unless valid_store_id?(id)
+        # The class, not the value. Worker output is untrusted, and a malformed
+        # nested value could carry text from the page; `#{id.inspect}` would
+        # print it to a terminal and into whatever captured that terminal. What
+        # the operator needs is the shape that was wrong.
+        unless valid_store_id?(id)
+          raise Error,
+                "Walmart named a store this cannot use: expected a string of digits, got a #{id.class}"
+        end
 
         id
       end

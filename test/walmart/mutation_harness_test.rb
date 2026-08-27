@@ -66,5 +66,20 @@ module Walmart
       thread.join
       flunk "script/mutate did not return within #{PATIENCE}s; its timeout is not working"
     end
+
+    # A child that imports stale bytecode is judging the previous mutant. The
+    # harness rewrites files in well under the one second Python uses to decide
+    # a .pyc is current, so this is not hypothetical -- the same staleness hid a
+    # real fix from a real test in this repo.
+    def test_children_are_told_not_to_write_bytecode
+      source = File.read(File.expand_path("../../script/mutate", __dir__))
+
+      assert_includes source, "PYTHONDONTWRITEBYTECODE"
+    end
+
+    def test_the_pytest_task_is_told_the_same_thing
+      assert_includes File.read(File.expand_path("../../Rakefile", __dir__)),
+                      "PYTHONDONTWRITEBYTECODE=1 uv run --quiet pytest"
+    end
   end
 end

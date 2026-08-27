@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 81 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 90 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -31,6 +31,15 @@ Each of these was written deliberately, read fine, and passed:
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
+| stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
+| a driver acting on an unobserved DOM | it treated "exactly one element matched" as proof the element was the right one; cardinality is not identity, and the click is a write |
+| restore in a `finally` after an attempted click | a second absolute write could be sent while the first was still in flight, with no ordering guarantee about which one Walmart applied last |
+| `--delta -1` with no pre-read | on a line whose quantity is 1, a decrement removes the line, and nothing knew which case it was in |
+| "restored" meaning "clicked something" | no read-back proved the quantity, which is a 200 meaning success wearing another hat |
+| the click gate shown the search word | `assert_clickable("decrease")` asks whether the query is safe, which it always is; the button is the thing that gets clicked |
+| `inner_text` read before `aria-label` | a button rendered as a bare glyph was described to the gate as "-" while a screen reader would announce something else entirely |
+| cdp validation on one constructor of two | it lived on `from_request`, and both recon scripts build `BrowserOptions` directly, so `--cdp-url` could point off-loopback |
+| a module re-executed per call | run() and its tests held different objects of the same name, so a test redirecting output patched a module nobody was using and wrote to the real recon directory |
 | `read_line=input` as a default argument | evaluated once at definition, so the first test that replaced input found it had replaced nothing and sat waiting on a real terminal |
 | a refusal test on an empty page | the restore it was policing would have failed anyway, so it passed whether or not the guard existed, and a mutant that always restored survived it |
 | `store_id.to_s` | the command took whatever the worker called a store -- an Array, a Hash, `true` -- and turned it into something that read like an id right up to the moment it was compared with a real one |
@@ -132,7 +141,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-81 defects in the table below. 187 mutants in `script/mutants.json`.
+90 defects in the table below. 198 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -322,6 +331,15 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A test can be reporting on code that no longer exists.** Bytecode caching
+  is resolved at one-second granularity and a mutation harness edits faster
+  than that.
+- **Cardinality is not identity.** One element matching a guessed selector is
+  not evidence that it is the element you meant, and the difference matters
+  most when the next step is a click rather than a parse.
+- **A second path to a mutation must carry the first path's guards.** Calling
+  it recon does not make the write less real.
+- **Two copies of a module is two of everything in it,** including its gates.
 - **Give a guard something it could really have broken.** A refusal tested on a
   page with nothing to click is a refusal tested against nothing.
 - **A constant hides the gate that checks it.** `assert_navigable(CART_URL)` can

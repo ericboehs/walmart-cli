@@ -155,7 +155,12 @@ class Runner
   # say so rather than wait to be cancelled. Cancellation is also the one path
   # that leaves the tree mutated, so an unbounded wait makes that likelier too.
   def run(command = nil, fail_fast: false)
-    env = fail_fast ? { "MUTATE_FAIL_FAST" => "1" } : {}
+    # PYTHONDONTWRITEBYTECODE, because mutants are applied and reverted far
+    # faster than the one-second granularity Python uses to decide a .pyc is
+    # current. A child that imports stale bytecode is judging the previous
+    # mutant, and it would report "caught" or "survived" with equal confidence.
+    env = { "PYTHONDONTWRITEBYTECODE" => "1" }
+    env["MUTATE_FAIL_FAST"] = "1" if fail_fast
     out = +""
     status = nil
 

@@ -1834,7 +1834,7 @@
   {
     "label": "the command trusts whatever the worker called a store",
     "file": "lib/walmart/commands/store.rb",
-    "from": "        raise Error, \"Walmart named a store this cannot use: #{id.inspect}\" unless valid_store_id?(id)",
+    "from": "        unless valid_store_id?(id)\n          raise Error,\n                \"Walmart named a store this cannot use: expected a string of digits, got a #{id.class}\"\n        end",
     "to": "        id = id.to_s"
   },
   {
@@ -1982,5 +1982,135 @@
       "pytest",
       "pyworker/test_drive.py"
     ]
+  },
+  {
+    "label": "the driver gate is open",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "DOM_CONTRACT_PROVEN = False",
+    "to": "DOM_CONTRACT_PROVEN = True",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "the driver gate is checked after the prompt",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "    if not DOM_CONTRACT_PROVEN:\n        print(REFUSAL, file=sys.stderr)\n        return 2",
+    "to": "    pass",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "the click gate is shown the search word",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "            name = control.get_attribute(\"aria-label\")\n            if not name or not str(name).strip():",
+    "to": "            name = control.get_attribute(\"aria-label\") or label\n            if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "an unreadable control name is allowed",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "            if not name or not str(name).strip():",
+    "to": "            if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "the capture module is re-executed per call",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "    global _CAPTURE\n    if _CAPTURE is None:",
+    "to": "    global _CAPTURE\n    if True:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "the driver locks a different path",
+    "file": "scripts/drive-cart-mutation.py",
+    "from": "            profile_lock=args.profile + \".lock\",",
+    "to": "            profile_lock=args.profile + \"/.lock\",",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_drive.py"
+    ]
+  },
+  {
+    "label": "cdp validation stays on one constructor",
+    "file": "pyworker/browser.py",
+    "from": "        object.__setattr__(self, \"cdp_url\", _checked_cdp_url(self.cdp_url))",
+    "to": "        pass",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "the visible glyph beats the accessible name",
+    "file": "pyworker/browser.py",
+    "from": "            lambda: locator.get_attribute(\"aria-label\"),\n            lambda: locator.get_attribute(\"title\"),\n            lambda: locator.get_attribute(\"value\"),\n            lambda: locator.inner_text(timeout=1000),",
+    "to": "            lambda: locator.inner_text(timeout=1000),\n            lambda: locator.get_attribute(\"aria-label\"),\n            lambda: locator.get_attribute(\"value\"),\n            lambda: locator.get_attribute(\"title\"),",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_browser.py"
+    ]
+  },
+  {
+    "label": "a store refusal echoes the untrusted value",
+    "file": "lib/walmart/commands/store.rb",
+    "from": "\"Walmart named a store this cannot use: expected a string of digits, got a #{id.class}\"",
+    "to": "\"Walmart named a store this cannot use: #{id.inspect}\""
+  },
+  {
+    "label": "mutation children may write bytecode",
+    "file": "script/mutate",
+    "from": "    env = { \"PYTHONDONTWRITEBYTECODE\" => \"1\" }",
+    "to": "    env = {}"
+  },
+  {
+    "label": "pytest may write bytecode",
+    "file": "Rakefile",
+    "from": "PYTHONDONTWRITEBYTECODE=1 uv run --quiet pytest",
+    "to": "uv run --quiet pytest"
   }
 ]
