@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 90 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 91 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -32,6 +32,7 @@ Each of these was written deliberately, read fine, and passed:
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
+| a gate that was one boolean | its own comment said "not openable by editing this line alone" and `run()` checked exactly that constant; five of six preconditions were prose, so one edit restored the whole unsafe path |
 | a driver acting on an unobserved DOM | it treated "exactly one element matched" as proof the element was the right one; cardinality is not identity, and the click is a write |
 | restore in a `finally` after an attempted click | a second absolute write could be sent while the first was still in flight, with no ordering guarantee about which one Walmart applied last |
 | `--delta -1` with no pre-read | on a line whose quantity is 1, a decrement removes the line, and nothing knew which case it was in |
@@ -141,7 +142,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-90 defects in the table below. 198 mutants in `script/mutants.json`.
+91 defects in the table below. 184 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -334,6 +335,10 @@ more than another assertion on behaviour.
 - **A test can be reporting on code that no longer exists.** Bytecode caching
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
+- **A shut door whose key is one source edit is a TODO wearing a lock.** When
+  the mechanisms a gate should test do not exist yet, delete the code the gate
+  guards; that is the only version of "off" that does not depend on the next
+  person reading the docstring.
 - **Cardinality is not identity.** One element matching a guessed selector is
   not evidence that it is the element you meant, and the difference matters
   most when the next step is a click rather than a parse.

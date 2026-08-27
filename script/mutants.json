@@ -1844,230 +1844,6 @@
     "to": "    \"store_id\": \"5260\",\n    \"name\": \"Owasso\""
   },
   {
-    "label": "the driver picks the first of several matching lines",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "        if count > 1:\n            raise Refused(\n                f\"{count} elements match {selector!r}. This cannot say which line it would \"\n                \"change, so it changes none of them.\"\n            )",
-    "to": "        if count > 1:\n            return page.locator(selector), selector",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver clicks a control without checking its name",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "            safety.assert_clickable(name)",
-    "to": "            pass",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver accepts any delta",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "    if delta not in QUANTITY_LABELS:",
-    "to": "    if False:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver leaves the cart changed",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "        if clicked:\n            notes.append(restore(page, recorder, item_id, delta, settle))",
-    "to": "        pass",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "a restore that fails is silent",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "            f\"RESTORE FAILED ({type(exc).__name__}: {exc}). The cart is still {delta:+d} on item \"",
-    "to": "            f\"restored ({type(exc).__name__}: {exc}) item \"",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver restores something it never clicked",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "        if clicked:\n            notes.append",
-    "to": "        if True:\n            notes.append",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "consent accepts a bare y",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": ".strip().lower() == \"yes\"",
-    "to": ".strip().lower().startswith(\"y\")",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the prompt is skipped",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "    if not args.yes and not confirm(args.item_id, args.delta):",
-    "to": "    if False:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver navigates without the gate",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "safety.assert_navigable(CART_URL)",
-    "to": "CART_URL",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "consent is frozen to the input that existed at definition",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "    read_line = read_line or input",
-    "to": "    read_line = read_line",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver gate is open",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "DOM_CONTRACT_PROVEN = False",
-    "to": "DOM_CONTRACT_PROVEN = True",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver gate is checked after the prompt",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "    if not DOM_CONTRACT_PROVEN:\n        print(REFUSAL, file=sys.stderr)\n        return 2",
-    "to": "    pass",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the click gate is shown the search word",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "            name = control.get_attribute(\"aria-label\")\n            if not name or not str(name).strip():",
-    "to": "            name = control.get_attribute(\"aria-label\") or label\n            if False:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "an unreadable control name is allowed",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "            if not name or not str(name).strip():",
-    "to": "            if False:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the capture module is re-executed per call",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "    global _CAPTURE\n    if _CAPTURE is None:",
-    "to": "    global _CAPTURE\n    if True:",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
-    "label": "the driver locks a different path",
-    "file": "scripts/drive-cart-mutation.py",
-    "from": "            profile_lock=args.profile + \".lock\",",
-    "to": "            profile_lock=args.profile + \"/.lock\",",
-    "command": [
-      "uv",
-      "run",
-      "--project",
-      "pyworker",
-      "pytest",
-      "pyworker/test_drive.py"
-    ]
-  },
-  {
     "label": "cdp validation stays on one constructor",
     "file": "pyworker/browser.py",
     "from": "        object.__setattr__(self, \"cdp_url\", _checked_cdp_url(self.cdp_url))",
@@ -2112,5 +1888,17 @@
     "file": "Rakefile",
     "from": "PYTHONDONTWRITEBYTECODE=1 uv run --quiet pytest",
     "to": "uv run --quiet pytest"
+  },
+  {
+    "label": "a recon script may click",
+    "file": "test/walmart/recon_tools_test.rb",
+    "from": "    CLICK = /\\.click\\s*\\(/",
+    "to": "    CLICK = /\\.click_nothing_ever\\s*\\(/"
+  },
+  {
+    "label": "ungated navigation is allowed in recon scripts",
+    "file": "test/walmart/recon_tools_test.rb",
+    "from": "    UNGATED_GOTO = /(?<!session)\\.goto\\s*\\(/",
+    "to": "    UNGATED_GOTO = /(?<!x)\\.never_goto\\s*\\(/"
   }
 ]

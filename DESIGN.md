@@ -514,6 +514,70 @@ Mutation result states follow the proven amazon-cli pattern:
 | 2 | Usage error, declined prompt, missing `--confirm`, or unsafe/ineligible request |
 | 3 | Mutation may have happened but verification could not be completed |
 
+### Driving a cart mutation: what must exist first
+
+The `updateItems` request has been observed going out. Nothing has ever been
+recorded coming back, which is why `cart add` and `cart remove` refuse before
+opening a browser: with no known response shape there is no way to distinguish
+a change that worked from one that silently did nothing.
+
+A script to obtain that evidence -- one quantity change, driven, while the
+recorder watched -- was written, reviewed, found unsafe, gated shut, and then
+deleted. It is recorded here rather than in a comment because a comment lives
+in the file it is warning you about.
+
+Why it was deleted rather than left disabled: its gate was one boolean, and its
+own comment claimed to be "not openable by editing this line alone". That was
+false. `run()` checked that constant and nothing else, so a single edit
+restored the whole unsafe path. A shut door whose key is one source edit is a
+TODO wearing a lock. Deleting the acting code is the only version of "off" that
+does not depend on the next person reading the docstring.
+
+What it got wrong, all of which the replacement must get right:
+
+1. **The DOM was never observed.** It treated "exactly one element matched a
+   guessed selector" as licence to click. Cardinality is not identity. A
+   read-only, minimised, reviewed observation of the cart DOM comes first:
+   which element is a line, which control changes quantity, what the controls
+   are named, and where the current quantity is written.
+2. **No pre-read.** `--delta -1` on a line whose quantity is 1 does not
+   decrement it, it removes it, and nothing knew which case it was in.
+3. **Restore was unconditional.** It restored in a `finally` because a click
+   had been *attempted*, even when waiting for the first answer had raised --
+   a second absolute write possibly issued while the first was still in flight,
+   with no ordering guarantee about which Walmart applies last. A restore must
+   be conditional on knowing what the first write did.
+4. **Nothing was verified.** No read-back, so "restored" meant "clicked
+   something". That is a 200 meaning success wearing a different hat.
+5. **It was a second path around the first path's guards.** It checked none of
+   what `pyworker/cart_mutate.py` checks: first-party seller, exact offer and
+   item variant, DELIVERY intent, pinned-store agreement, per-line delivery
+   eligibility. Calling a tool recon does not make the write it performs less
+   real, and a second route that skips the checks is how the checks stop
+   meaning anything.
+6. **Two outcomes where there are five.** The replacement is a state machine --
+   PRECHECKED, FIRST_UNVERIFIED, FIRST_VERIFIED, RESTORE_UNVERIFIED, RESTORED
+   -- with tests asserting both the number of writes and the final quantity.
+   Either unverified state exits 3 and says the cart's condition loudly on
+   stderr. No cart state may be lost to a traceback or buried in a notes array.
+
+Two more requirements that do not depend on the DOM and must be satisfied by
+whatever comes back:
+
+- **The item id is validated before it reaches a selector.** Every `usItemId`
+  ever observed is a non-blank string of digits. The deleted version
+  interpolated an arbitrary argument straight into a CSS selector, which is an
+  injection sink kept as a default.
+- **Persisted notes carry categories, not contents.** The deleted version wrote
+  the item id, the delta and the control's label into a file whose stated
+  contract is value-free, and the whole-file canary did not cover the notes.
+
+Until all of this exists, the way to observe a cart mutation is
+`scripts/capture-cart-mutation.py`, where a person clicks and the tool only
+watches. `test/walmart/recon_tools_test.rb` enforces the boundary in the
+meantime: no recon script clicks, and navigation goes through the gated entry
+point.
+
 ### Store pinning
 
 `store pin` reads Walmart's active grocery store from the authenticated
