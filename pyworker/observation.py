@@ -310,6 +310,10 @@ class LineFinding:
 class ControlFinding:
     """A quantity control, and whether it could be used right now.
 
+    `inside_line` says whether the control descends from the element that
+    carried the item id, rather than from the line container resolved around
+    it. Both are ordinary shapes and neither disqualifies an observation.
+
     `disabled` is reported, not required to be false, and the choice is
     deliberate rather than left over. `observed` here means *identified*: this
     element is the quantity control for this line. It does not mean an acting
@@ -365,7 +369,14 @@ class ObservedResult:
             self.line.matches is Cardinality.ONE
             and self.line.relation in (Relation.EQUALS_ITEM_ID, Relation.CONTAINS_ITEM_ID)
             and self.quantity.relation is Relation.EQUALS_QUANTITY
-            and self.control.inside_line
+            # `inside_line` is reported, not required. It used to be required,
+            # which quietly ruled out the likely real shape: the item id on an
+            # anchor with the quantity buttons as siblings in the surrounding
+            # line. The control still has to have been found within the
+            # resolved container, and the ancestors record the contiguous walk
+            # that reached it -- that is the structural guarantee. A field that
+            # can only ever be True would be a finding in name only.
+            and type(self.control.inside_line) is bool
             # The name is probed on a button, so a button is what may be
             # reported. A link or an image bearing the text "Decrease quantity"
             # is not a quantity control, and being inside the vocabulary is not

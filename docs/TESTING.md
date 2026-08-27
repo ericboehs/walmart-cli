@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 106 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 120 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,20 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| a boundary that wrapped reads but not locator construction | building a locator can fail, and the message quotes the selector |
+| a wrapped call evaluated as an argument to the wrapper | `build(node.and_, page.locator(t))` runs the inner construction outside the boundary |
+| `raise ... from None` mistaken for erasure | `__context__` still holds the original, and a formatted traceback prints it |
+| poison a catch-all could swallow | the fake's refusal was an Exception, so a forbidden query came back as a polite inconclusive result |
+| a control searched only inside the id-bearing element | the likely real shape is the id on an anchor with the buttons as siblings |
+| an ancestor path walked a fixed number of steps | it listed whatever was above the line rather than stopping at the container holding the control |
+| a bound implemented with `min()` | reading the first eight of nine and matching one reports success for the runs the bound exists to stop |
+| an estimate the code could exceed | ancestor steps charged manually, then counted, then classified, while the formula budgeted less |
+| an affordability check against original capacity | a part-spent reader cleared a check it could not afford |
+| a public walk taking a hand-built target | the preconditions were the only thing between this code and someone else's cart, and there was a door beside them |
+| `str()` on both sides of a store comparison | 499 agreed with "499", and any object agreed with anything through its `__str__` |
+| `bool(value)` on a page value | runs `__bool__` outside the boundary and turns a non-empty string into a claim |
+| two guards sharing one refusal token | each was invisible to the other's mutants, and three survived because of it |
+| a specific unknown flattened into "nothing matched" | UNKNOWN_TAG and UNKNOWN_ROLE existed and were never returned; the general reason is a factual claim about the page |
 | a fake that ignored `exact` | exact=True and exact=False were indistinguishable, so the test proving names match exactly proved nothing |
 | a fake locator that forgot which element it was | `get_by_role` returned a locator with no node, so `is_disabled` answered False whatever the page said |
 | a bound tested with one node | the per-node term could be deleted and the estimate still covered a one-node run |
@@ -157,7 +171,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-106 defects in the table below. 241 mutants in `script/mutants.json`.
+120 defects in the table below. 255 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -350,7 +364,13 @@ more than another assertion on behaviour.
 - **A test can be reporting on code that no longer exists.** Bytecode caching
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
+- **A boundary with a hole in it is the shape of the thing it was drawn
+  around.** Wrap construction, not only reads.
+- **Poison must be unswallowable or it is seasoning.** Put a fake's refusal
+  outside `Exception` when production catches `Exception`.
+- **Two guards sharing a token hide each other.** Give the backstop its own.
 - **A fake that ignores an argument deletes the test of that argument.**
+- **A fake with different query semantics is not evidence about the query.**
 - **Losing the text means losing it,** not filing it on `__cause__`.
 - **A needle too short to search for needs a structural guarantee.** "2" is
   inside the tag `h2` and inside the depth token `d2`; containment in a

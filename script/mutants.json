@@ -2352,7 +2352,7 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if worst_case_reads(found) > reader.remaining + reader.reads:\n        raise Unreadable(obs.Inconclusive.BOUND_HIT, obs.Limit.PROBES)",
+    "from": "    reader.afford(worst_case_reads(found) - 1)",
     "to": "    pass"
   },
   {
@@ -2366,8 +2366,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    return 1 + (nodes * per_node) + classify + ancestors + control + quantity",
-    "to": "    return 1 + classify + ancestors + control + quantity"
+    "from": "    return 1 + (nodes * per_node) + CLASSIFY_READS + ancestors + controls + quantity",
+    "to": "    return 1 + CLASSIFY_READS + ancestors + controls + quantity"
   },
   {
     "label": "reads are not charged",
@@ -2380,8 +2380,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "        if self.remaining < cost:\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)",
-    "to": "        pass"
+    "from": "        if self.remaining < cost:\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)\n        self.remaining -= cost",
+    "to": "        self.remaining -= cost"
   },
   {
     "label": "a browser exception escapes with its text",
@@ -2394,8 +2394,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "        except Exception:\n            # Deliberately not `except PlaywrightError`: anything at all that\n            # goes wrong becomes the same token. Naming the library's classes\n            # here would leave every other failure to escape with its text.\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE) from None",
-    "to": "        except Exception as exc:\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE) from exc"
+    "from": "            failed = True\n        if failed:",
+    "to": "            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)\n        if False:"
   },
   {
     "label": "a count that is not a count is trusted",
@@ -2464,8 +2464,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    candidates = page.locator(CANDIDATES)\n    found = reader.count(candidates)",
-    "to": "    candidates = page.locator(CANDIDATES)\n    found = sum(reader.count(page.locator(f\"[{a.value}]\")) for a in ATTRIBUTES)"
+    "from": "    candidates = reader.build(page.locator, CANDIDATES)\n    found = reader.count(candidates)",
+    "to": "    candidates = reader.build(page.locator, CANDIDATES)\n    found = sum(reader.count(reader.build(page.locator, f\"[{a.value}]\")) for a in ATTRIBUTES)"
   },
   {
     "label": "the item id goes into the selector",
@@ -2478,8 +2478,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    candidates = page.locator(CANDIDATES)",
-    "to": "    candidates = page.locator(f\"[data-item-id='{target.item_id}']\")"
+    "from": "    candidates = reader.build(page.locator, CANDIDATES)",
+    "to": "    candidates = reader.build(page.locator, f\"[data-item-id='{target.item_id}']\")"
   },
   {
     "label": "an unexpected control name is read anyway",
@@ -2492,8 +2492,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "        control = line.get_by_role(obs.Role.BUTTON.value, name=name.value, exact=True)",
-    "to": "        control = line.get_by_role(obs.Role.BUTTON.value, name=name.value, exact=False)"
+    "from": "        control = reader.build(scope.get_by_role, obs.Role.BUTTON.value, name=name.value, exact=True)",
+    "to": "        control = reader.build(scope.get_by_role, obs.Role.BUTTON.value, name=name.value, exact=False)"
   },
   {
     "label": "an unknown control name is not inconclusive",
@@ -2507,7 +2507,7 @@
       "pyworker/test_observe_walk.py"
     ],
     "from": "    raise Unreadable(obs.Inconclusive.UNKNOWN_NAME)",
-    "to": "    return obs.ControlFinding(obs.Role.BUTTON, obs.Sentinel.REDACTED, True, False)"
+    "to": "    return node, (), obs.ControlFinding(obs.Role.BUTTON, obs.Sentinel.REDACTED, True, False)"
   },
   {
     "label": "a substring of the quantity counts as the quantity",
@@ -2520,8 +2520,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "                if type(text) is str and text.strip() == wanted:",
-    "to": "                if type(text) is str and wanted in str(text):"
+    "from": "            if type(text) is str and text.strip() == wanted:",
+    "to": "            if type(text) is str and wanted in str(text):"
   },
   {
     "label": "preconditions run after the first read",
@@ -2534,8 +2534,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    try:\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    return walk(page, target, reader)",
-    "to": "    try:\n        reader.count(page.locator(CANDIDATES))\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    except Unreadable as stopped:\n        return obs.InconclusiveResult(reason=stopped.reason, limit=stopped.limit)\n    return walk(page, target, reader)"
+    "from": "    try:\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    return _walk(page, target, reader)",
+    "to": "    try:\n        reader.count(reader.build(page.locator, CANDIDATES))\n        target = preconditions(cart, pinned_store)\n    except Refused as refusal:\n        return obs.RefusedResult(refusal=refusal.refusal)\n    except Unreadable as stopped:\n        return obs.InconclusiveResult(reason=stopped.reason, limit=stopped.limit)\n    return _walk(page, target, reader)"
   },
   {
     "label": "a boolean quantity passes the precondition",
@@ -2562,8 +2562,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if not isinstance(item_id, str) or not item_id.strip().isdigit():",
-    "to": "    if not isinstance(item_id, str):"
+    "from": "    item_id = _digits(line.get(\"item_id\"))\n    if not item_id:",
+    "to": "    item_id = str(line.get(\"item_id\") or \"\")\n    if not item_id:"
   },
   {
     "label": "more than one line is still eligible",
@@ -2576,8 +2576,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if not isinstance(lines, list) or len(lines) != 1:",
-    "to": "    if not isinstance(lines, list) or not lines:"
+    "from": "    if type(lines) is not list or len(lines) != 1:",
+    "to": "    if type(lines) is not list or not lines:"
   },
   {
     "label": "the shared seller predicate is bypassed",
@@ -2628,5 +2628,201 @@
     ],
     "from": "    PAGE_DUMP = /\\.content\\s*\\(|screenshot|accessibility|inner_html|\\.snapshot\\s*\\(/",
     "to": "    PAGE_DUMP = /nothing_of_the_sort/"
+  },
+  {
+    "label": "the quantity level bound truncates instead of stopping",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if found > QUANTITY_NODE_BUDGET:\n            # Not min(). Truncating turns \"there were more than we agreed to\n            # look at\" into a clean answer if the first one happens to match,\n            # which is a bound that reports success for the runs it was meant\n            # to stop.\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, obs.Limit.NODES)\n        for position in range(found):",
+    "to": "        for position in range(min(found, QUANTITY_NODE_BUDGET)):"
+  },
+  {
+    "label": "a locator construction is left outside the boundary",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        other = reader.build(page.locator, tag.value)\n        if reader.count(reader.build(node.and_, other)) == 1:",
+    "to": "        if reader.count(reader.build(node.and_, page.locator(tag.value))) == 1:"
+  },
+  {
+    "label": "a role construction is left outside the boundary",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        other = reader.build(page.get_by_role, role.value)\n        if reader.count(reader.build(node.and_, other)) == 1:",
+    "to": "        if reader.count(reader.build(node.and_, page.get_by_role(role.value))) == 1:"
+  },
+  {
+    "label": "the caught exception is kept as context",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        except Exception:",
+    "to": "        except Exception as exc:\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE) from exc"
+  },
+  {
+    "label": "the poison is swallowed with everything else",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        except Unreadable:\n            raise\n        except Exception:",
+    "to": "        except Unreadable:\n            raise\n        except BaseException:"
+  },
+  {
+    "label": "an unknown tag is reported as nothing matched",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    raise Unreadable(obs.Inconclusive.UNKNOWN_TAG)",
+    "to": "    raise Unreadable(obs.Inconclusive.NO_MATCH)"
+  },
+  {
+    "label": "an unknown role is reported as nothing matched",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    raise Unreadable(obs.Inconclusive.UNKNOWN_ROLE)",
+    "to": "    raise Unreadable(obs.Inconclusive.NO_MATCH)"
+  },
+  {
+    "label": "an incoherent result is called nothing matched",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        return obs.InconclusiveResult(reason=obs.Inconclusive.DOM_UNREADABLE)\n\n\ndef observe(",
+    "to": "        return obs.InconclusiveResult(reason=obs.Inconclusive.NO_MATCH)\n\n\ndef observe("
+  },
+  {
+    "label": "the disabled state is coerced rather than checked",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        value = self.read(call)\n        if type(value) is not bool:\n            raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)\n        return value",
+    "to": "        return bool(self.read(call))"
+  },
+  {
+    "label": "the clearance is not required",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    if getattr(target, \"clearance\", None) is not _CLEARED:\n        raise Refused(obs.Refusal.NO_CART)",
+    "to": "    pass"
+  },
+  {
+    "label": "a store id is compared after stringifying",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    return value.strip() if type(value) is str and value.strip().isdigit() else \"\"",
+    "to": "    return str(value).strip()"
+  },
+  {
+    "label": "the affordability check uses capacity not what is left",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if self.remaining < cost:\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)\n\n    def read(self, call, *args, **kwargs):",
+    "to": "        if self.remaining + self.reads < cost:\n            raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)\n\n    def read(self, call, *args, **kwargs):"
+  },
+  {
+    "label": "the control search never leaves the id-bearing element",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "    for depth in range(SCOPES):",
+    "to": "    for depth in range(1):"
+  },
+  {
+    "label": "the ancestor path runs past the container",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        found = control_in(reader, scope)\n        if found is not None:",
+    "to": "        found = control_in(reader, scope) if depth == obs.MAX_ANCESTORS else None\n        if found is not None:"
   }
 ]

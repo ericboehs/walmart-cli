@@ -191,7 +191,6 @@ def test_an_observation_cannot_be_built_from_a_redacted_tag():
         lambda: observed(line=line(role=obs.Sentinel.REDACTED)),
         lambda: observed(control=control(name=obs.Sentinel.REDACTED)),
         lambda: observed(control=control(role=obs.Sentinel.REDACTED)),
-        lambda: observed(control=control(inside_line=False)),
         lambda: observed(quantity=quantity(relation=obs.Relation.NO_MATCH)),
         lambda: observed(quantity=quantity(depth=obs.Depth.OVER_BUDGET)),
         # An over-budget ancestor is refused too, but by the chain rule, which
@@ -466,3 +465,16 @@ def test_a_bad_budget_fails_with_a_fixed_code_not_whatever_python_raises(budget)
 
 def test_a_good_budget_still_works():
     assert obs.Cardinality.of(1, 20) is obs.Cardinality.ONE
+
+
+def test_a_control_outside_the_id_bearing_element_is_still_an_observation():
+    """It used to be refused, which ruled out the likely real shape.
+
+    The item id sits on an anchor and the plus and minus are its siblings in
+    the surrounding line. Requiring the control to descend from the id-bearing
+    element would have made every such page inconclusive, and a field that can
+    only ever be True is a finding in name only.
+    """
+    result = observed(control=control(inside_line=False))
+
+    assert json.loads(obs.render(result))["control"]["inside_line"] is False

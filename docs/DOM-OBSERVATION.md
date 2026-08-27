@@ -127,6 +127,10 @@ Version one proceeds only when the parsed cart contains **exactly one eligible
 line**. Anything else is inconclusive. If human selection is needed later it
 arrives on non-echoed stdin and is never restated back to the terminal.
 
+The page-reading walk is private and requires a token that only the
+precondition check issues, so there is no second entrance that skips it. The
+only public function is `observe`.
+
 Before any DOM probing, established in memory from the parsed cart and
 refused if any of it is missing, malformed or disagreeing:
 
@@ -136,8 +140,11 @@ refused if any of it is missing, malformed or disagreeing:
 - a positive integer quantity that is not a bool;
 - a strictly first-party seller;
 - cart intent exactly `DELIVERY`;
-- a live cart store id exactly equal to the store id in a valid pinned store
-  object. Having *some* store id is not agreement with the pinned store, and
+- a live cart store id and a pinned store id that are both **digit strings**,
+  compared as strings. Stringifying both sides made the integer 499 agree with
+  the string "499", and made any object at all agree with anything by way of
+  its `__str__`; leading zeros are part of an identifier, not decoration.
+  The live cart store id must be exactly equal to the pinned one. Having *some* store id is not agreement with the pinned store, and
   the difference is the whole point of pinning one.
 
 These reuse the existing predicates and contracts rather than restating the
@@ -167,15 +174,21 @@ Relations and structure, never contents:
   widening after a look is how a guess becomes a finding.
 - whether that attribute's value **equals** the known item id or merely
   contains it;
-- the ancestor chain to the nearest element also containing a quantity control:
-  tags, roles and depth, as a contiguous ordered path `d1`, `d2`, ... An
-  unordered bag with repeats or gaps is not a chain, and is refused rather
-  than written;
+- the ancestor chain to the nearest element also containing a quantity
+  control: tags, roles and depth, as a contiguous ordered path `d1`, `d2`, ...
+  The path **stops at that container**. Walking a fixed number of steps
+  regardless and listing whatever happens to be above is a path to nowhere in
+  particular, and it is not evidence about where the line is. An unordered bag
+  with repeats or gaps is not a chain either, and is refused rather than
+  written;
 - how many elements matched, as a cardinality: `one` or `many`, never a number;
 - the quantity control: its role -- which must be `button`, because the name
   was probed on a button and a link captioned "Decrease quantity" is not a
-  quantity control -- whether it lies inside the line's subtree, and whether it
-  is disabled. Disabled is reported and does not disqualify: `observed` means
+  quantity control -- whether it lies inside the element that carried the item
+  id or only inside the resolved line container, and whether it is disabled.
+  Both placements are ordinary: a likely real shape is the id on an anchor with
+  the buttons as siblings, and requiring the control to be a descendant of the
+  id-bearing element would rule that out. Disabled is reported and does not disqualify: `observed` means
   *identified*, not *usable now*. A decrease button is legitimately disabled at
   a quantity of one, and that is still a correct identification;
 - whether some element in that subtree has a text value **equal to** the
@@ -228,7 +241,17 @@ The output has a byte cap checked in memory before the atomic 0600 write -- a
 cap applied after a write is a cap on the next run. Every failure inside this
 layer, including one caused by a bad internal argument such as the budget
 itself, raises one of a fixed set of codes; a layer claiming closed failure
-behaviour does not get to hold one uncontrolled exception. Hitting any
+behaviour does not get to hold one uncontrolled exception.
+
+Bounds are also not truncations. Reading the first eight of nine candidates and
+returning a match found among them reports success for exactly the runs the
+bound exists to stop.
+
+The exception boundary covers locator *construction* as well as reads, because
+building a locator can fail and the message quotes the selector. And the fixed
+exception is raised after leaving the `except` block: `raise ... from None`
+clears `__cause__` but leaves the original on `__context__`, where a formatted
+traceback will print it. Losing the text means losing it. Hitting any
 bound makes the run inconclusive and non-zero; there is no partial `observed`.
 
 Tests count actual locator reads, not output entries. Counting the output is
