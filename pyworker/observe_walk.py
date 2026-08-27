@@ -149,7 +149,7 @@ class Target:
         for value in (self.item_id, self.offer_id, self.store_id):
             if type(value) is not str or not value:
                 raise Refused(obs.Refusal.NO_CART)
-        if not self.item_id.isdigit() or not self.store_id.isdigit():
+        if not _is_ascii_digits(self.item_id) or not _is_ascii_digits(self.store_id):
             raise Refused(obs.Refusal.NO_CART)
         if type(self.quantity) is not int or type(self.quantity) is bool or self.quantity < 1:
             raise Refused(obs.Refusal.NO_CART)
@@ -159,6 +159,19 @@ def _count(value) -> None:
     """A budget or a cost is a real non-negative int, or this stops now."""
     if type(value) is not int or type(value) is bool or value < 0:
         raise Unreadable(obs.Inconclusive.BAD_BUDGET)
+
+
+def _is_ascii_digits(value) -> bool:
+    """One predicate, so the two places that ask cannot answer differently.
+
+    They already did. `_digits` was fixed to require ASCII and `Target` was
+    not, so a hand-built cleared Target accepted an item id of "\u00b2" and a
+    store id of "\u0664\u0669\u0669" -- the same two-guard gap as before,
+    moved to the internal boundary. Two spellings of one rule is one more than
+    can stay correct, which is the reason the seller and store questions are
+    delegated rather than restated.
+    """
+    return type(value) is str and value.isascii() and value.isdigit()
 
 
 def _digits(value) -> str:
@@ -177,9 +190,7 @@ def _digits(value) -> str:
     `isdigit()` alone is not ASCII: it is true of superscripts and of
     Arabic-Indic digits, so "\u00b2" would pass and "499" would not equal it.
     """
-    if type(value) is not str or not value.isascii() or not value.isdigit():
-        return ""
-    return value
+    return value if _is_ascii_digits(value) else ""
 
 
 # --- preconditions -------------------------------------------------------------------------

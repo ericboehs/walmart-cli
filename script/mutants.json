@@ -2780,7 +2780,7 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if type(value) is not str or not value.isascii() or not value.isdigit():\n        return \"\"\n    return value",
+    "from": "    return value if _is_ascii_digits(value) else \"\"",
     "to": "    return str(value).strip()"
   },
   {
@@ -2920,8 +2920,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if type(value) is not str or not value.isascii() or not value.isdigit():\n        return \"\"\n    return value",
-    "to": "    value = value.strip() if type(value) is str else value\n    if type(value) is not str or not value.isascii() or not value.isdigit():\n        return \"\"\n    return value"
+    "from": "    return value if _is_ascii_digits(value) else \"\"",
+    "to": "    return value.strip() if _is_ascii_digits(value.strip() if type(value) is str else value) else \"\""
   },
   {
     "label": "a digit is any unicode digit",
@@ -2934,8 +2934,8 @@
       "pytest",
       "pyworker/test_observe_walk.py"
     ],
-    "from": "    if type(value) is not str or not value.isascii() or not value.isdigit():",
-    "to": "    if type(value) is not str or not value.isdigit():"
+    "from": "    return type(value) is str and value.isascii() and value.isdigit()",
+    "to": "    return type(value) is str and value.isdigit()"
   },
   {
     "label": "the reader budget is not validated",
@@ -3006,5 +3006,19 @@
     ],
     "from": "        climbed = bool(self.line.ancestors)",
     "to": "        climbed = True"
+  },
+  {
+    "label": "the backstop keeps its own spelling of the digit rule",
+    "file": "pyworker/observe_walk.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observe_walk.py"
+    ],
+    "from": "        if not _is_ascii_digits(self.item_id) or not _is_ascii_digits(self.store_id):",
+    "to": "        if not self.item_id.isdigit() or not self.store_id.isdigit():"
   }
 ]

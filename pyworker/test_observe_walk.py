@@ -641,14 +641,34 @@ def test_a_run_out_of_budget_stops_before_the_per_node_phase():
     assert page.attributes == []
 
 
-def test_the_worst_case_charge_covers_what_a_real_run_spends():
-    """The bound must be conservative, or it is not a bound."""
+def test_an_ordinary_page_costs_exactly_what_its_shape_says():
+    """The ordinary path, priced term by term.
+
+    This replaces an assertion that the run fit inside `worst_case_reads(1)`.
+    It did -- eleven against three hundred and fifty-seven -- and a comparison
+    with that much room in it cannot fail for any reason anyone cares about.
+    Exact, so that a change making the ordinary path more expensive has to be
+    noticed and agreed to rather than absorbed.
+    """
     page = FakePage(tree())
     reader = walk.Reader()
 
-    run(page, reader=reader)
+    result = run(page, reader=reader)
 
-    assert reader.reads <= walk.worst_case_reads(1)
+    expected = (
+        1  # one count of the candidate selector
+        + 1  # the id is in the first declared attribute
+        + 2  # control names probed until the second matches
+        + 1  # is_disabled
+        + 1  # tag: div is the first declared
+        + 3  # role: listitem is the third
+        + 1  # one count of the first quantity selector
+        + 1  # its first element carries the quantity
+    )
+
+    assert type(result) is obs.ObservedResult
+    assert reader.reads == expected == 11
+    assert page.reads == reader.reads
 
 
 def test_a_reader_with_no_budget_left_refuses_rather_than_reads():
@@ -776,14 +796,28 @@ def test_the_worst_case_grows_with_the_number_of_nodes():
         assert step >= len(walk.ATTRIBUTES), nodes
 
 
-def test_a_full_page_of_candidates_still_fits_inside_its_estimate():
+def test_a_full_page_of_candidates_costs_the_per_node_phase_and_stops():
+    """What this page actually does, which is not what the old test implied.
+
+    It was called "a full page of candidates still fits inside its estimate"
+    and asserted `reads <= worst_case_reads(12)`. The run never reaches the
+    walk at all: none of the twelve nodes carries the item id, so the per-node
+    phase runs and `find_line` reports that nothing matched. Every later term
+    of the estimate -- the classifications, the control probes, the whole
+    quantity phase -- was absent from the number being compared, and the
+    comparison passed comfortably because of it.
+
+    So this now says what it measures: one count, twelve nodes at five
+    attributes each, and nothing after.
+    """
     page = FakePage(crowded(walk.NODE_BUDGET))
     reader = walk.Reader()
 
-    run(page, reader=reader)
+    result = run(page, reader=reader)
 
-    assert reader.reads <= walk.worst_case_reads(walk.NODE_BUDGET)
-    assert reader.reads >= walk.NODE_BUDGET * len(walk.ATTRIBUTES), "the nodes were really probed"
+    assert json.loads(obs.render(result))["reason"] == "nothing_matched"
+    assert reader.reads == 1 + walk.NODE_BUDGET * len(walk.ATTRIBUTES) == 61
+    assert page.reads == reader.reads
 
 
 def test_the_browser_exception_is_not_kept_as_a_cause():
@@ -1463,7 +1497,23 @@ def test_the_most_expensive_run_lands_just_under_the_declared_bound():
 
     result = run(page, reader=reader)
 
+    # The same decomposition the reviewer derived independently, written out
+    # so the literal above is checked against the walk's specification rather
+    # than only against itself. Deriving it from `worst_case_reads` would be
+    # circular; deriving it from what each phase is defined to do is not.
+    decomposed = (
+        1  # the candidate count
+        + len(walk.ATTRIBUTES)  # the id is in the last attribute
+        + walk.SCOPES * len(walk.CONTROL_NAMES)  # every name missed but the last
+        + 1  # is_disabled, once, at the scope that matched
+        + obs.MAX_ANCESTORS * 1  # counting each parent
+        + obs.MAX_ANCESTORS * (len(walk.TAGS) + len(walk.ROLES))  # classifying them
+        + (len(walk.TAGS) + len(walk.ROLES))  # classifying the id element
+        + len(walk.QUANTITY_SELECTORS) * (1 + walk.QUANTITY_NODE_BUDGET)
+    )
+
     assert type(result) is obs.ObservedResult, "the maximal page must still be observable"
+    assert decomposed == MAXIMAL_READS
     assert reader.reads == MAXIMAL_READS
     assert page.reads == MAXIMAL_READS, "every read the page served went through the reader"
     assert walk.worst_case_reads(1) - MAXIMAL_READS == MAXIMAL_SLACK
@@ -1796,3 +1846,79 @@ def test_the_wrapped_call_may_use_the_boundarys_own_parameter_names(entrance, kw
     answered = getattr(reader, entrance)(Colliding(), "probe", **kwargs)
 
     assert answered == (kwargs.get("obj"), kwargs.get("method"), kwargs.get("charge"))
+
+
+# --- one predicate, asked in both places -----------------------------------------------------
+
+
+SUPERSCRIPT = "\u00b2"
+ARABIC_INDIC = "\u0664\u0669\u0669"
+
+
+@pytest.mark.parametrize("value", [SUPERSCRIPT, ARABIC_INDIC, "٤٩٩", "4\u03559"])
+@pytest.mark.parametrize("f\u0069eld", ["item_id", "store_id"])
+def test_a_cleared_target_will_not_take_a_non_ascii_id(field, value):
+    """The backstop had the older, wrong spelling of the rule.
+
+    `_digits` was fixed to require ASCII and `Target` was not, so a hand-built
+    cleared Target accepted an item id of a superscript two and a store id in
+    Arabic-Indic digits. That is the two-guard gap again, at the internal
+    boundary this time: each guard is only as good as the one that agrees with
+    it, and they had stopped agreeing.
+    """
+    with pytest.raises(walk.Refused) as refusal:
+        target(**{field: value})
+
+    assert refusal.value.refusal is obs.Refusal.NO_CART
+
+
+def test_both_places_ask_the_same_question():
+    """Not "both currently answer the same", which is what drifted.
+
+    A shared predicate cannot disagree with itself; two spellings of one rule
+    can, and did.
+    """
+    import ast
+    import inspect
+
+    # Parsed, because the first version of this searched the text for
+    # `isdigit()` and found it in the docstring explaining why ASCII matters.
+    # A substring scan cannot tell a rule from a sentence about the rule.
+    tree_ = ast.parse(inspect.getsource(walk))
+    shared = [
+        node
+        for node in ast.walk(tree_)
+        if isinstance(node, ast.FunctionDef) and node.name == "_is_ascii_digits"
+    ]
+
+    assert len(shared) == 1, "the shared predicate is not exactly one function"
+
+    inside = {id(node) for node in ast.walk(shared[0])}
+    strays = [
+        node.lineno
+        for node in ast.walk(tree_)
+        if isinstance(node, ast.Attribute)
+        and node.attr in {"isdigit", "isnumeric", "isdecimal"}
+        and id(node) not in inside
+    ]
+
+    assert strays == [], f"a second spelling of the digit rule at lines {strays}"
+
+    callers = sum(
+        1
+        for node in ast.walk(tree_)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_is_ascii_digits"
+    )
+
+    assert callers >= 3, "the predicate exists but the places that need it are not asking it"
+
+
+@pytest.mark.parametrize("value", [SUPERSCRIPT, ARABIC_INDIC])
+def test_a_non_ascii_store_id_never_agrees_with_itself(value):
+    """Equal strings, and still not an agreement, because neither is an id."""
+    result = walk.observe(FakePage(tree()), cart(store_id=value), {"store_id": value})
+
+    assert type(result) is obs.RefusedResult
+    assert result.refusal is obs.Refusal.NO_PINNED_STORE
