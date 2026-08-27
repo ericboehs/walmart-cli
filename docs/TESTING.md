@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 63 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 71 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -31,6 +31,14 @@ Each of these was written deliberately, read fine, and passed:
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
+| a bare `input()` in the capture script | Playwright's sync API only dispatches handlers while this thread is inside it, so the wait was a stopped recorder; `scripts/recon.py` had a `pump` for exactly this, with a test explaining it, and the newer script blocked anyway |
+| `"body_shape": "null"` | written for a response whose body had raised on read, which is indistinguishable from a server that answered null |
+| a note taken at the wrong moment | the run said "recorded 0 mutating requests and 0 responses" in a file holding one of each |
+| a verdict with three outcomes | one request, one 200 and an unread body returned "got what it came for" |
+| a hand-written list of narrative files | six names, and the retracted claim was in the seventh -- `pyworker/browser.py`, the code that justifies how we observe |
+| a test that spun instead of failing | it waited for a pump that a mutant had removed, so the harness waited too, for eighty-seven minutes |
+| a mutation harness with no timeout | a hang was not one of its outcomes, and cancelling is the one path that leaves the tree mutated |
+| a test pinned to one spelling of the evidence | it read `entry["body"]` from live captures and stopped checking anything the day the format dropped bodies |
 | a count kept in my head | every commit message from `e7ca045` on reported a mutant total arrived at by addition, never by counting; the drift reached fifteen, and the defect tally was thirteen high |
 | the unknown named wrong | the rewritten docstring still called the mutation unobserved when the request had been seen four times and the response is what is missing |
 | a parity test that read one file | it passed while the capture script's own --help repeated the whole retracted diagnosis, and the confidence it produced covered everything |
@@ -114,7 +122,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-63 defects in the table below. 158 mutants in `script/mutants.json`.
+71 defects in the table below. 164 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -304,6 +312,16 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **A lesson that lives in one file is a lesson about that file.** `recon.py`
+  had the pump, the comment and the test; the capture script was written later
+  and blocked anyway. Fixing a bug does not immunise the next thing you write.
+- **A test must fail, not hang.** Anything that waits for a condition needs a
+  deadline, or the mutant that breaks the condition breaks the harness instead
+  of being caught by it.
+- **A hang is not an answer.** Any runner that waits on a child needs a
+  timeout, and hanging has to be reported as its own outcome.
+- **Derive the list, do not remember it.** A hand-written set of files to check
+  is a set of files someone will forget to extend.
 - **A discipline nobody enforces is a habit, and a habit does not fail
   loudly.** The gates were being run by hand before every commit, which worked
   until the once it did not. `rake hooks` installs it, and it runs the CI set

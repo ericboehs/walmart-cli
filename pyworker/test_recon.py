@@ -7,12 +7,14 @@ are worth testing offline.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import importlib.util
 import json
 import os
 import pathlib
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -702,9 +704,19 @@ def test_no_observed_request_carries_an_operation_name():
     files = sorted(capture.glob("cart-mutation-*/capture.json"))
     if not files:
         pytest.skip("no live capture on this machine")
+    checked = 0
     for file in files:
         for entry in json.loads(file.read_text())["mutating_requests"]:
-            assert "operationName" not in entry["body"]
+            # Captures written before the shape-only rewrite carry "body";
+            # everything since carries "body_shape" and no body at all. The
+            # claim is the same either way, and a test pinned to one spelling
+            # of the evidence stops checking the evidence the day the format
+            # changes -- which is what happened here.
+            recorded = entry.get("body", entry.get("body_shape"))
+            assert recorded is not None, "a request record with neither body nor shape"
+            assert "operationName" not in json.dumps(recorded)
+            checked += 1
+    assert checked, "capture files present but no mutating requests in them"
 
 
 @pytest.mark.parametrize(
@@ -846,7 +858,9 @@ def test_a_body_that_cannot_be_read_is_a_finding_not_a_crash(tmp_path):
     request = _cleared_request(recorder)
     recorder.on_response(CaptureResponse(request.url, request, text=None))
     assert recorder.unreadable_responses == 1
-    assert recorder.responses[0]["body_shape"] == "null"
+    # Was "null" until the first live run showed what that hides: a body that
+    # raised on read, recorded as though the server had answered null.
+    assert recorder.responses[0]["body_shape"] == _capture_module().UNREADABLE
     assert recorder.responses[0]["status"] == 200
 
 
@@ -1420,3 +1434,165 @@ def test_the_capture_offers_no_flag_it_no_longer_honours(tmp_path):
     module = _capture_module()
     with pytest.raises(SystemExit):
         module.main(["--scrub-literal", "anything", "--yes", "--out", str(tmp_path)])
+
+
+# --- the wait is not a pause: a blocked thread is a stopped recorder ------------------
+#
+# The first live capture recorded a 200 whose body it never read, and a note
+# saying it had recorded nothing at all. Both come from the same cause: the run
+# waited for Enter with a bare input(), and Playwright's sync API dispatches
+# response handlers only while this thread is inside a Playwright call. A
+# handler that calls response.text() suspends there until teardown, and by then
+# the body is gone.
+#
+# scripts/recon.py has had `pump` for this since its own version of the bug.
+# The capture script was written afterwards and blocked anyway, which is why
+# these tests live next to that one now.
+
+
+class _PumpingPage:
+    """A page that records how long it was asked to wait."""
+
+    def __init__(self):
+        self.waits = []
+
+    def wait_for_timeout(self, ms):
+        self.waits.append(ms)
+
+
+def test_waiting_for_enter_stays_inside_playwright():
+    capture = _capture_module()
+    page = _PumpingPage()
+    # Returns immediately, as a closed stdin would.
+    capture.wait_for_enter(page, read_line=lambda: "")
+
+    # It may finish before the first slice, but it must never sleep: every unit
+    # of waiting has to be spent somewhere Playwright can dispatch a callback.
+    assert all(ms == capture.PUMP_SLICE_SECONDS * 1000 for ms in page.waits)
+
+
+def test_waiting_for_enter_keeps_pumping_until_the_human_answers():
+    capture = _capture_module()
+    page = _PumpingPage()
+    gate = threading.Event()
+    # A bound, because the first version of this test spun until the pump had
+    # run and had no way out if it never did. Removing the pump did not fail
+    # it -- it hung the suite, and a mutation run sat there for eighty-seven
+    # minutes before anyone noticed. A test that cannot fail cannot report.
+    deadline = time.monotonic() + 5.0
+
+    def slow_line():
+        # Answer only once the page has been pumped a few times, the way a
+        # human takes seconds to click. If the wait were a sleep, these slices
+        # would not happen and the recorder would be deaf for all of them.
+        while len(page.waits) < 3 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        gate.set()
+        return "\n"
+
+    capture.wait_for_enter(page, read_line=slow_line)
+
+    assert gate.is_set()
+    assert len(page.waits) >= 3, "the wait never pumped: handlers would not run"
+
+
+def test_waiting_for_enter_survives_a_closed_stdin():
+    capture = _capture_module()
+
+    def closed():
+        raise EOFError
+
+    capture.wait_for_enter(_PumpingPage(), read_line=closed)
+
+
+# --- a body we never read is not a body that was null ---------------------------------
+
+
+def test_an_unreadable_body_is_not_recorded_as_a_shape():
+    """The first run wrote "body_shape": "null" for a body that raised on read.
+
+    Nothing in that file separated it from a server that genuinely answered
+    null, so the record asserted a shape nobody had seen.
+    """
+    capture = _capture_module()
+    assert capture.UNREADABLE != "null"
+    assert capture._shape(capture.UNREADABLE) == capture.UNREADABLE
+    assert capture._shape(None) != capture.UNREADABLE
+
+
+def test_an_unreadable_body_is_not_an_unparseable_one():
+    capture = _capture_module()
+    assert capture.UNREADABLE != capture.UNPARSEABLE
+    summarise = capture.Recorder._summarise
+    assert summarise(capture.UNREADABLE) == "body could not be read"
+    assert summarise(capture.UNPARSEABLE) == "body did not parse"
+
+
+def test_a_response_that_could_not_be_read_is_not_a_success():
+    """One request, one 200, and no readable body returned None the first time."""
+    verdict = _capture_module().verdict
+    problem = verdict(watched=True, mutations=1, responses=1, readable=0)
+    assert problem is not None
+    assert "not" in problem and "shape" in problem
+
+
+def test_a_readable_response_is_what_the_run_came_for():
+    verdict = _capture_module().verdict
+    assert verdict(watched=True, mutations=1, responses=1, readable=1) is None
+
+
+# --- the note is composed after the counting, not before ------------------------------
+#
+# The first live capture wrote "recorded 0 mutating requests and 0 responses"
+# into a file that contained one of each. The note was built inside the `with`,
+# at the moment the human pressed Enter, and the handlers had not finished.
+#
+# This fake fires its handlers during teardown, which is exactly when the real
+# ones ran, so it fails against the old ordering and passes against the new.
+
+
+class _TeardownSession:
+    """A session whose traffic arrives as the context closes."""
+
+    def __init__(self, request, response):
+        self.page = _PumpingPage()
+        self._request, self._response = request, response
+        self._handlers = {}
+
+    def on_worker(self, handler):
+        self._handlers["worker"] = handler
+
+    def on_request(self, handler):
+        self._handlers["request"] = handler
+
+    def on_response(self, handler):
+        self._handlers["response"] = handler
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._handlers["request"](self._request)
+        self._handlers["response"](self._response)
+        return False
+
+
+def test_the_note_counts_what_was_recorded_not_what_had_arrived_by_enter(tmp_path, monkeypatch):
+    capture = _capture_module()
+    body = '{"variables":{"input":{"items":[{"quantity":1}]}}}'
+    url = f"{ORCHESTRA}/updateItems/45fca98d0f0fb2ffc2ccf8a3290b8914"
+    request = CaptureRequest(url, body)
+    session = _TeardownSession(request, CaptureResponse(url, request, text='{"data":{}}'))
+
+    monkeypatch.setattr(capture.browser, "BrowserOptions", lambda **kwargs: object())
+    monkeypatch.setattr(capture.browser, "open_session", lambda _options: session)
+    monkeypatch.setattr(capture, "wait_for_enter", lambda *a, **k: None)
+
+    args = argparse.Namespace(
+        out=str(tmp_path), profile=str(tmp_path / "p"), cdp_url="http://127.0.0.1:9222", yes=True
+    )
+    capture.run(args)
+
+    written = json.loads((tmp_path / "capture.json").read_text())
+    assert written["mutating_requests"], "the fake's request never reached the recorder"
+    assert "recorded 1 mutating requests and 1 responses" in written["notes"]

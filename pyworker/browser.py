@@ -342,11 +342,18 @@ class Session:
     def on_request(self, handler) -> None:
         """Subscribe to requests from our own tab, for the same reasons as above.
 
-        Playwright attaches to dedicated worker targets itself and reports
-        their network activity on the owning page, which is why this exists:
-        the cart mutation is issued from a Web Worker, and the JS hooks we had
-        been using ran in page context where a worker's fetch is simply not
-        visible. That was a fact about the hook, not about the request.
+        This was originally justified by a Web Worker: the JS hooks we had been
+        using ran in page context, saw nothing, and we concluded the cart
+        mutation was issued from a worker whose fetch was invisible to them.
+        Browser-level recording later observed four updateItems requests with
+        from_worker false on every one, and a fifth since. The silence was a
+        fact about the hook and never about the request, and the worker part of
+        the explanation was an inference we stated as an observation.
+
+        Page scope is still right, for the reason in on_response: attached to
+        the user's own Chrome, context scope would observe every tab they have
+        open. Playwright does report a dedicated worker's traffic on the owning
+        page, so this covers that case too if it ever turns out to be real.
         """
         self.page.on("request", handler)
 

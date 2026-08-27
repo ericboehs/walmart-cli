@@ -27,23 +27,35 @@ module Walmart
   class DocumentationParityTest < TestCase
     ROOT = File.expand_path("../..", __dir__)
 
-    # Every file that can state these claims, not just the one that did.
+    # Every file that can state these claims, derived rather than remembered.
     #
-    # The first version of this test read CONTRACTS.md and nothing else, which
-    # is how it passed while the capture script's own docstring -- printed by
-    # --help, so the most user-visible prose in the project -- still said the
-    # mutation is issued from a Web Worker, that the cart actions are
-    # not_implemented stubs, and that the contract has never been seen. A
-    # parity test that reads one file gives parity with one file, and the
-    # confidence it produced covered everything.
-    NARRATIVE_FILES = %w[
-      docs/CONTRACTS.md
-      docs/TESTING.md
-      DESIGN.md
-      README.md
-      scripts/capture-cart-mutation.py
-      pyworker/cart_mutate.py
-    ].freeze
+    # This was a hand-written list of six. It missed pyworker/browser.py, whose
+    # on_request docstring still said the mutation is issued from a Web Worker
+    # -- in the code that justifies how we observe it. Parity with one file,
+    # then parity with six, and the claim was sitting in the seventh.
+    #
+    # So the list is now every tracked file that could carry prose: git decides
+    # membership, not memory. Vendored trees and captures are excluded because
+    # they are not ours to correct; the exclusion is narrow and visible, which
+    # a forgotten filename is not.
+    # This file is excluded from its own scan, because a list of forbidden
+    # claims has to contain them to be a list. That is the only self-exemption,
+    # and it is one line rather than a habit of adding names.
+    EXCLUDED = %r{
+      \A(?:
+        pyworker/(?:recon|\.venv)/ | vendor/ | \.git/ |
+        test/walmart/documentation_parity_test\.rb\z
+      )
+    }x
+    NARRATIVE_EXTENSIONS = %w[.md .py .rb .sh].freeze
+
+    def self.narrative_files
+      @narrative_files ||= IO.popen(["git", "-C", ROOT, "ls-files", "-z"], &:read)
+                             .split("\0")
+                             .grep_v(EXCLUDED)
+                             .select { |path| NARRATIVE_EXTENSIONS.include?(File.extname(path)) }
+                             .select { |path| File.file?(File.join(ROOT, path)) }
+    end
 
     # Claims disproved by evidence or by a commit. The retraction in
     # CONTRACTS.md is the one place they may appear.
@@ -67,13 +79,28 @@ module Walmart
     ).freeze
 
     def test_no_file_states_a_claim_the_evidence_retracted
+      assert_operator self.class.narrative_files.length, :>, 50,
+                      "the file list collapsed; a parity test over nothing passes"
+
       RETRACTED.each do |claim, correction|
-        NARRATIVE_FILES.each do |file|
+        self.class.narrative_files.each do |file|
           offending = read(file).scan(/^.*#{claim.source}.*$/i).reject do |line|
             line.match?(RETRACTING) || retraction.include?(line)
           end
           assert_empty offending, "#{file} states #{claim.source.inspect} as fact, but #{correction}"
         end
+      end
+    end
+
+    # The list is derived, so the derivation is the thing that can silently
+    # stop working. These are the files the hand-written version listed, plus
+    # the one it missed.
+    def test_the_derived_list_contains_the_files_that_have_carried_these_claims
+      %w[
+        docs/CONTRACTS.md docs/TESTING.md DESIGN.md README.md
+        scripts/capture-cart-mutation.py pyworker/cart_mutate.py pyworker/browser.py
+      ].each do |file|
+        assert_includes self.class.narrative_files, file
       end
     end
 

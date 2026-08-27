@@ -1566,7 +1566,7 @@
   {
     "label": "the unparseable sentinel is shaped as a string",
     "file": "scripts/capture-cart-mutation.py",
-    "from": "    return UNPARSEABLE if payload is UNPARSEABLE else shape_of(payload)",
+    "from": "    return payload if any(payload is s for s in SENTINELS) else shape_of(payload)",
     "to": "    return shape_of(payload)",
     "command": [
       "uv",
@@ -1632,12 +1632,6 @@
     "why": "a docstring is --help text; the documentation parity test reads it from Ruby"
   },
   {
-    "label": "the parity test reads only one file",
-    "file": "test/walmart/documentation_parity_test.rb",
-    "from": "      scripts/capture-cart-mutation.py\n      pyworker/cart_mutate.py\n",
-    "to": ""
-  },
-  {
     "label": "the help text names the wrong unknown",
     "file": "scripts/capture-cart-mutation.py",
     "from": "design: a response we have never observed must not be guessed at",
@@ -1656,5 +1650,79 @@
     "file": "docs/TESTING.md",
     "from": "mutants in `script/mutants.json`",
     "to": "mutants in the plan"
+  },
+  {
+    "label": "an unreadable body is recorded as null",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "            payload = UNREADABLE\n",
+    "to": "            payload = None\n",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the wait for Enter blocks the recorder again",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    while not done.is_set():\n        page.wait_for_timeout(PUMP_SLICE_SECONDS * 1000)",
+    "to": "    done.wait()",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "a run with no readable response calls itself a success",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "    if readable is not None and readable == 0:",
+    "to": "    if False:",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the count note is taken before the counting is done",
+    "file": "scripts/capture-cart-mutation.py",
+    "from": "        if watched:\n            notes.append(",
+    "to": "        if False:\n            notes.append(",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_recon.py"
+    ]
+  },
+  {
+    "label": "the parity file list goes back to being remembered",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "from": "                             .grep_v(EXCLUDED)",
+    "to": "                             .grep(%r{\\Adocs/CONTRACTS\\.md\\z})"
+  },
+  {
+    "label": "the harness waits forever for an answer",
+    "file": "script/mutate",
+    "from": "      if thread.join(TIMEOUT_SECONDS).nil?",
+    "to": "      if false"
+  },
+  {
+    "label": "a hung command is restored but not reported",
+    "file": "script/mutate",
+    "from": "        raise Hang, \"no answer in #{TIMEOUT_SECONDS}s: #{(command || @command).join(\" \")}\"",
+    "to": "        return [\"\", nil]"
   }
 ]

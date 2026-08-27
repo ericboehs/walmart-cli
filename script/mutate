@@ -89,7 +89,15 @@ class Mutation
   end
 end
 
+# Raised when a command has to be killed. Distinct from a failure: a failure
+# means a test noticed the mutant, and a hang means a test cannot answer.
+class Hang < StandardError; end
+
 class Runner
+  # Generous enough for the full Ruby suite plus smoke on a cold cache, short
+  # enough that a spinning test is a nuisance rather than an afternoon.
+  TIMEOUT_SECONDS = Integer(ENV.fetch("MUTATE_TIMEOUT", "600"))
+
   def initialize(command, verbose:)
     @command = command
     @verbose = verbose
@@ -98,12 +106,19 @@ class Runner
   # A mutant is "caught" when the command fails. Anything that makes the command
   # fail counts, which is why the tail of its output is printed -- a mutant
   # caught by a syntax error is not evidence of a test doing its job.
+  #
+  # A hang is reported and re-raised rather than counted as caught. A test that
+  # spins is not a test that noticed.
   def caught?(mutation)
     original = mutation.apply
     begin
       out, status = run(mutation.command, fail_fast: true)
       report(mutation, out, status)
       !status.success?
+    rescue Hang => e
+      puts format("%<verdict>-9s %<label>s", verdict: "HUNG", label: mutation.label)
+      puts indent(e.message)
+      raise
     ensure
       # Not conditional on success, on the exception, or on anything else. The
       # one thing this script must never do is leave the tree broken.
@@ -132,10 +147,32 @@ class Runner
   # the first red test, so running the remaining five hundred is pure waiting.
   #
   # Not set for the baseline, which must see the whole suite pass.
+  #
+  # The timeout exists because a mutant once removed the pump from a wait loop
+  # and the test watching that loop spun forever instead of failing. The run
+  # sat there for eighty-seven minutes. A hang is not a third possible answer
+  # to "does anything notice?" -- it is a broken test, and the harness has to
+  # say so rather than wait to be cancelled. Cancellation is also the one path
+  # that leaves the tree mutated, so an unbounded wait makes that likelier too.
   def run(command = nil, fail_fast: false)
     env = fail_fast ? { "MUTATE_FAIL_FAST" => "1" } : {}
-    out, err, status = Open3.capture3(env, *(command || @command))
-    [out + err, status]
+    out = +""
+    status = nil
+
+    Open3.popen2e(env, *(command || @command)) do |stdin, output, thread|
+      stdin.close
+      reader = Thread.new { out << output.read }
+      if thread.join(TIMEOUT_SECONDS).nil?
+        Process.kill("KILL", thread.pid)
+        thread.join
+        reader.join
+        raise Hang, "no answer in #{TIMEOUT_SECONDS}s: #{(command || @command).join(" ")}"
+      end
+      reader.join
+      status = thread.value
+    end
+
+    [out, status]
   end
 
   def report(mutation, out, status)

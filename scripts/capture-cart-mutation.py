@@ -47,6 +47,7 @@ import itertools
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -209,14 +210,26 @@ def _collapse(shapes: list[Any], count: int, label: str) -> dict[str, Any]:
 # retained anywhere, on either side.
 UNPARSEABLE = "<unparseable>"
 
+# A body we never got to look at. Distinct from UNPARSEABLE, which means we
+# read it and it was not JSON, and distinct from a body that really was null.
+#
+# The first live run recorded "body_shape": "null" for a response whose body
+# had raised on read. Nothing in the file separated that from a server that
+# genuinely answered null, so the record asserted a shape nobody had seen. The
+# `watched` flag exists a few hundred lines below for exactly this reason on
+# the session; the response side had the same hole.
+UNREADABLE = "<unreadable>"
+
+SENTINELS = (UNPARSEABLE, UNREADABLE)
+
 
 def _shape(payload: Any) -> Any:
-    """shape_of, except that the unparseable sentinel stays itself.
+    """shape_of, except that the sentinels stay themselves.
 
-    Passing it through shape_of would describe it as "str", which is true of
+    Passing one through shape_of would describe it as "str", which is true of
     the sentinel and says nothing about the body.
     """
-    return UNPARSEABLE if payload is UNPARSEABLE else shape_of(payload)
+    return payload if any(payload is s for s in SENTINELS) else shape_of(payload)
 
 
 def shape_of(value: Any, depth: int = 0) -> Any:
@@ -441,7 +454,7 @@ class Recorder:
             payload = self._decode(response.text())
         except Exception:  # noqa: BLE001 - a body we cannot read is still a finding
             self.unreadable_responses += 1
-            payload = None
+            payload = UNREADABLE
             print(f"  response {status}: body could not be read")
         else:
             print(f"  response {status}: {self._summarise(payload)}")
@@ -473,6 +486,8 @@ class Recorder:
 
     @staticmethod
     def _summarise(payload: Any) -> str:
+        if payload is UNREADABLE:
+            return "body could not be read"
         if payload is UNPARSEABLE:
             return "body did not parse"
         if not isinstance(payload, dict):
@@ -564,7 +579,44 @@ def confirm(out_dir: Path) -> bool:
     return input("start recording? [y/N] ").strip().lower() in ("y", "yes")
 
 
-def verdict(watched: bool, mutations: int, responses: int) -> str | None:
+PUMP_SLICE_SECONDS = 0.2
+
+
+def wait_for_enter(page, read_line=None) -> None:
+    """Wait for Enter while Playwright keeps dispatching callbacks.
+
+    Playwright's sync API runs response handlers on this thread, and only while
+    it is parked inside a Playwright call. A bare input() is not a quiet wait:
+    it is a stopped recorder. A handler that calls response.text() suspends
+    there and does not resume until the main thread re-enters Playwright, which
+    with input() means teardown -- by which time the body is gone.
+
+    That is not a theory. The first live run recorded a 200 with an unreadable
+    body and a note claiming nothing had been recorded at all, and the sequence
+    reproduces locally against a throwaway HTTP server: at Enter the request is
+    counted and the response is not, and the body only arrives as the context
+    closes.
+
+    scripts/recon.py has had `pump` for exactly this since its own version of
+    the bug, with a test saying so. This script was written afterwards and used
+    input() anyway. A lesson that lives in one file is a lesson about that file.
+
+    Reading stdin on a thread keeps the wait honest: the main thread stays in
+    Playwright, so handlers run while the human is still clicking.
+    """
+    done = threading.Event()
+
+    def reader() -> None:
+        with contextlib.suppress(EOFError, OSError, ValueError):
+            (read_line or sys.stdin.readline)()
+        done.set()
+
+    threading.Thread(target=reader, daemon=True).start()
+    while not done.is_set():
+        page.wait_for_timeout(PUMP_SLICE_SECONDS * 1000)
+
+
+def verdict(watched: bool, mutations: int, responses: int, readable: int | None = None) -> str | None:
     """What the run amounted to, or None if it got what it came for.
 
     A function rather than a chain of prints so it can be tested. The three
@@ -585,6 +637,16 @@ def verdict(watched: bool, mutations: int, responses: int) -> str | None:
         return (
             f"{mutations} request(s) recorded but no response was. The response side "
             "is the whole point of this run, so this is a failure, not a quiet success."
+        )
+    # Four outcomes, not three. The first live run reached this point with one
+    # request and one 200 and returned None, which reads as "got what it came
+    # for" -- and the body had not been read. A status is not a shape, and the
+    # gate opens on the shape.
+    if readable is not None and readable == 0:
+        return (
+            f"{responses} response(s) recorded, none of them readable. A status is not "
+            "a shape: the response contract is still unobserved and the mutation gate "
+            "stays shut."
         )
     return None
 
@@ -618,11 +680,7 @@ def run(args: argparse.Namespace) -> int:
             print("\nrecording - drive the browser yourself; do not enter an order flow")
             print("press Enter here when you are done\n")
             watched = True
-            with contextlib.suppress(EOFError):
-                input()
-            notes.append(
-                f"recorded {recorder.mutations} mutating requests and {len(recorder.responses)} responses"
-            )
+            wait_for_enter(session.page)
     except safety.UnsafeNavigation as exc:
         notes.append(f"aborted: {exc}")
         print(f"refused: {exc}", file=sys.stderr)
@@ -635,13 +693,31 @@ def run(args: argparse.Namespace) -> int:
         notes.append("interrupted")
         status = 2
     finally:
+        # Composed here, after the session has closed, and not at the moment
+        # the human pressed Enter.
+        #
+        # It used to be written inside the `with`, which is why the first live
+        # run's note read "recorded 0 mutating requests and 0 responses" in a
+        # file that contained one of each: the handlers had not finished. A
+        # count taken before the counting is done is a guess with a number in
+        # it, which is the same defect as the mutant totals in the commit
+        # messages, in code rather than in prose.
+        if watched:
+            notes.append(
+                f"recorded {recorder.mutations} mutating requests and {len(recorder.responses)} responses"
+            )
         path = recorder.write(notes)
         print(
             f"\n{recorder.mutations} mutating request(s), "
             f"{len(recorder.responses)} response(s), {len(recorder.workers)} worker(s)"
         )
         print(f"wrote {path}")
-        problem = verdict(watched, recorder.mutations, len(recorder.responses))
+        problem = verdict(
+            watched,
+            recorder.mutations,
+            len(recorder.responses),
+            readable=sum(1 for r in recorder.responses if r["body_shape"] not in SENTINELS),
+        )
         if problem:
             print(problem, file=sys.stderr)
 
