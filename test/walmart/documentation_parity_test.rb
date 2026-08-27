@@ -67,7 +67,15 @@ module Walmart
       # The request has been observed four times. Calling the mutation
       # unobserved names the wrong unknown, and reads as a present claim even
       # in a file whose first line says the request is known.
-      /mutation.{0,40}never.{0,20}observ/ => "the request is observed; the response is the unknown"
+      /mutation.{0,40}never.{0,20}observ/ => "the request is observed; the response is the unknown",
+      # Both from the first draft of docs/DOM-OBSERVATION.md. The first was
+      # never implementable: naming what you did not recognise requires page
+      # HTML, evaluate, or a CDP DOM dump, all of which that document forbids.
+      # The second put the whole privacy boundary on the serialiser, when a
+      # needle can also leave through a selector, an exception, a traceback, a
+      # progress line or a filename.
+      /unrecognised.{0,20}and counted/ => "attribute names cannot be enumerated without reading the DOM",
+      /canaries are the guarantee/ => "the file is one egress of several"
     }.freeze
 
     # A retracted claim may be quoted, but only by a sentence that says it is

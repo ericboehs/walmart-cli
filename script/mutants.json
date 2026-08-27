@@ -1918,5 +1918,25 @@
     "file": "test/walmart/recon_tools_test.rb",
     "from": "      assert_equal claims_none, built.empty?,",
     "to": "      assert_equal claims_none, claims_none,"
+  },
+  {
+    "label": "the unenumerable-attribute retraction is dropped",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "from": "      /unrecognised.{0,20}and counted/ => \"attribute names cannot be enumerated without reading the DOM\",",
+    "to": "      /never appearing anywhere at all/ => \"attribute names cannot be enumerated without reading the DOM\","
+  },
+  {
+    "label": "the serialiser-is-the-boundary retraction is dropped",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "from": "      /canaries are the guarantee/ => \"the file is one egress of several\"",
+    "to": "      /nothing states this ever/ => \"the file is one egress of several\""
+  },
+  {
+    "label": "the design forgets that needles leak through errors",
+    "file": "docs/DOM-OBSERVATION.md",
+    "from": "So: **needles are never interpolated into anything.**",
+    "to": "So: needles are mostly kept out of the file.",
+    "prose": true,
+    "why": "the egress list is the design's core claim; a mutant here is caught by the parity net only if the sentence is load-bearing, and this records that it is"
   }
 ]
