@@ -16,8 +16,8 @@ module Walmart
     # observed in a Walmart response -- in the cart's fulfillment node, which
     # is where this reads it. A name and a ZIP would have to come from a field
     # nobody here has seen, and inventing the mapping is the failure this
-    # project keeps writing tests against. They are absent rather than guessed,
-    # and the absence is visible in `store show`.
+    # project keeps writing tests against. They are not stored by `store pin`;
+    # Config still permits them so an older hand-written config keeps working.
     class Store < Base
       SUBCOMMANDS = %w[show pin].freeze
 
@@ -60,12 +60,20 @@ module Walmart
         ExitCodes::OK
       end
 
+      # The worker's answer is not trusted to be a string. `to_s` on whatever
+      # arrives is how an Array or a Hash becomes a store id that looks fine
+      # until it is compared with a real one.
       def active_store_id(data)
         raise Error, error_message(data) if data.is_a?(Hash) && data["error"]
 
         id = data.is_a?(Hash) ? data.dig("fulfillment", "store_id") : nil
-        id.to_s.empty? ? nil : id.to_s
+        return nil if id.nil? || (id.is_a?(String) && id.strip.empty?)
+        raise Error, "Walmart named a store this cannot use: #{id.inspect}" unless valid_store_id?(id)
+
+        id
       end
+
+      def valid_store_id?(id) = id.is_a?(String) && id.match?(Config::STORE_ID)
 
       def error_message(data)
         message = data.dig("error", "message")

@@ -1812,5 +1812,35 @@
       "pytest",
       "pyworker/test_recon.py"
     ]
+  },
+  {
+    "label": "any store id shape is accepted",
+    "file": "lib/walmart/config.rb",
+    "from": "      return if id.is_a?(String) && id.match?(STORE_ID)",
+    "to": "      return if id"
+  },
+  {
+    "label": "a store id that is not a string is coerced",
+    "file": "lib/walmart/config.rb",
+    "from": "      return if id.is_a?(String) && id.match?(STORE_ID)",
+    "to": "      return if id.to_s.match?(STORE_ID)"
+  },
+  {
+    "label": "a store with no store_id validates",
+    "file": "lib/walmart/config.rb",
+    "from": "      assert_store_id(value[\"store_id\"])",
+    "to": "      nil"
+  },
+  {
+    "label": "the command trusts whatever the worker called a store",
+    "file": "lib/walmart/commands/store.rb",
+    "from": "        raise Error, \"Walmart named a store this cannot use: #{id.inspect}\" unless valid_store_id?(id)",
+    "to": "        id = id.to_s"
+  },
+  {
+    "label": "the contract carries a store name again",
+    "file": "test/contracts/worker_options.json",
+    "from": "    \"store_id\": \"5260\"",
+    "to": "    \"store_id\": \"5260\",\n    \"name\": \"Owasso\""
   }
 ]

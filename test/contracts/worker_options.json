@@ -1,13 +1,11 @@
 {
-  "_comment": "Produced by Walmart::Worker#browser_options. See README.md.",
+  "_comment": "Produced by Walmart::Worker#browser_options. See README.md. pinned_store is what `walmart store pin` writes: store_id only, because no Walmart response has ever carried a store name or ZIP.",
   "profile_dir": "/home/someone/.local/share/walmart-cli/profile",
   "profile_lock": "/home/someone/.local/share/walmart-cli/profile.lock",
   "headless": true,
   "browser_channel": null,
   "cdp_url": null,
   "pinned_store": {
-    "store_id": "5260",
-    "name": "Owasso Neighborhood Market",
-    "zip": "74055"
+    "store_id": "5260"
   }
 }

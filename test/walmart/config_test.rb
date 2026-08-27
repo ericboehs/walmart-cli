@@ -230,5 +230,41 @@ module Walmart
       assert_nil Config.new(paths: paths, data: {}).validate!.fetch("cdp_url")
       assert_nil Config.new(paths: paths, data: { "cdp_url" => nil }).validate!.fetch("cdp_url")
     end
+
+    # A pinned store this cannot describe is worse than no store: it passes
+    # store_pinned? and is then compared against a real store id. Every one of
+    # these validated happily before `store pin` existed to write one.
+    def test_a_store_without_a_store_id_is_refused
+      assert_raises(ConfigError) { config.store = { "name" => "Owasso" } }
+    end
+
+    def test_an_empty_store_object_is_refused
+      assert_raises(ConfigError) { config.store = {} }
+    end
+
+    [["an integer", 499], ["true", true], ["an array", %w[499]],
+     ["a hash", { "id" => "1" }], ["blank", "  "], ["a letter", "4A9"]].each do |name, value|
+      define_method("test_a_store_id_that_is_#{name.tr(" ", "_")}_is_refused") do
+        assert_raises(ConfigError) { config.store = { "store_id" => value } }
+      end
+    end
+
+    def test_a_digit_string_store_id_is_accepted
+      config.store = { "store_id" => "0499" }
+
+      assert_equal "0499", config.store["store_id"]
+    end
+
+    # Still permitted, because a config written by hand before `store pin`
+    # existed may hold them. Nothing writes them.
+    def test_a_name_and_zip_are_allowed_alongside_a_valid_store_id
+      config.store = { "store_id" => "499", "name" => "Owasso", "zip" => "74055" }
+
+      assert_equal "Owasso", config.store["name"]
+    end
+
+    def test_a_blank_name_is_refused_rather_than_stored_as_an_answer
+      assert_raises(ConfigError) { config.store = { "store_id" => "499", "name" => " " } }
+    end
   end
 end

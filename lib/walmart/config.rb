@@ -40,6 +40,15 @@ module Walmart
     # deliberately absent (DESIGN.md: sensitive archive data).
     STORE_KEYS = %w[store_id name zip].freeze
 
+    # The only store field ever observed in a Walmart response is storeId, in
+    # the cart's fulfillment node, and every one seen has been digits. A string
+    # rather than an integer because leading zeros are Walmart's to keep, and
+    # "0499".to_i would silently become a different store.
+    #
+    # name and zip remain permitted keys because an older config may hold them,
+    # but nothing writes them: see "Store pinning" in DESIGN.md.
+    STORE_ID = /\A\d+\z/
+
     COLOR_MODES = %w[auto always never].freeze
     BROWSER_CHANNELS = [nil, "chrome", "chromium", "msedge"].freeze
     # Hosts a CDP endpoint may live on. Parsed, never substring-matched.
@@ -94,9 +103,7 @@ module Walmart
     # Slices to the permitted keys on the way in, then validates: an address
     # must never reach the file, and a wrong shape must not wait until save.
     def store=(hash)
-      unless hash.nil? || hash.is_a?(Hash)
-        raise ConfigError, "store must be an object with store_id, name, and zip"
-      end
+      raise ConfigError, "store must be an object containing store_id" unless hash.nil? || hash.is_a?(Hash)
 
       data["store"] = hash&.transform_keys(&:to_s)&.slice(*STORE_KEYS)
       validate!
@@ -201,15 +208,43 @@ module Walmart
       raise ConfigError, "#{key} must be one of #{allowed.map(&:inspect).join(", ")}, got #{value.inspect}"
     end
 
+    # A pinned store is what the cart mutation compares itself against, so a
+    # store this cannot describe is worse than no store at all: it would pass
+    # `store_pinned?` and then be compared against a real store id.
+    #
+    # Every branch here has been reachable. `store = {}` validated happily,
+    # store_id could be an Array, a Hash or true, and `to_s` downstream turned
+    # any of them into something that looked like an answer.
     def assert_store_shape
       value = data["store"]
       return if value.nil?
-      raise ConfigError, "store must be an object with store_id, name, and zip" unless value.is_a?(Hash)
+      raise ConfigError, "store must be an object containing store_id" unless value.is_a?(Hash)
 
       extra = value.keys.map(&:to_s) - STORE_KEYS
-      return if extra.empty?
+      unless extra.empty?
+        raise ConfigError, "store may only contain #{STORE_KEYS.join(", ")}; found #{extra.join(", ")}"
+      end
 
-      raise ConfigError, "store may only contain #{STORE_KEYS.join(", ")}; found #{extra.join(", ")}"
+      assert_store_id(value["store_id"])
+      assert_optional_store_text(value)
+    end
+
+    def assert_store_id(id)
+      # `is_a?(String)` first, because true and 499 both answer to to_s and
+      # neither is a store.
+      return if id.is_a?(String) && id.match?(STORE_ID)
+
+      raise ConfigError, "store_id must be a string of digits; got #{id.inspect}"
+    end
+
+    def assert_optional_store_text(value)
+      %w[name zip].each do |key|
+        text = value[key]
+        next if text.nil?
+        next if text.is_a?(String) && !text.strip.empty?
+
+        raise ConfigError, "store #{key} must be a non-empty string when present; got #{text.inspect}"
+      end
     end
 
     def read_file

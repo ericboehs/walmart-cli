@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 76 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 79 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -31,6 +31,9 @@ Each of these was written deliberately, read fine, and passed:
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
+| `store_id.to_s` | the command took whatever the worker called a store -- an Array, a Hash, `true` -- and turned it into something that read like an id right up to the moment it was compared with a real one |
+| a config that accepted `store = {}` | it passed `store_pinned?`, so a store with no id counted as pinned |
+| a contract fixture carrying name and zip | `store pin` writes store_id only, so Python was pinned to a shape this side can no longer produce -- the defect the contract file exists to prevent, in the other direction |
 | a verdict printed but not returned | every unusable capture -- nothing recorded, no answer, no readable body -- exited 0, so only a human reading the prose could tell |
 | Enter treated as the end of the network | the wait stopped the moment stdin answered, so a reply still in flight met a closing context: the teardown failure again by another route |
 | a fake that answers instantly | it let a correct loop run thousands of times inside a real deadline, so the bound fired on working code; a fake standing in for something that waits has to wait |
@@ -127,7 +130,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-76 defects in the table below. 172 mutants in `script/mutants.json`.
+79 defects in the table below. 177 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -317,6 +320,11 @@ more than another assertion on behaviour.
   value may appear.** Both halves of the fix passed their own review — the
   capture no longer held the id, the scrubber demonstrably worked — and the
   identifier was published anyway, as the canary. Canaries are synthetic.
+- **`to_s` is not validation.** Everything answers to it, which is why it turns
+  a wrong type into a plausible string instead of an error.
+- **A contract records what production writes.** When the producer narrows,
+  the fixture narrows with it, or the consumer is being tested against a shape
+  that no longer exists.
 - **A diagnosis that does not reach the exit code is a comment.** If the tool
   knows the run failed, the shell has to know too.
 - **The end of the input is not the end of the work.** Anything waiting on a

@@ -18,13 +18,24 @@ module Walmart
   class WorkerOptionsContractTest < TestCase
     CONTRACT = JSON.parse(File.read(File.expand_path("../contracts/worker_options.json", __dir__)))
 
+    # The store the production writer actually produces. `store pin` saves
+    # store_id and nothing else, so a contract carrying a name and a ZIP would
+    # pin Python's tests to a shape this side can no longer emit -- which is
+    # the defect this file exists for, in the other direction.
+    PINNED = { "store_id" => "5260" }.freeze
+
     def test_the_worker_sends_the_shape_the_contract_records
       assert_equal CONTRACT.keys.reject { |key| key.start_with?("_") }.sort,
-                   options_for(store: { "store_id" => "5260", "name" => "N", "zip" => "74055" }).keys.sort
+                   options_for(store: PINNED).keys.sort
+    end
+
+    def test_the_contract_records_what_store_pin_writes
+      assert_equal CONTRACT["pinned_store"], PINNED
+      assert_equal %w[store_id], CONTRACT["pinned_store"].keys
     end
 
     def test_the_pinned_store_is_the_whole_store_object_not_an_id
-      store = { "store_id" => "5260", "name" => "Owasso", "zip" => "74055" }
+      store = PINNED
       pinned = options_for(store: store)["pinned_store"]
 
       refute_kind_of String, pinned, "Python's guard reads pinned_store as an object"

@@ -62,6 +62,35 @@ module Walmart
         assert_match(/never observed/, out.string)
       end
 
+      # `to_s` on whatever the worker sent is how an Array becomes a store id
+      # that looks fine until it is compared with a real one. Each of these
+      # reached config.store= before the check existed.
+      [
+        ["an array", %w[499]],
+        ["a hash", { "id" => "499" }],
+        ["a number", 499],
+        ["true", true],
+        ["a store id with a letter", "4A9"],
+        ["whitespace", "   "]
+      ].each do |name, value|
+        define_method("test_a_store_id_that_is_#{name.tr(" ", "_")}_is_refused") do
+          context = build_context(worker: worker_returning({ "fulfillment" => { "store_id" => value } }))
+          context.config.store = { "store_id" => "77" }
+          context.config.save
+
+          assert_raises(Error, ConfigError) { Store.new(context).run(%w[store pin], []) }
+          assert_equal({ "store_id" => "77" }, reloaded_config.store,
+                       "a refused pin changed the file")
+        end
+      end
+
+      # Walmart's to keep. "0499".to_i is a different store.
+      def test_a_leading_zero_survives_pinning
+        run_store("pin", worker: worker_returning({ "fulfillment" => { "store_id" => "0499" } }))
+
+        assert_equal "0499", reloaded_config.store["store_id"]
+      end
+
       def test_an_unknown_subcommand_is_a_usage_error
         assert_raises(UsageError) { Store.new(build_context).run(%w[store teleport], []) }
       end
