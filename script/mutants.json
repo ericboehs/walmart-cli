@@ -1644,5 +1644,17 @@
     "to": "design: a mutation we have never observed must not be guessed at",
     "prose": true,
     "why": "a docstring is --help text; the documentation parity test reads it from Ruby"
+  },
+  {
+    "label": "the stated defect count stops being checked",
+    "file": "docs/TESTING.md",
+    "from": "It is the residue of ",
+    "to": "It is the product of about "
+  },
+  {
+    "label": "the stated mutant count stops being checked",
+    "file": "docs/TESTING.md",
+    "from": "mutants in `script/mutants.json`",
+    "to": "mutants in the plan"
   }
 ]

@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of seventy-five defects
+The layout of the suite is not arbitrary. It is the residue of 63 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -31,6 +31,7 @@ Each of these was written deliberately, read fine, and passed:
 | an unreadable record | `order list` printed the row like any other while `order show` refused it and `order search` omitted it — three commands disagreeing, none explaining, and the JSON said `healthy: false` without saying what was unhealthy |
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
+| a count kept in my head | every commit message from `e7ca045` on reported a mutant total arrived at by addition, never by counting; the drift reached fifteen, and the defect tally was thirteen high |
 | the unknown named wrong | the rewritten docstring still called the mutation unobserved when the request had been seen four times and the response is what is missing |
 | a parity test that read one file | it passed while the capture script's own --help repeated the whole retracted diagnosis, and the confidence it produced covered everything |
 | "both were true when written" | the comment in the parity test granted an inference the standing of an observation, inside the test written to stop exactly that |
@@ -110,6 +111,21 @@ None of these is an attention failure. Assertions get written from inside the
 code, and from there the return value of a print, the exit status of a process,
 and the difference between two error codes are all invisible. They are the first
 things the user meets.
+
+### Two numbers, counted rather than remembered
+
+63 defects in the table below. 158 mutants in `script/mutants.json`.
+
+Both are written as numerals and both are checked by
+`test/walmart/documentation_parity_test.rb`, because both were wrong. Every
+commit message from `e7ca045` onward reported a mutant count arrived at by
+adding new entries to the previously reported figure, and the drift reached
+fifteen. The defect tally was maintained the same way and was thirteen high.
+Nobody was lying and nobody checked; the number was a running total in someone's
+head, restated with the authority of a measurement.
+
+A number in prose that describes something countable in the repository should
+be counted by a test.
 
 ## The one to read first
 

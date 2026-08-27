@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require "json"
 
 module Walmart
   # Documentation is code that cannot fail, so the claims that would rot are
@@ -85,6 +86,35 @@ module Walmart
       assert_match(/response/i, help)
     end
 
+    # Numbers in prose that describe something countable in the repository.
+    #
+    # Both of these were wrong. The mutant count in every commit message from
+    # e7ca045 onward was the previous figure plus the new entries, never a
+    # count, and the drift reached fifteen. The defect tally was thirteen high
+    # by the same method. A running total in someone's head, restated with the
+    # authority of a measurement.
+    # Both places the number appears. The first version of this test read one
+    # of them, so changing the other drifted silently -- a count checked in one
+    # place is the same bug one level down.
+    def test_every_stated_defect_count_is_the_number_of_recorded_defects
+      stated = testing.scan(/(\d+) (?:recorded defects|defects in the table)/).flatten
+
+      assert_equal 2, stated.length, "expected both statements of the defect count"
+      stated.each do |number|
+        assert_equal defect_rows.length, number.to_i,
+                     "TESTING.md claims #{number} defects and the table has #{defect_rows.length}"
+      end
+    end
+
+    def test_the_stated_mutant_count_is_the_number_of_mutants
+      stated = testing[%r{(\d+) mutants in `script/mutants\.json`}, 1]
+      planned = JSON.parse(read("script/mutants.json")).length
+
+      refute_nil stated, "TESTING.md no longer states a mutant count"
+      assert_equal planned, stated.to_i,
+                   "TESTING.md claims #{stated} mutants and the plan has #{planned}"
+    end
+
     def test_the_contract_does_not_deny_code_that_exists
       assert_path_exists File.join(ROOT, "pyworker/cart_mutate.py")
       refute_match(/there is no cart mutation code/i, contracts,
@@ -124,6 +154,18 @@ module Walmart
     private
 
     def read(relative) = File.read(File.join(ROOT, relative))
+    def testing = @testing ||= read("docs/TESTING.md")
+
+    # The ledger's data rows: not the header, not the separator.
+    def defect_rows
+      @defect_rows ||= begin
+        section = testing[/^## The failure mode.*?^## The one to read first/m].to_s
+        section.lines.select { |line| line.start_with?("| ") }
+               .reject { |line| line.include?("What it could not see") }
+               .reject { |line| line.gsub(/[|\-\s]/, "").empty? }
+      end
+    end
+
     def contracts = @contracts ||= read("docs/CONTRACTS.md")
 
     # The one section allowed to quote the retracted claims, because quoting
