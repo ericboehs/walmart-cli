@@ -1938,5 +1938,11 @@
     "to": "So: needles are mostly kept out of the file.",
     "prose": true,
     "why": "the egress list is the design's core claim; a mutant here is caught by the parity net only if the sentence is load-bearing, and this records that it is"
+  },
+  {
+    "label": "the read-versus-write retraction is dropped",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "from": "      /read cannot be evidence about a write/ => \"a read-only observation can prove a write's precondition\"",
+    "to": "      /nobody writes this sentence/ => \"a read-only observation can prove a write's precondition\""
   }
 ]

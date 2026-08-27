@@ -88,6 +88,11 @@ quantity. Cardinalities arrive wrapped by the walker or not at all.
 Unknown types and unknown keys are **rejected**, not redacted. Redaction is a
 filter, and a filter is a denylist wearing a hat.
 
+The rejection itself is a fixed error code. Not the value, not its `repr`, not
+its type name: a rejection that reports what it rejected is an egress with an
+excuse, and it is the egress that fires precisely when something unexpected --
+which is to say, something nobody wrote a canary for -- has reached the writer.
+
 Property tests feed arbitrary page strings, arbitrary needle values and
 arbitrary exception messages through every entry point and assert that no
 egress contains any of them.
@@ -110,18 +115,44 @@ Version one proceeds only when the parsed cart contains **exactly one eligible
 line**. Anything else is inconclusive. If human selection is needed later it
 arrives on non-echoed stdin and is never restated back to the terminal.
 
-Before any DOM probing, in memory: a non-blank digit-string item id, an integer
-quantity that is not a bool, a first-party seller, `DELIVERY` intent, and a
-store id. These validate the context; none of them is written. Per-line
-delivery eligibility is not declared proven here and this observation cannot
-open that gate -- a read cannot be evidence about a write.
+Before any DOM probing, established in memory from the parsed cart and
+refused if any of it is missing, malformed or disagreeing:
+
+- a non-blank digit-string item id;
+- a non-blank offer id, because the offer is what identifies the exact variant
+  and a line without one is not addressable;
+- a positive integer quantity that is not a bool;
+- a strictly first-party seller;
+- cart intent exactly `DELIVERY`;
+- a live cart store id exactly equal to the store id in a valid pinned store
+  object. Having *some* store id is not agreement with the pinned store, and
+  the difference is the whole point of pinning one.
+
+These reuse the existing predicates and contracts rather than restating the
+same rules in slightly different words, which is how two checks drift into
+disagreeing. Any failure is `refused`, with no DOM probe attempted.
+
+None of these values is written.
+
+Per-line delivery eligibility is not declared proven here. The reason is
+narrow and worth stating exactly: **this** observer neither collects nor
+retains any per-line fulfillment signal, so nothing it produces can open
+`PER_LINE_DELIVERY_PROVEN`. A separately reviewed read-only observation could
+contribute evidence toward that gate later -- read-only evidence can prove a
+precondition for a write, and the first draft's flat claim that it cannot was
+wrong.
 
 ## What may be said
 
 Relations and structure, never contents:
 
 - the element carrying the item id: its tag and role, from the standard
-  vocabularies, and the **name** of the allowlisted attribute that matched;
+  vocabularies, and the **name** of the allowlisted attribute that matched.
+  The list for version one is fixed here, so that implementation cannot add an
+  attribute after seeing what live output happened to contain:
+  `data-item-id`, `data-usitemid`, `data-testid`, `id`, `href`. The
+  observation may report which of them worked. It may not grow the list;
+  widening after a look is how a guess becomes a finding.
 - whether that attribute's value **equals** the known item id or merely
   contains it;
 - the ancestor chain to the nearest element also containing a quantity control:
@@ -140,6 +171,26 @@ read every button's name to redact later; asking the page for a name it did not
 expect is reading the thing it promised not to read. If no exact match is
 found, the outcome is inconclusive. If it must record that an unknown button
 exists, it records a role and a count, never a name.
+
+## The walk, spelled out so a needle cannot get into a selector
+
+The rule "never interpolate a needle" is easy to agree with and easy to break
+by writing the obvious selector, so the feasible alternative is written down
+rather than left to the implementer:
+
+1. Count a static, needle-free locator over all candidate elements.
+2. If that count exceeds the node budget, stop: `inconclusive`. The bound is
+   checked before any per-node read, not while looping.
+3. Iterate the bounded nodes by index, and on each probe only the fixed
+   attribute names above.
+4. Compare each returned value against the needle **in a local variable**.
+   The needle is an operand, never part of a query.
+5. Reach ancestors by fixed traversal, not by a constructed selector.
+6. Compare quantity text the same way, after the bounded reads.
+
+No selector, no locator description and no Playwright call contains a needle at
+any point. That is a property the implementation can be read against, and the
+fakes assert it by recording every selector string the tool constructs.
 
 ## Read-only by construction
 

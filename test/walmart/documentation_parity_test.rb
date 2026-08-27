@@ -75,7 +75,11 @@ module Walmart
       # needle can also leave through a selector, an exception, a traceback, a
       # progress line or a filename.
       /unrecognised.{0,20}and counted/ => "attribute names cannot be enumerated without reading the DOM",
-      /canaries are the guarantee/ => "the file is one egress of several"
+      /canaries are the guarantee/ => "the file is one egress of several",
+      # Overstated epistemics from the same draft. Read-only evidence can prove
+      # a precondition for a write; what is true is the narrower claim that
+      # this observer collects no per-line fulfillment signal.
+      /read cannot be evidence about a write/ => "a read-only observation can prove a write's precondition"
     }.freeze
 
     # A retracted claim may be quoted, but only by a sentence that says it is
