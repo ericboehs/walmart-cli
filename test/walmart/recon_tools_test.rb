@@ -196,6 +196,49 @@ module Walmart
       end
     end
 
+    # The live-run checklist. Three kinds of sentence in it are load-bearing,
+    # and each is the kind that gets softened by someone in a hurry rather than
+    # deleted outright -- so each is pinned here.
+    #
+    # This checks only what the document must never stop saying. It is not a
+    # parity test for the gates themselves: those are judgements a reviewer
+    # applies, and a test asserting that a paragraph exists would measure its
+    # presence while saying nothing about whether anyone applied it.
+    LIVE_REVIEW = File.expand_path("../../docs/DOM-LIVE-REVIEW.md", __dir__)
+    NOT_A_RUNBOOK = "this is a review checklist, not a runbook. No runnable observer exists."
+    FRESH_AUTHORISATION = [
+      /fresh, explicit authorisation/i,
+      /naming \*\*the exact commit\*\*/i,
+      /naming \*\*one\*\* observation attempt/i
+    ].freeze
+    NO_RETRY = /no automatic retry of anything, for any reason/i
+    NO_MUTATION = /any mutation of the cart, any POST, any quantity change/i
+
+    def test_the_live_checklist_says_it_is_not_a_runbook
+      assert_includes squish(File.read(LIVE_REVIEW)), NOT_A_RUNBOOK,
+                      "the checklist has stopped disclaiming itself; a document that reads " \
+                      "like instructions is one someone will follow"
+    end
+
+    def test_the_live_checklist_keeps_its_three_mandatory_clauses
+      body = File.read(LIVE_REVIEW)
+
+      FRESH_AUTHORISATION.each do |clause|
+        assert_match clause, body, "the authorisation gate lost a required clause"
+      end
+      assert_match NO_RETRY, body, "the no-retry clause is gone"
+      assert_match NO_MUTATION, body, "the exclusion of cart mutation is gone"
+    end
+
+    def test_the_live_checklist_does_not_carry_commands_to_paste
+      body = File.read(LIVE_REVIEW)
+      offenders = body.lines.grep(%r{^\s*(?:\$|>|bin/walmart |uv run |cd pyworker)})
+
+      assert_empty offenders,
+                   "the checklist has grown runnable commands, which is what a runbook is:\n" \
+                   "#{offenders.join}"
+    end
+
     def test_no_observer_lives_in_scripts_where_the_runnable_things_are
       assert_empty Dir[File.expand_path("../../scripts/observe*", __dir__)],
                    "scripts/ is where a thing gets run from; the observer is not ready for that"
@@ -257,7 +300,11 @@ module Walmart
     # Normalised, because the sentence is wrapped in the document and a status
     # check defeated by a line break is a status check nobody has.
     def status_claims_no_observer?(text)
-      text.gsub(/\s+/, " ").include?(NO_OBSERVER)
+      squish(text).include?(NO_OBSERVER)
+    end
+
+    def squish(text)
+      text.gsub(/\s+/, " ")
     end
 
     # Comments and docstrings discuss these verbs at length -- this file's own

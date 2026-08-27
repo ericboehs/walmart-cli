@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 133 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 135 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,8 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| four mutants that weakened the test instead of the document | the document is the thing that rots; mutating its reader proves the reader works |
+| a second test asserting what an existing one already did | not extra safety -- it made an existing mutant ambiguous |
 | one rule spelled in two places, then fixed in one | `_digits` required ASCII digits and `Target`'s backstop did not |
 | a test named for a traversal that measured a refusal | "a full page of candidates still fits inside its estimate" never reached the walk |
 | a substring scan that found its own docstring | it cannot tell a rule from a sentence about the rule |
@@ -184,7 +186,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-133 defects in the table below. 269 mutants in `script/mutants.json`.
+135 defects in the table below. 276 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every

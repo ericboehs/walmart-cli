@@ -2269,7 +2269,7 @@
       "-Itest",
       "test/walmart/recon_tools_test.rb"
     ],
-    "from": "      text.gsub(/\\s+/, \" \").include?(NO_OBSERVER)",
+    "from": "      squish(text).include?(NO_OBSERVER)",
     "to": "      true"
   },
   {
@@ -2280,8 +2280,8 @@
       "-Itest",
       "test/walmart/recon_tools_test.rb"
     ],
-    "from": "      text.gsub(/\\s+/, \" \").include?(NO_OBSERVER)",
-    "to": "      text.include?(NO_OBSERVER)"
+    "from": "    def squish(text)\n      text.gsub(/\\s+/, \" \")\n    end",
+    "to": "    def squish(text)\n      text\n    end"
   },
   {
     "label": "a python observer would not be noticed",
@@ -3020,5 +3020,82 @@
     ],
     "from": "        if not _is_ascii_digits(self.item_id) or not _is_ascii_digits(self.store_id):",
     "to": "        if not self.item_id.isdigit() or not self.store_id.isdigit():"
+  },
+  {
+    "label": "the checklist stops calling itself a checklist",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "Status: **this is a review checklist, not a runbook. No runnable observer\nexists.",
+    "to": "Status: **a guide to observing a live cart."
+  },
+  {
+    "label": "the checklist softens fresh authorisation into any authorisation",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- Fresh, explicit authorisation from the account's owner, given for this\n  purpose and not inherited from any earlier permission.",
+    "to": "- Authorisation from the account's owner, which may be a standing one."
+  },
+  {
+    "label": "the checklist stops pinning authorisation to a commit",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- Naming **the exact commit** to be run.",
+    "to": "- Naming the branch to be run."
+  },
+  {
+    "label": "the checklist stops limiting authorisation to one attempt",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- Naming **one** observation attempt.",
+    "to": "- Naming a window for observation attempts."
+  },
+  {
+    "label": "the checklist permits a transient retry",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- No automatic retry of anything, for any reason, including a stop that looks\n  transient.",
+    "to": "- No automatic retry, except where a stop is clearly transient."
+  },
+  {
+    "label": "the checklist stops excluding cart mutation",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- any mutation of the cart, any POST, any quantity change;",
+    "to": "- anything not covered by a later proposal;"
+  },
+  {
+    "label": "the checklist grows a command to paste",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "## Gate 10: afterwards",
+    "to": "## Gate 10: afterwards\n\n$ bin/walmart cart observe --yes"
   }
 ]
