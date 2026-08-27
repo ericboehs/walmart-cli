@@ -79,7 +79,14 @@ module Walmart
       # Overstated epistemics from the same draft. Read-only evidence can prove
       # a precondition for a write; what is true is the narrower claim that
       # this observer collects no per-line fulfillment signal.
-      /read cannot be evidence about a write/ => "a read-only observation can prove a write's precondition"
+      /read cannot be evidence about a write/ => "a read-only observation can prove a write's precondition",
+      # The same error a second time, in Gate 10 of docs/DOM-LIVE-REVIEW.md.
+      # A structural observation authorizes nothing on its own, which is true
+      # and narrow; "does not enable acting code" inflates it into the claim
+      # that the artifact counts for nothing, which would mean the observer had
+      # no purpose. Overstating a boundary makes it arguable, and an arguable
+      # boundary gets argued away by whoever notices the overstatement.
+      /does not enable acting code/ => "structural evidence may inform a separately reviewed acting design"
     }.freeze
 
     # A retracted claim may be quoted, but only by a sentence that says it is
@@ -89,6 +96,76 @@ module Walmart
       /disproved|disproves|retracted|inferred|believed/i,
       /was wrong|still said|never .*(true|observation)/i
     ).freeze
+
+    # One hand-written sentence per retracted claim, in the shape a document
+    # would really say it. Written out rather than generated from the patterns,
+    # because a sample derived from the regex tests that the regex matches
+    # itself.
+    #
+    # This exists because the map had no canary at all. Every entry was added
+    # by watching it fire once, by hand, against a claim planted in a real
+    # document and then removed -- which is a thing that happened, not a thing
+    # that is checked. A mutant breaking one of the patterns survived, and it
+    # survived silently: nothing in the suite was planting a claim for the net
+    # to catch.
+    CANARIES = {
+      "runs off the main thread" => "The mutation runs off the main thread.",
+      "issued from a Web Worker" => "The request is issued from a Web Worker.",
+      "there is no cart mutation code" => "Today there is no cart mutation code.",
+      "not_implemented stub" => "cart add is a not_implemented stub.",
+      "mutation.{0,40}never.{0,20}observ" => "The mutation has never been observed.",
+      "unrecognised.{0,20}and counted" => "Anything else is unrecognised and counted.",
+      "canaries are the guarantee" => "The whole-file canaries are the guarantee.",
+      "read cannot be evidence about a write" => "A read cannot be evidence about a write.",
+      "does not enable acting code" => "A successful observation does not enable acting code."
+    }.freeze
+
+    # Two predicates, so the audit can be asked about inputs that are wrong.
+    # Asserting over the real map only ever exercises the case where everything
+    # already agrees, and a check that cannot be shown failing is one nobody
+    # has seen work.
+    def self.unsampled(claims, samples)
+      claims.map(&:source).sort - samples.keys.sort
+    end
+
+    def self.self_excusing(samples)
+      samples.select { |_, sample| sample.match?(RETRACTING) }.keys
+    end
+
+    def test_every_retracted_claim_has_a_sample_that_would_trip_it
+      assert_empty self.class.unsampled(RETRACTED.keys, CANARIES),
+                   "a retracted claim without a sample is an alarm nobody has heard"
+    end
+
+    def test_the_audit_notices_a_claim_nobody_wrote_a_sample_for
+      planted = self.class.unsampled([/a claim with no canary/], { "something else" => "x" })
+
+      assert_equal ["a claim with no canary"], planted
+    end
+
+    def test_the_audit_notices_a_sample_that_marks_itself_false
+      planted = self.class.self_excusing({ "p" => "That was retracted years ago." })
+
+      assert_equal ["p"], planted,
+                   "a sample excusing itself would pass the net without testing it"
+    end
+
+    def test_each_sample_is_caught_by_the_pattern_it_was_written_for
+      CANARIES.each do |source, sample|
+        assert_match(/#{source}/i, sample, "the net would not catch #{sample.inspect}")
+      end
+      assert_empty self.class.self_excusing(CANARIES),
+                   "a sample that excuses itself proves nothing about the net"
+    end
+
+    def test_a_sample_that_says_the_claim_is_false_is_allowed_through
+      CANARIES.each_value do |sample|
+        excused = "Disproved: #{sample}"
+
+        assert_match RETRACTING, excused,
+                     "a sentence marking the claim false is still being refused"
+      end
+    end
 
     def test_no_file_states_a_claim_the_evidence_retracted
       assert_operator self.class.narrative_files.length, :>, 50,

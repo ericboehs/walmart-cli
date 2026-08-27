@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 135 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 139 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,10 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| a retraction net with no canary for any entry | every entry was proved by hand once, which is a thing that happened, not a thing that is checked |
+| a cross-reference to a sentence nobody wrote | it sends a reader away satisfied, which is worse than no cross-reference |
+| a prohibition the first permitted action violates | "no POST" while loading the page causes the site's own POSTs; a rule like that gets discounted wholesale |
+| a true narrow limit inflated into a false general one | second occurrence; overstating a boundary makes it arguable, and arguable boundaries get argued away |
 | four mutants that weakened the test instead of the document | the document is the thing that rots; mutating its reader proves the reader works |
 | a second test asserting what an existing one already did | not extra safety -- it made an existing mutant ambiguous |
 | one rule spelled in two places, then fixed in one | `_digits` required ASCII digits and `Target`'s backstop did not |
@@ -186,7 +190,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-135 defects in the table below. 276 mutants in `script/mutants.json`.
+139 defects in the table below. 282 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -382,6 +386,8 @@ more than another assertion on behaviour.
 - **A boundary with a hole in it is the shape of the thing it was drawn
   around.** Wrap construction, not only reads, and do not accept a bound
   method -- the lookup is the first thing that can raise.
+- **State the boundary you can hold.** A prohibition violated by the first
+  permitted action teaches readers to discount the list it is on.
 - **A shared predicate cannot disagree with itself; two spellings can.**
   Delegate the rule, do not restate it -- and when you fix a rule, find every
   place that spells it.

@@ -7,8 +7,11 @@ permission to run.**
 The offline layer — the closed vocabulary in `pyworker/observation.py` and the
 walker in `pyworker/observe_walk.py` — has been reviewed and accepted as
 *offline*. Acceptance of that layer is not acceptance of a way to run it. There
-is deliberately no entrypoint, and the decision not to build one is recorded in
-`docs/DOM-OBSERVATION.md` rather than deferred.
+is deliberately no entrypoint, and the reasoning for that is recorded below
+rather than deferred. (An earlier draft of this paragraph said the decision was
+recorded in `docs/DOM-OBSERVATION.md`. It was not; no such statement exists
+there. A cross-reference to a sentence nobody wrote is worse than no
+cross-reference, because it sends a reader away satisfied.)
 
 This file exists so that the argument for a live observation has to be made
 once, in advance, against written criteria — instead of being assembled in the
@@ -45,6 +48,13 @@ boundary. A runner would add nothing except the ability to run.
   plan and approval of a run are separate acts.
 
 A peer agent's agreement is not authorisation, and neither is this document.
+
+A live attempt is worth *proposing* only when someone intends to read the
+structural result -- either to find out whether the offline walker matches the
+live DOM, or as evidence toward a future acting design. Not because the code
+exists. While the response-shape and per-line delivery gates are both shut,
+the structure of the page has to be the question being asked, or there is no
+question.
 
 ## Gate 2: the session
 
@@ -131,7 +141,17 @@ If persistence is proposed anyway:
 
 Not "out of scope for this attempt". Excluded:
 
-- any mutation of the cart, any POST, any quantity change;
+- any mutation of the cart, any quantity change;
+- any observer-authored network call: no direct POST, no request API, no
+  GraphQL operation, no fetch or XHR issued by this tool. The one action that
+  causes network traffic is the single gated navigation.
+
+  Stated that way on purpose. "No POST" was the earlier wording and it is not
+  enforceable as written: loading a cart page causes Walmart's own scripts to
+  issue background requests, including POSTs, and a prohibition that the very
+  first permitted action violates is one a reader learns to discount. The
+  boundary that can actually be held is the one between traffic this tool
+  authors and traffic the page generates by being open.
 - the order-submission surface, in every spelling, which no proposal may name
   outside the two audited safety files;
 - restoring, repairing or tidying the cart afterwards — the observation leaves
@@ -143,10 +163,22 @@ Not "out of scope for this attempt". Excluded:
 - Only the typed structural artifact is reviewed. Screenshots, page text and
   recollections of what the page looked like are not evidence and are not
   collected.
-- **A successful observation does not enable acting code.** It is evidence
-  about structure, and the gates on mutation are about a response shape and a
-  per-line delivery signal that this observer does not collect. One does not
-  become the other by having gone well.
+- **A successful observation does not by itself authorize or activate acting
+  code.** After separate human review, its typed structural evidence may
+  establish part of the observed DOM/control contract and inform a later
+  proposal for an acting state machine. It cannot substitute for
+  successful-response semantics, per-line delivery evidence, executing-boundary
+  checks, or review of the acting implementation itself.
+
+  The earlier wording here was "a successful observation does not enable acting
+  code", flat. That is the same category error this project has already
+  retracted once -- in the retracted claim that a read cannot be evidence about
+  a write -- and it takes a true narrow limit -- this artifact authorizes nothing on its own -- and
+  inflates it into a false general one. Structural evidence is exactly what
+  this observer exists to produce, and saying it counts for nothing would mean
+  the observer had no purpose. Overstating a boundary does not make it stronger;
+  it makes it arguable, and a boundary that can be argued away is one that will
+  be, by someone who has correctly noticed the overstatement.
 - `PER_LINE_DELIVERY_PROVEN` stays shut. This observer collects no per-line
   fulfillment signal, so it cannot open it — a different, separately reviewed
   observation might contribute, and would need its own proposal.

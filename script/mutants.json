@@ -3084,7 +3084,7 @@
       "-Itest",
       "test/walmart/recon_tools_test.rb"
     ],
-    "from": "- any mutation of the cart, any POST, any quantity change;",
+    "from": "- any mutation of the cart, any quantity change;",
     "to": "- anything not covered by a later proposal;"
   },
   {
@@ -3097,5 +3097,71 @@
     ],
     "from": "## Gate 10: afterwards",
     "to": "## Gate 10: afterwards\n\n$ bin/walmart cart observe --yes"
+  },
+  {
+    "label": "the checklist claims control over the page's own traffic",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- any observer-authored network call: no direct POST, no request API, no\n  GraphQL operation, no fetch or XHR issued by this tool.",
+    "to": "- any POST."
+  },
+  {
+    "label": "gate ten flattens back into an absolute",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "- **A successful observation does not by itself authorize or activate acting\n  code.**",
+    "to": "- **A successful observation does not enable acting code.**"
+  },
+  {
+    "label": "gate ten drops what the evidence may establish",
+    "file": "docs/DOM-LIVE-REVIEW.md",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "  establish part of the observed DOM/control contract and inform a later\n  proposal for an acting state machine.",
+    "to": "  be discarded."
+  },
+  {
+    "label": "the flat licensing claim is no longer retracted",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/documentation_parity_test.rb"
+    ],
+    "from": "      /does not enable acting code/ => \"structural evidence may inform a separately reviewed acting design\"",
+    "to": "      /does not enable acting codez/ => \"structural evidence may inform a separately reviewed acting design\""
+  },
+  {
+    "label": "a retracted claim may go without a sample",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/documentation_parity_test.rb"
+    ],
+    "from": "      claims.map(&:source).sort - samples.keys.sort",
+    "to": "      []"
+  },
+  {
+    "label": "a sample that excuses itself still counts",
+    "file": "test/walmart/documentation_parity_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/documentation_parity_test.rb"
+    ],
+    "from": "      samples.select { |_, sample| sample.match?(RETRACTING) }.keys",
+    "to": "      []"
   }
 ]

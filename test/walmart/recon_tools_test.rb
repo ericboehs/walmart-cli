@@ -212,7 +212,19 @@ module Walmart
       /naming \*\*one\*\* observation attempt/i
     ].freeze
     NO_RETRY = /no automatic retry of anything, for any reason/i
-    NO_MUTATION = /any mutation of the cart, any POST, any quantity change/i
+    NO_MUTATION = /any mutation of the cart, any quantity change/i
+    # An enforceable boundary rather than an absolute nobody can keep: loading
+    # a cart page makes Walmart's own scripts issue background requests. The
+    # line that can be held is between traffic this tool authors and traffic
+    # the page generates by being open.
+    NO_TOOL_TRAFFIC = /no direct POST, no request API, no\s+GraphQL operation/i
+    # Gate 10, pinned on both sides. The flat phrasing is caught by the
+    # retraction net in documentation_parity_test; these pin what replaced it,
+    # because a claim can also be lost by deletion.
+    OBSERVATION_LICENSES = [
+      /does not by itself authorize or activate acting\s+code/i,
+      %r{may\s+establish part of the observed DOM/control contract}i
+    ].freeze
 
     def test_the_live_checklist_says_it_is_not_a_runbook
       assert_includes squish(File.read(LIVE_REVIEW)), NOT_A_RUNBOOK,
@@ -228,6 +240,11 @@ module Walmart
       end
       assert_match NO_RETRY, body, "the no-retry clause is gone"
       assert_match NO_MUTATION, body, "the exclusion of cart mutation is gone"
+      assert_match NO_TOOL_TRAFFIC, body, "the exclusion of tool-authored requests is gone"
+      OBSERVATION_LICENSES.each do |clause|
+        assert_match clause, body,
+                     "Gate 10 no longer says what an observation does and does not license"
+      end
     end
 
     def test_the_live_checklist_does_not_carry_commands_to_paste
