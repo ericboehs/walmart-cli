@@ -135,8 +135,17 @@ class Cardinality(enum.Enum):
 
     @classmethod
     def of(cls, count: int, budget: int) -> Cardinality:
-        """Constructed by the walker from a real locator count, never by hand."""
-        if type(count) is not int or count < 0:
+        """Constructed by the walker from a real locator count, never by hand.
+
+        The budget is checked too. It is internal, which is exactly the
+        argument that would leave it unchecked -- and then a bool or a string
+        budget raises whatever Python raises from the comparison, which is not
+        one of this module's fixed codes. A layer claiming closed failure
+        behaviour does not get to have one uncontrolled exception in it.
+        """
+        if type(budget) is not int or type(budget) is bool or budget < 1:
+            raise Unserialisable(SerialiseError.BAD_BUDGET)
+        if type(count) is not int or type(count) is bool or count < 0:
             raise Unserialisable(SerialiseError.BAD_CARDINALITY)
         if count > budget:
             return cls.OVER_BUDGET
@@ -165,7 +174,10 @@ class Depth(enum.Enum):
         return cls.OVER_BUDGET if depth > 4 else cls(f"d{depth}")
 
 
-MAX_ANCESTORS = 5
+# Four, because the chain runs D1..D4 and the ladder stops there. D0 is the
+# line element itself, which is reported separately and is not a step in its
+# own ancestry.
+MAX_ANCESTORS = 4
 MAX_OUTPUT_BYTES = 4096
 
 
@@ -230,6 +242,8 @@ class SerialiseError(enum.Enum):
     INCOHERENT_OBSERVATION = "observed_result_is_not_fully_established"
     INCOHERENT_INCONCLUSIVE = "inconclusive_result_disagrees_with_its_limit"
     BAD_CARDINALITY = "cardinality_not_a_count"
+    BAD_BUDGET = "budget_not_a_positive_int"
+    BROKEN_CHAIN = "ancestors_are_not_a_contiguous_path"
     BAD_DEPTH = "depth_not_a_count"
 
 
@@ -294,6 +308,17 @@ class LineFinding:
 
 @dataclass(frozen=True)
 class ControlFinding:
+    """A quantity control, and whether it could be used right now.
+
+    `disabled` is reported, not required to be false, and the choice is
+    deliberate rather than left over. `observed` here means *identified*: this
+    element is the quantity control for this line. It does not mean an acting
+    implementation could press it, and it must not be read that way -- a
+    decrease button is legitimately disabled at a quantity of one, and that is
+    still a correct identification. Whether a control is usable is a question
+    for the run that wants to use it, asked at that moment.
+    """
+
     role: Role | Sentinel
     name: ControlName | Sentinel
     inside_line: bool
@@ -335,21 +360,41 @@ class ObservedResult:
         _typed(self.line, LineFinding)
         _typed(self.control, ControlFinding)
         _typed(self.quantity, QuantityFinding)
+        self._require_a_path()
         established = (
             self.line.matches is Cardinality.ONE
             and self.line.relation in (Relation.EQUALS_ITEM_ID, Relation.CONTAINS_ITEM_ID)
             and self.quantity.relation is Relation.EQUALS_QUANTITY
             and self.control.inside_line
+            # The name is probed on a button, so a button is what may be
+            # reported. A link or an image bearing the text "Decrease quantity"
+            # is not a quantity control, and being inside the vocabulary is not
+            # the same as being the thing the vocabulary describes.
+            and self.control.role is Role.BUTTON
             and type(self.line.tag) is Tag
             and type(self.line.role) is Role
             and type(self.line.attribute) is Attribute
-            and type(self.control.role) is Role
             and type(self.control.name) is ControlName
             and self.quantity.depth is not Depth.OVER_BUDGET
-            and all(a.depth is not Depth.OVER_BUDGET for a in self.line.ancestors)
         )
         if not established:
             raise Unserialisable(SerialiseError.INCOHERENT_OBSERVATION)
+
+    def _require_a_path(self):
+        """The ancestors must be a path, not a bag of elements.
+
+        The document promises a chain from the line to the nearest containing
+        element, and a chain has an order. Without this, five findings all at
+        D1, or D3 before D2, or a gap, would serialise as though somebody had
+        walked the tree. Redacted tags and roles are refused here too: an
+        observation made of sentinels is a record of not having seen anything.
+        """
+        chain = self.line.ancestors
+        expected = [Depth.of(step) for step in range(1, len(chain) + 1)]
+        walked = [ancestor.depth for ancestor in chain]
+        readable = all(type(ancestor.tag) is Tag and type(ancestor.role) is Role for ancestor in chain)
+        if walked != expected or not readable:
+            raise Unserialisable(SerialiseError.BROKEN_CHAIN)
 
 
 @dataclass(frozen=True)

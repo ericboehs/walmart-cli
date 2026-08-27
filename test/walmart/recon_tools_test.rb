@@ -101,22 +101,87 @@ module Walmart
                          "not by restoring the file"
     end
 
-    # docs/DOM-OBSERVATION.md opens by saying no tool exists and nothing has
-    # been observed. That is true today and will stop being true, and a status
-    # line nobody checks is the exact failure this repository keeps recording:
-    # a promise outliving its mechanism. So the mechanism is here.
+    # docs/DOM-OBSERVATION.md opens by saying there is no page-reading observer
+    # and nothing has been observed. That is true today and will stop being
+    # true, and a status line nobody checks is the exact failure this
+    # repository keeps recording: a promise outliving its mechanism. So the
+    # mechanism is here.
+    #
+    # The claim is deliberately narrower than it was. The vocabulary the
+    # observer will use is implemented, in pyworker/observation.py, and a
+    # status line saying "no tool exists" while a module of that tool exists
+    # is the kind of nearly-true sentence that stops being read. What must
+    # stay absent is anything that can read a page or be run.
     OBSERVATION_DESIGN = File.expand_path("../../docs/DOM-OBSERVATION.md", __dir__)
+    NO_OBSERVER = "There is no page-reading observer and no runnable command."
 
     def test_the_observation_design_still_says_no_tool_exists_only_while_none_does
-      claims_none = File.read(OBSERVATION_DESIGN).include?("No tool exists")
-      built = Dir[File.expand_path("../../scripts/observe*", __dir__)]
+      claims_none = status_claims_no_observer?(File.read(OBSERVATION_DESIGN))
+      built = observer_paths(File.expand_path("../..", __dir__))
 
       assert_equal claims_none, built.empty?,
-                   "docs/DOM-OBSERVATION.md and scripts/ disagree about whether the " \
-                   "observation tool exists: #{built.map { |p| File.basename(p) }.inspect}"
+                   "docs/DOM-OBSERVATION.md and the tree disagree about whether the " \
+                   "observer exists: #{built.map { |p| File.basename(p) }.inspect}"
+    end
+
+    # Both sides of that assertion are true today, so it would pass with either
+    # side broken. An alarm with no sample is one nobody has heard, and two
+    # mutants survived here before these canaries existed.
+    def test_the_status_check_would_notice_an_observer_appearing
+      Dir.mktmpdir do |root|
+        FileUtils.mkdir_p(File.join(root, "scripts"))
+        FileUtils.mkdir_p(File.join(root, "pyworker"))
+
+        assert_empty observer_paths(root)
+
+        File.write(File.join(root, "scripts", "observe-cart-dom.py"), "")
+
+        assert_equal 1, observer_paths(root).length
+
+        File.write(File.join(root, "pyworker", "observe_cart.py"), "")
+
+        assert_equal 2, observer_paths(root).length,
+                     "an observer living in pyworker/ is still an observer"
+      end
+    end
+
+    def test_the_status_check_would_notice_the_sentence_going_missing
+      refute status_claims_no_observer?("Status: the observer is implemented and runnable.")
+      assert status_claims_no_observer?(
+        "Status: contract accepted. There is no page-reading\nobserver and no " \
+        "runnable command. Nothing has been observed."
+      )
+    end
+
+    def test_the_vocabulary_module_is_not_mistaken_for_the_observer
+      # It is allowed to exist while the status line says no observer does,
+      # because it cannot read anything. If that ever changes the interaction
+      # and navigation alarms above will not see it -- they scan scripts/ --
+      # so it is named here.
+      vocabulary = File.expand_path("../../pyworker/observation.py", __dir__)
+
+      assert_path_exists vocabulary
+      body = code(vocabulary)
+
+      # Code shapes, not the word. The module's own prose says "page" often,
+      # because describing what it refuses to read is most of its subject.
+      refute_match(/^\s*(from|import)\s+playwright/, body)
+      refute_match(/\bpage\.\w/, body)
+      refute_match(/\.locator\(|get_by_role\(|query_selector/, body)
+      refute_match(/async def|await /, body)
     end
 
     private
+
+    def observer_paths(root)
+      Dir[File.join(root, "scripts", "observe*")] + Dir[File.join(root, "pyworker", "observe*.py")]
+    end
+
+    # Normalised, because the sentence is wrapped in the document and a status
+    # check defeated by a line break is a status check nobody has.
+    def status_claims_no_observer?(text)
+      text.gsub(/\s+/, " ").include?(NO_OBSERVER)
+    end
 
     # Comments and docstrings discuss these verbs at length -- this file's own
     # subject is a script that clicked. Matching prose would make the alarm

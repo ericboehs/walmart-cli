@@ -1,8 +1,8 @@
 # Observing the cart DOM: the minimisation contract
 
-Status: **contract accepted. The output vocabulary exists and is tested
-(`pyworker/observation.py`). No tool exists that reads a page. Nothing has been
-observed.**
+Status: **contract accepted. The output vocabulary is implemented and tested
+in `pyworker/observation.py`. There is no page-reading observer and no runnable
+command. Nothing has been observed.**
 
 This document is the thing to argue with. It exists because the observation it
 describes is the most privacy-dangerous operation this project has proposed,
@@ -76,15 +76,25 @@ The writer does not take a dict and clean it. It takes a typed structure whose
 keys are fixed in code and whose leaves can only be:
 
 - an enum token from a frozen vocabulary,
-- a boolean,
-- a `Count` or `Depth`, bounded wrappers the walker constructs,
-- a relation enum: `equals_item_id`, `contains_item_id`, `equals_quantity`,
-- an outcome or sentinel enum.
+- a boolean.
 
-No arbitrary `str` reaches `serialize()`, and no arbitrary `int` either. The
-integer rule is not fussiness: the quantity is an int needle, so a serialiser
-that accepts bare integers cannot distinguish a cardinality from Eric's
-quantity. Cardinalities arrive wrapped by the walker or not at all.
+That is the whole list. There are no numbers in the output at all.
+
+The first draft allowed bounded `Count` and `Depth` wrappers around integers,
+and that was wrong twice over. They accepted any non-negative integer including
+the quantity itself, and -- worse -- the canary that was supposed to catch a
+leak passed by coincidence, because the sample quantity was 3 while the sample
+happened to emit 1 and 2. At a quantity of 2 the assertion could not have told
+a leak from a legitimate depth.
+
+So both are categorical now. Cardinality is `zero`, `one`, `many` or
+`over_budget`, which is everything the walker needs, since the only question it
+asks of a count is unique against ambiguous. Depth is a `d0`..`d4` ladder with
+an `over_budget` token, so a bound expressed as a type cannot be exceeded by a
+loop that forgot to check. Both are built by factories from a real traversal
+rather than written by hand.
+
+No arbitrary `str` reaches the writer and no `int` of any kind does.
 
 Unknown types and unknown keys are **rejected**, not redacted. Redaction is a
 filter, and a filter is a denylist wearing a hat.
@@ -157,10 +167,16 @@ Relations and structure, never contents:
 - whether that attribute's value **equals** the known item id or merely
   contains it;
 - the ancestor chain to the nearest element also containing a quantity control:
-  tags, roles and depth;
-- how many elements matched, as a `Count`;
-- the quantity control: its role, whether it lies inside the line's subtree,
-  and whether it is disabled;
+  tags, roles and depth, as a contiguous ordered path `d1`, `d2`, ... An
+  unordered bag with repeats or gaps is not a chain, and is refused rather
+  than written;
+- how many elements matched, as a cardinality: `one` or `many`, never a number;
+- the quantity control: its role -- which must be `button`, because the name
+  was probed on a button and a link captioned "Decrease quantity" is not a
+  quantity control -- whether it lies inside the line's subtree, and whether it
+  is disabled. Disabled is reported and does not disqualify: `observed` means
+  *identified*, not *usable now*. A decrease button is legitimately disabled at
+  a quantity of one, and that is still a correct identification;
 - whether some element in that subtree has a text value **equal to** the
   quantity the parser already read. The number is never written, and nothing
   is learned by writing it, because the parser already knew it.
@@ -207,7 +223,11 @@ fakes assert it by recording every selector string the tool constructs.
 
 One shared budget covers candidate nodes, ancestors and attribute probes, and
 the total is bounded **before** any per-node read rather than while looping.
-The output has a byte cap checked before the atomic 0600 write. Hitting any
+The output has a byte cap checked in memory before the atomic 0600 write -- a
+cap applied after a write is a cap on the next run. Every failure inside this
+layer, including one caused by a bad internal argument such as the budget
+itself, raises one of a fixed set of codes; a layer claiming closed failure
+behaviour does not get to hold one uncontrolled exception. Hitting any
 bound makes the run inconclusive and non-zero; there is no partial `observed`.
 
 Tests count actual locator reads, not output entries. Counting the output is

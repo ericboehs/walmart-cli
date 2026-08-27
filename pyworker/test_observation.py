@@ -45,7 +45,7 @@ def line(**over):
         "attribute": obs.Attribute.DATA_ITEM_ID,
         "relation": obs.Relation.EQUALS_ITEM_ID,
         "matches": obs.Cardinality.ONE,
-        "ancestors": (obs.AncestorFinding(obs.Tag.LI, obs.Role.LISTITEM, obs.Depth.D1),),
+        "ancestors": (obs.AncestorFinding(obs.Tag.LI, obs.Role.LISTITEM, obs.Depth.D1),),  # a path
     }
     return obs.LineFinding(**{**fields, **over})
 
@@ -194,9 +194,8 @@ def test_an_observation_cannot_be_built_from_a_redacted_tag():
         lambda: observed(control=control(inside_line=False)),
         lambda: observed(quantity=quantity(relation=obs.Relation.NO_MATCH)),
         lambda: observed(quantity=quantity(depth=obs.Depth.OVER_BUDGET)),
-        lambda: observed(
-            line=line(ancestors=(obs.AncestorFinding(obs.Tag.LI, obs.Role.LIST, obs.Depth.OVER_BUDGET),))
-        ),
+        # An over-budget ancestor is refused too, but by the chain rule, which
+        # is the more precise complaint; see the chain tests below.
     ],
 )
 def test_an_incomplete_observation_is_not_an_observation(broken):
@@ -369,3 +368,101 @@ def test_the_leaf_writer_refuses_a_subclass_of_str():
 def test_the_leaf_writer_passes_a_real_bool_and_a_real_token():
     assert obs._leaf(True) is True
     assert obs._leaf(obs.Tag.DIV) == "div"
+
+
+# --- an ancestor chain is a path, not a bag ---------------------------------------------
+
+
+def step(depth, tag=obs.Tag.LI, role=obs.Role.LISTITEM):
+    return obs.AncestorFinding(tag, role, depth)
+
+
+def test_a_real_contiguous_chain_is_accepted():
+    observed(line=line(ancestors=(step(obs.Depth.D1), step(obs.Depth.D2), step(obs.Depth.D3))))
+
+
+@pytest.mark.parametrize(
+    ("label", "chain"),
+    [
+        ("a redacted tag", (step(obs.Depth.D1, tag=obs.Sentinel.REDACTED),)),
+        ("a redacted role", (step(obs.Depth.D1, role=obs.Sentinel.REDACTED),)),
+        ("both redacted", (obs.AncestorFinding(obs.Sentinel.REDACTED, obs.Sentinel.REDACTED, obs.Depth.D1),)),
+        ("duplicates", (step(obs.Depth.D1), step(obs.Depth.D1))),
+        ("reversed", (step(obs.Depth.D2), step(obs.Depth.D1))),
+        ("a skipped step", (step(obs.Depth.D1), step(obs.Depth.D3))),
+        ("starting at the line itself", (step(obs.Depth.D0), step(obs.Depth.D1))),
+        ("only D0", (step(obs.Depth.D0),)),
+        ("starting part way up", (step(obs.Depth.D2),)),
+        ("an over-budget step", (step(obs.Depth.D1), step(obs.Depth.OVER_BUDGET))),
+        ("four identical steps", tuple(step(obs.Depth.D2) for _ in range(4))),
+    ],
+)
+def test_an_unordered_bag_is_not_an_ancestor_chain(label, chain):
+    """An observation made of sentinels is a record of not having seen anything."""
+    with pytest.raises(obs.Unserialisable) as exc:
+        observed(line=line(ancestors=chain))
+
+    assert exc.value.code is obs.SerialiseError.BROKEN_CHAIN, label
+
+
+def test_the_chain_stops_at_four_because_the_ladder_does():
+    """D0 is the line element, reported separately, not a step in its own ancestry."""
+    assert obs.MAX_ANCESTORS == 4
+
+    with pytest.raises(obs.Unserialisable) as exc:
+        line(ancestors=tuple(step(obs.Depth.D1) for _ in range(5)))
+
+    assert exc.value.code is obs.SerialiseError.TOO_MANY_ANCESTORS
+
+
+# --- being in the vocabulary is not being the thing ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role",
+    [obs.Role.LINK, obs.Role.IMG, obs.Role.HEADING, obs.Role.LIST, obs.Role.NONE, obs.Role.TEXTBOX],
+)
+def test_only_a_button_can_be_the_quantity_control(role):
+    """The name is probed on a button, so a button is what may be reported.
+
+    A link captioned "Decrease quantity" is not a quantity control. Membership
+    of a vocabulary is not the same as being the thing the vocabulary
+    describes, and this is the gap that matters most, because the next step
+    after identifying a control is pressing one.
+    """
+    with pytest.raises(obs.Unserialisable) as exc:
+        observed(control=control(role=role))
+
+    assert exc.value.code is obs.SerialiseError.INCOHERENT_OBSERVATION
+
+
+def test_a_disabled_control_is_still_an_identified_control():
+    """Deliberate, not left over: observed means identified, not actionable.
+
+    A decrease button is legitimately disabled at a quantity of one, and that
+    is a correct identification. Whether it can be used is a question for the
+    run that wants to use it, asked at that moment.
+    """
+    result = observed(control=control(disabled=True))
+
+    assert json.loads(obs.render(result))["control"]["disabled"] is True
+
+
+# --- the factory's own arguments ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("budget", [True, False, 0, -1, "20", None, 2.0, Hostile("20")])
+def test_a_bad_budget_fails_with_a_fixed_code_not_whatever_python_raises(budget):
+    """The budget is internal, which is exactly the argument for not checking it.
+
+    A layer claiming closed failure behaviour does not get to hold one
+    uncontrolled exception, and a comparison against a string is one.
+    """
+    with pytest.raises(obs.Unserialisable) as exc:
+        obs.Cardinality.of(1, budget)
+
+    assert exc.value.code is obs.SerialiseError.BAD_BUDGET
+
+
+def test_a_good_budget_still_works():
+    assert obs.Cardinality.of(1, 20) is obs.Cardinality.ONE

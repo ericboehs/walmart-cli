@@ -2154,5 +2154,150 @@
     ],
     "from": "    HREF = \"href\"",
     "to": "    HREF = \"href\"\n    CLASS = \"class\""
+  },
+  {
+    "label": "the ancestor chain need not be a path",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if walked != expected or not readable:\n            raise Unserialisable(SerialiseError.BROKEN_CHAIN)",
+    "to": "        pass"
+  },
+  {
+    "label": "the chain may be an unordered bag",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if walked != expected or not readable:",
+    "to": "        if sorted(w.value for w in walked) != sorted(e.value for e in expected) or not readable:"
+  },
+  {
+    "label": "a redacted ancestor is good enough",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        readable = all(type(ancestor.tag) is Tag and type(ancestor.role) is Role for ancestor in chain)",
+    "to": "        readable = all(ancestor.tag is not None for ancestor in chain)"
+  },
+  {
+    "label": "the chain may start at the line itself",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        expected = [Depth.of(step) for step in range(1, len(chain) + 1)]",
+    "to": "        expected = [Depth.of(step) for step in range(0, len(chain))]"
+  },
+  {
+    "label": "any role may be the quantity control",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "            and self.control.role is Role.BUTTON",
+    "to": "            and type(self.control.role) is Role"
+  },
+  {
+    "label": "the ancestor bound goes back up to five",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "MAX_ANCESTORS = 4",
+    "to": "MAX_ANCESTORS = 5"
+  },
+  {
+    "label": "the budget is trusted because it is internal",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if type(budget) is not int or type(budget) is bool or budget < 1:\n            raise Unserialisable(SerialiseError.BAD_BUDGET)",
+    "to": "        pass"
+  },
+  {
+    "label": "a bool budget slips past",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if type(budget) is not int or type(budget) is bool or budget < 1:",
+    "to": "        if not isinstance(budget, int) or budget < 1:"
+  },
+  {
+    "label": "the status line is not checked against the tree",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "      text.gsub(/\\s+/, \" \").include?(NO_OBSERVER)",
+    "to": "      true"
+  },
+  {
+    "label": "a wrapped status line defeats the check",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "      text.gsub(/\\s+/, \" \").include?(NO_OBSERVER)",
+    "to": "      text.include?(NO_OBSERVER)"
+  },
+  {
+    "label": "a python observer would not be noticed",
+    "file": "test/walmart/recon_tools_test.rb",
+    "command": [
+      "ruby",
+      "-Itest",
+      "test/walmart/recon_tools_test.rb"
+    ],
+    "from": "      Dir[File.join(root, \"scripts\", \"observe*\")] + Dir[File.join(root, \"pyworker\", \"observe*.py\")]",
+    "to": "      Dir[File.join(root, \"scripts\", \"observe*\")]"
   }
 ]
