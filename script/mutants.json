@@ -1890,15 +1890,27 @@
     "to": "uv run --quiet pytest"
   },
   {
-    "label": "a recon script may click",
+    "label": "the interaction alarm catches nothing",
     "file": "test/walmart/recon_tools_test.rb",
-    "from": "    CLICK = /\\.click\\s*\\(/",
-    "to": "    CLICK = /\\.click_nothing_ever\\s*\\(/"
+    "from": "    INTERACTION = /\\.(?:#{INTERACTIONS.join(\"|\")})\\s*\\(/",
+    "to": "    INTERACTION = /\\.(?:never_ever_#{INTERACTIONS.join(\"|\")})\\s*\\(/"
   },
   {
     "label": "ungated navigation is allowed in recon scripts",
     "file": "test/walmart/recon_tools_test.rb",
     "from": "    UNGATED_GOTO = /(?<!session)\\.goto\\s*\\(/",
     "to": "    UNGATED_GOTO = /(?<!x)\\.never_goto\\s*\\(/"
+  },
+  {
+    "label": "the interaction list forgets the quiet verbs",
+    "file": "test/walmart/recon_tools_test.rb",
+    "from": "      drag_to set_input_files evaluate evaluate_handle dispatch_event",
+    "to": "      drag_to set_input_files"
+  },
+  {
+    "label": "only python scripts are scanned",
+    "file": "test/walmart/recon_tools_test.rb",
+    "from": "    SCRIPTS = Dir[File.expand_path(\"../../scripts/*\", __dir__)].select { |path| File.file?(path) }",
+    "to": "    SCRIPTS = Dir[File.expand_path(\"../../scripts/*.py\", __dir__)].select { |path| File.file?(path) }"
   }
 ]

@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 91 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 92 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -32,6 +32,7 @@ Each of these was written deliberately, read fine, and passed:
 | identifier-shaped keys kept | a first name passes any "looks like a field" test, so the canaries using an email and a UUID proved nothing about the claim |
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
+| a denylist described as a guarantee | the class comment said "a recon script observes, it does not act" while the code checked two literal method names; press, fill, dispatch_event and side effects inside evaluate were all outside the net the prose stood on |
 | a gate that was one boolean | its own comment said "not openable by editing this line alone" and `run()` checked exactly that constant; five of six preconditions were prose, so one edit restored the whole unsafe path |
 | a driver acting on an unobserved DOM | it treated "exactly one element matched" as proof the element was the right one; cardinality is not identity, and the click is a write |
 | restore in a `finally` after an attempted click | a second absolute write could be sent while the first was still in flight, with no ordering guarantee about which one Walmart applied last |
@@ -142,7 +143,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-91 defects in the table below. 184 mutants in `script/mutants.json`.
+92 defects in the table below. 186 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -335,6 +336,8 @@ more than another assertion on behaviour.
 - **A test can be reporting on code that no longer exists.** Bytecode caching
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
+- **The comment above a denylist is where it gets mistaken for a guarantee.**
+  Narrow the prose to exactly what the code checks, or widen the code.
 - **A shut door whose key is one source edit is a TODO wearing a lock.** When
   the mechanisms a gate should test do not exist yet, delete the code the gate
   guards; that is the only version of "off" that does not depend on the next
