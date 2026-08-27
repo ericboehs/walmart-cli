@@ -144,7 +144,18 @@ refused if any of it is missing, malformed or disagreeing:
   compared as strings. Stringifying both sides made the integer 499 agree with
   the string "499", and made any object at all agree with anything by way of
   its `__str__`; leading zeros are part of an identifier, not decoration.
-  The live cart store id must be exactly equal to the pinned one. Having *some* store id is not agreement with the pinned store, and
+  The live cart store id must be exactly equal to the pinned one, with nothing
+  normalised on the way. Stripping whitespace made `" 499 "` and `"499"` the
+  same store, which is a normalisation rule nobody wrote down applied to the
+  one comparison that decides whose cart we are looking at. `isdigit()` is also
+  not ASCII -- it is true of superscripts and of Arabic-Indic digits -- so the
+  check is `isascii() and isdigit()`.
+
+The `Target` these produce holds all four needles, so it does not print. Its
+fields are `repr=False` and its repr is the fixed string `<Target redacted>`.
+A dataclass repr prints every field, and reprs run in places nobody chose: a
+traceback showing local variables, an assertion diff, a debugger, a log line
+added later. "Never written down" is not a property of intent. Having *some* store id is not agreement with the pinned store, and
   the difference is the whole point of pinning one.
 
 These reuse the existing predicates and contracts rather than restating the
@@ -184,11 +195,26 @@ Relations and structure, never contents:
 - how many elements matched, as a cardinality: `one` or `many`, never a number;
 - the quantity control: its role -- which must be `button`, because the name
   was probed on a button and a link captioned "Decrease quantity" is not a
-  quantity control -- whether it lies inside the element that carried the item
-  id or only inside the resolved line container, and whether it is disabled.
-  Both placements are ordinary: a likely real shape is the id on an anchor with
-  the buttons as siblings, and requiring the control to be a descendant of the
-  id-bearing element would rule that out. Disabled is reported and does not disqualify: `observed` means
+  quantity control -- where it sits, as one of two fixed words, and whether it
+  is disabled. `id_element` means it descends from the element carrying the
+  item id; `ancestor_container` means it was found in the container resolved
+  around that element. Both are ordinary: a likely real shape is the id on an
+  anchor with the buttons as siblings, and requiring the control to be a
+  descendant of the id-bearing element would rule that out.
+
+  It is deliberately **not** called "inside line". After resolution the control
+  is always inside the resolved line -- that is what resolution means -- so a
+  false "inside line" would invite a later reader to conclude the control was
+  not associated with the line at all. The two words say the narrower thing
+  they mean.
+
+  The location and the ancestor path must agree: `id_element` exactly when the
+  path is empty, `ancestor_container` exactly when it is not, because the path
+  *is* the climb that reached the container. This is checked in the result
+  layer, not only in the walker. A field that was required to be true carried
+  no information, but it also could not contradict anything; relaxing it to
+  "reported, not required" made two invalid states representable in the same
+  stroke, and loosening a guarantee is not free. Disabled is reported and does not disqualify: `observed` means
   *identified*, not *usable now*. A decrease button is legitimately disabled at
   a quantity of one, and that is still a correct identification;
 - whether some element in that subtree has a text value **equal to** the
@@ -248,7 +274,15 @@ returning a match found among them reports success for exactly the runs the
 bound exists to stop.
 
 The exception boundary covers locator *construction* as well as reads, because
-building a locator can fail and the message quotes the selector. And the fixed
+building a locator can fail and the message quotes the selector. It starts
+before the attribute lookup, too: the object and the method *name* are passed
+in separately and `getattr` happens inside the same `try` as the call. A
+Locator is a proxy over a connection to another process, so attribute access on
+one runs code and can raise with a selector in it -- handing a boundary an
+already-bound method means the boundary starts one step too late. The same applies to the
+precondition refusals, whose shared predicates quote item names and store ids;
+`observe` happens to discard those exceptions, but that is a property of one
+caller and `preconditions` is callable directly. And the fixed
 exception is raised after leaving the `except` block: `raise ... from None`
 clears `__cause__` but leaves the original on `__context__`, where a formatted
 traceback will print it. Losing the text means losing it. Hitting any

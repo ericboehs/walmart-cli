@@ -51,6 +51,16 @@ ALLOWED_ROLES = frozenset(role.value for role in obs.Role)
 ALLOWED_NAMES = frozenset(name.value for name in obs.ControlName)
 
 
+class Exploder:
+    """An object whose one method raises with the needle in it."""
+
+    def __init__(self, boom=None):
+        self.boom = boom or Nasty(f"strict mode violation: {PRODUCT}")
+
+    def go(self, *_args, **_kwargs):
+        raise self.boom
+
+
 class ForbiddenQuery(BaseException):
     """Raised the moment a query is built out of something not predeclared.
 
@@ -325,7 +335,7 @@ VOCABULARY = frozenset(member.value for group in obs.LEAVES for member in group)
 DOCUMENT_KEYS = frozenset(
     {"outcome", "refusal", "reason", "limit", "line", "control", "quantity"}
     | {"tag", "role", "attribute", "relation", "matches", "ancestors", "depth"}
-    | {"name", "inside_line", "disabled"}
+    | {"name", "location", "disabled"}
 )
 
 
@@ -422,7 +432,7 @@ def test_a_browser_exception_becomes_a_token_and_loses_its_text(boom):
 
     reader = walk.Reader()
     with pytest.raises(walk.Unreadable) as stopped:
-        reader.read(explode)
+        reader.read(Exploder(), "go")
 
     assert stopped.value.reason is obs.Inconclusive.DOM_UNREADABLE
     assert str(stopped.value) == "dom_unreadable"
@@ -645,7 +655,7 @@ def test_a_reader_with_no_budget_left_refuses_rather_than_reads():
     reader = walk.Reader(budget=0)
 
     with pytest.raises(walk.Unreadable) as stopped:
-        reader.read(lambda: "anything")
+        reader.read(Exploder(), "go")
 
     assert stopped.value.reason is obs.Inconclusive.BOUND_HIT
     assert stopped.value.limit is obs.Limit.PROBES
@@ -788,7 +798,7 @@ def test_the_browser_exception_is_not_kept_as_a_cause():
         raise Nasty(PRODUCT)
 
     with pytest.raises(walk.Unreadable) as stopped:
-        walk.Reader().read(explode)
+        walk.Reader().read(Exploder(), "go")
 
     assert stopped.value.__cause__ is None
     assert stopped.value.__context__ is None or PRODUCT not in str(stopped.value.args)
@@ -902,7 +912,7 @@ def test_the_original_exception_is_not_kept_anywhere():
         raise ValueError(f"strict mode violation: {PRODUCT}")
 
     with pytest.raises(walk.Unreadable) as stopped:
-        walk.Reader().read(explode)
+        walk.Reader().read(Exploder(), "go")
 
     assert stopped.value.__cause__ is None
     assert stopped.value.__context__ is None
@@ -975,7 +985,7 @@ def test_the_control_may_be_a_sibling_rather_than_a_child():
     document = json.loads(obs.render(result))
     assert document["line"]["tag"] == "a"
     assert document["line"]["relation"] == "contains_item_id"
-    assert document["control"]["inside_line"] is False
+    assert document["control"]["location"] == "ancestor_container"
 
 
 def test_the_path_stops_at_the_container_holding_the_control():
@@ -1004,7 +1014,7 @@ def test_a_control_inside_the_id_bearing_element_reports_so():
 
     document = json.loads(obs.render(run(page)))
 
-    assert document["control"]["inside_line"] is True
+    assert document["control"]["location"] == "id_element"
     assert document["line"]["ancestors"] == []
 
 
@@ -1064,53 +1074,6 @@ def test_a_level_inside_the_bound_is_read_normally():
     page = FakePage(crowded_line(walk.QUANTITY_NODE_BUDGET))
 
     assert type(run(page)) is obs.ObservedResult
-
-
-def test_the_estimate_covers_the_most_expensive_path():
-    """Full depth, the last control name, every quantity probe missing.
-
-    The declared worst case was below the real one, because each ancestor step
-    charged manually and then counted and then classified, while the formula
-    budgeted one count and a classification. An estimate the code can exceed is
-    not a bound in the direction that matters.
-    """
-    page = FakePage(expensive())
-    reader = walk.Reader()
-
-    run(page, reader=reader)
-
-    assert reader.reads <= walk.worst_case_reads(1)
-    assert page.reads == reader.reads, "every browser read went through the reader"
-
-
-def expensive():
-    """The costliest shape the walker will still work on.
-
-    The id is on an element four steps below the container that holds the
-    control, the control has the last name in the vocabulary, and no quantity
-    text matches anywhere.
-    """
-    node = {"tag": "div", "role": "group", "attrs": {"href": f"x{ITEM_ID}"}}
-    wrapped = node
-    for _ in range(obs.MAX_ANCESTORS - 1):
-        wrapped = {"tag": "div", "role": "group", "children": [wrapped]}
-    button = {
-        "tag": "button",
-        "role": "button",
-        "name": walk.CONTROL_NAMES[-1].value,
-        "disabled": False,
-    }
-    container = {"tag": "div", "role": "listitem", "children": [wrapped, button]}
-    root = {"tag": "ul", "role": "list", "children": [container]}
-    page_node = {"tag": "section", "role": "region", "children": [root]}
-
-    def wire(parent):
-        for child in parent.get("children", ()):
-            child["parent"] = parent
-            wire(child)
-
-    wire(page_node)
-    return page_node
 
 
 def test_one_read_short_of_the_estimate_stops_before_the_per_node_phase():
@@ -1388,3 +1351,448 @@ def test_a_role_outside_the_vocabulary_says_so():
         FakePage.get_by_role = original
 
     assert json.loads(obs.render(result))["reason"] == "role_outside_vocabulary"
+
+
+# --- the bound, measured against a page that actually costs -----------------------------------
+#
+# The previous worst-case test built a page it *called* expensive, spent 90
+# reads on it, and asserted 90 <= 357. That cannot detect an underestimate; it
+# is a test of the arithmetic `90 <= 357`. A bound is only tested by the run
+# that comes closest to it, so this page is constructed to make every loop in
+# the walk take its longest branch.
+
+MAXIMAL_READS = 353
+MAXIMAL_SLACK = 4
+
+
+def _wire(node, parent=None):
+    node["parent"] = parent
+    for child in node.get("children", ()):
+        _wire(child, node)
+    return node
+
+
+def _fillers(exclude_last_of=None, matching=None):
+    """Eight of each quantity tag, so every quantity selector costs its most.
+
+    Eight is `QUANTITY_NODE_BUDGET`: one more and the walk refuses before
+    reading, one fewer and the level is cheaper than the formula allows for.
+    """
+    nodes = []
+    for tag in walk.QUANTITY_TAGS:
+        wanted = 8 - (1 if tag is exclude_last_of else 0)
+        for index in range(wanted):
+            last = index == wanted - 1
+            text = str(QUANTITY) if (last and tag is matching) else "x"
+            nodes.append({"tag": tag.value, "role": "none", "text": text})
+    return nodes
+
+
+def maximal(extra_candidates=0):
+    """The most expensive page the walk will still return an observation for.
+
+    Every branch takes its longest path:
+
+    - the id is in the *last* declared attribute, so `_match` reads all five;
+    - the id element and all four ancestors carry the last tag and the last
+      role in each vocabulary, so every classification reads all nineteen tags
+      and all eleven roles before it matches;
+    - the first four scopes contain no control at all, so all six names are
+      probed and missed at each;
+    - the fifth scope matches only the sixth and last name;
+    - all eighteen quantity selectors resolve exactly eight elements, and the
+      one that matches is the eighth element of the eighteenth selector.
+
+    The ladder is made of `td`, which is both the last tag and a quantity tag,
+    so each ancestor is also one of the eight elements at its level. That is
+    not a trick to save nodes; it is what the page would do to us.
+    """
+    last_tag = walk.TAGS[-1].value
+    last_role = walk.ROLES[-1].value
+    node = {"tag": last_tag, "role": last_role, "attrs": {walk.ATTRIBUTES[-1].value: ITEM_ID}}
+
+    a1 = {"tag": last_tag, "role": last_role, "children": [node]}
+    a2 = {"tag": last_tag, "role": last_role, "children": [a1]}
+    a3 = {"tag": last_tag, "role": last_role, "children": [a2]}
+
+    deep = {
+        "tag": "ol",
+        "role": "group",
+        "children": _fillers(exclude_last_of=obs.Tag.TD, matching=walk.QUANTITY_TAGS[-1]),
+    }
+    middle = {"tag": "ul", "role": "group", "children": _fillers(exclude_last_of=obs.Tag.TD)}
+    carrier = {"tag": "ul", "role": "group", "children": [deep]}
+    button = {
+        "tag": "button",
+        "role": "button",
+        "name": walk.CONTROL_NAMES[-1].value,
+        "disabled": False,
+    }
+
+    # a3 is itself one of the eight `td` at depth one; a2 and a1 likewise at
+    # depths two and three, which is why `middle` and `deep` hold seven.
+    container = {
+        "tag": last_tag,
+        "role": last_role,
+        "children": [a3, button, middle, carrier, *_fillers(exclude_last_of=obs.Tag.TD)],
+    }
+    strays = [
+        {"tag": "div", "role": "group", "attrs": {"href": f"/ip/{index}"}}
+        for index in range(extra_candidates)
+    ]
+    return _wire({"tag": "section", "role": "region", "children": [container, *strays]})
+
+
+def test_the_ladder_and_the_fillers_make_every_level_exactly_eight():
+    """The page is only maximal if it really does hit the bound everywhere.
+
+    Asserting the read count without this would pass just as well against a
+    sparse page whose cost happened to be low, which is how the last version
+    of this test managed to prove nothing.
+    """
+    page = FakePage(maximal())
+    container = page.tree["children"][0]
+
+    for selector in walk.QUANTITY_SELECTORS:
+        assert len(page.descendants(container, selector)) == walk.QUANTITY_NODE_BUDGET, selector
+
+
+def test_the_most_expensive_run_lands_just_under_the_declared_bound():
+    page = FakePage(maximal())
+    reader = walk.Reader()
+
+    result = run(page, reader=reader)
+
+    assert type(result) is obs.ObservedResult, "the maximal page must still be observable"
+    assert reader.reads == MAXIMAL_READS
+    assert page.reads == MAXIMAL_READS, "every read the page served went through the reader"
+    assert walk.worst_case_reads(1) - MAXIMAL_READS == MAXIMAL_SLACK
+
+
+def test_the_slack_is_the_control_terms_deliberate_rounding():
+    """Named, so a change that eats it is visible instead of merely still true.
+
+    The formula charges every scope for a name probe it may not make and for a
+    disabled read only one scope performs. Four reads. If a later change spends
+    those, this test says so before `<=` quietly absorbs it.
+    """
+    over_counted = walk.SCOPES * (len(walk.CONTROL_NAMES) + 1)
+    actually_spent = walk.SCOPES * len(walk.CONTROL_NAMES) + 1
+
+    assert over_counted - actually_spent == MAXIMAL_SLACK
+
+
+def test_the_node_term_is_exercised_on_the_same_costly_continuation():
+    """Eleven more candidates, all missing, on the maximal page.
+
+    A separate cheap page would test the node term against a walk that never
+    reaches the expensive part, and the terms would never be added up.
+    """
+    page = FakePage(maximal(extra_candidates=walk.NODE_BUDGET - 1))
+    reader = walk.Reader()
+
+    result = run(page, reader=reader)
+
+    expected = MAXIMAL_READS + (walk.NODE_BUDGET - 1) * len(walk.ATTRIBUTES)
+
+    assert type(result) is obs.ObservedResult
+    assert reader.reads == expected
+    assert walk.worst_case_reads(walk.NODE_BUDGET) - expected == MAXIMAL_SLACK
+
+
+def test_the_maximal_run_fits_the_standing_budget():
+    """The default budget has to cover the worst case or the bound is theatre."""
+    assert walk.worst_case_reads(walk.NODE_BUDGET) <= walk.READ_BUDGET
+
+
+# --- the boundary starts before the attribute lookup ---------------------------------------------
+
+
+class Hostile:
+    """An object that raises on attribute access rather than on the call.
+
+    Not exotic. A Playwright Locator is a proxy over a connection to another
+    process, and attribute access on a proxy runs code: it can raise a
+    connection error, a target-closed error, or a strict-mode error, each of
+    which quotes the selector. An earlier boundary took bound methods --
+    `read(node.get_attribute, ...)` -- so the lookup happened in the caller's
+    frame and the wrapper it was being handed to had not been entered yet.
+    """
+
+    def __init__(self, poisoned):
+        object.__setattr__(self, "_poisoned", poisoned)
+
+    def __getattribute__(self, name):
+        if name in object.__getattribute__(self, "_poisoned"):
+            raise Nasty(f"strict mode violation: {PRODUCT} at {ITEM_ID}")
+        return object.__getattribute__(self, name)
+
+
+@pytest.mark.parametrize("method", ["locator", "count", "get_attribute", "is_disabled"])
+def test_an_attribute_lookup_that_raises_is_inside_the_boundary(method):
+    reader = walk.Reader()
+
+    with pytest.raises(walk.Unreadable) as stopped:
+        reader.read(Hostile({method}), method)
+
+    assert stopped.value.reason is obs.Inconclusive.DOM_UNREADABLE
+    assert stopped.value.__cause__ is None
+    assert stopped.value.__context__ is None
+    assert_no_needle_in_traceback(stopped.value)
+
+
+def assert_no_needle_in_traceback(error):
+    import traceback
+
+    formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    for needle in DISTINCTIVE:
+        assert needle not in formatted
+
+
+@pytest.mark.parametrize("method", ["locator", "get_by_role"])
+def test_a_hostile_page_object_leaks_nothing_through_the_walk(method):
+    page = FakePage(tree())
+    original = type(page).__getattribute__
+
+    def poisoned(self, name):
+        if name == method:
+            raise Nasty(f"strict mode violation: {PRODUCT}")
+        return original(self, name)
+
+    type(page).__getattribute__ = poisoned
+    try:
+        result = run(page)
+    finally:
+        type(page).__getattribute__ = original
+
+    assert type(result) is obs.InconclusiveResult
+    rendered = obs.render(result)
+    assert json.loads(rendered)["reason"] == "dom_unreadable"
+    for needle in DISTINCTIVE:
+        assert needle not in rendered
+
+
+def test_no_bound_method_crosses_the_boundary():
+    """The object and the method name go in separately, on purpose.
+
+    Checked in the source, because the failure this prevents is invisible in
+    behaviour until the day an attribute lookup raises.
+    """
+    import ast
+    import inspect
+
+    # Parsed, not matched. A regex over the text flagged
+    # `read(build(nodes, ...), "text_content")` -- a nested call, not a bound
+    # method -- and the way to make a regex stop complaining is usually to
+    # loosen it until it also stops noticing the real thing.
+    tree_ = ast.parse(inspect.getsource(walk))
+    checked = 0
+    for node_ in ast.walk(tree_):
+        if not isinstance(node_, ast.Call) or not isinstance(node_.func, ast.Attribute):
+            continue
+        if node_.func.attr not in {"read", "build", "boolean"}:
+            continue
+        # The walk's call sites, where a bound method would come from. Reader's
+        # own forwarding passes the object and the name through as values, so
+        # the literal rule does not apply to it.
+        if not isinstance(node_.func.value, ast.Name) or node_.func.value.id != "reader":
+            continue
+        checked += 1
+        first = node_.args[0]
+        assert not isinstance(first, ast.Attribute), (
+            f"a bound method reached the boundary at line {node_.lineno}"
+        )
+        assert isinstance(node_.args[1], ast.Constant), (
+            f"the method name must be a literal at line {node_.lineno}"
+        )
+    assert checked >= 10, "the scan found almost no calls, so it is watching the wrong thing"
+
+
+# --- preconditions keep their own failures clean ------------------------------------------------
+
+
+def test_a_refusal_from_the_shared_predicate_keeps_nothing_of_it():
+    """CartMutationRefused quotes item names and store ids.
+
+    `raise ... from None` inside the except block clears __cause__ and leaves
+    __context__ pointing at it. `observe` discards the exception, so the leak
+    was invisible from there -- but that is a property of one caller, and
+    `preconditions` is a public function that tests, scripts and future callers
+    can use directly.
+    """
+    import cart_mutate
+
+    original = cart_mutate.assert_line_is_addressable
+
+    def refuse(_line):
+        raise cart_mutate.CartMutationRefused(f"{PRODUCT} ({ITEM_ID}) has no offer id")
+
+    cart_mutate.assert_line_is_addressable = refuse
+    try:
+        with pytest.raises(walk.Refused) as refusal:
+            walk.preconditions(cart(), PINNED)
+    finally:
+        cart_mutate.assert_line_is_addressable = original
+
+    assert refusal.value.refusal is obs.Refusal.OFFER_ID_MISSING
+
+    assert refusal.value.__cause__ is None
+    assert refusal.value.__context__ is None
+    assert_no_needle_in_traceback(refusal.value)
+
+
+def test_a_store_refusal_from_the_shared_predicate_keeps_nothing_of_it():
+    import cart_mutate
+
+    original = cart_mutate.assert_deliverable_from_the_pinned_store
+
+    def refuse(_basket, _pinned):
+        raise cart_mutate.CartMutationRefused(f"the cart is at {STORE_ID}, not the pinned store")
+
+    cart_mutate.assert_deliverable_from_the_pinned_store = refuse
+    try:
+        with pytest.raises(walk.Refused) as refusal:
+            walk.preconditions(cart(), PINNED)
+    finally:
+        cart_mutate.assert_deliverable_from_the_pinned_store = original
+
+    assert refusal.value.refusal is obs.Refusal.STORE_DISAGREEMENT
+    assert refusal.value.__cause__ is None
+    assert refusal.value.__context__ is None
+    assert_no_needle_in_traceback(refusal.value)
+
+
+# --- the target does not print itself -----------------------------------------------------------
+
+
+def test_a_target_prints_nothing_it_holds():
+    """A dataclass repr prints every field, and reprs run where nobody meant
+    them to: an unhandled traceback showing locals, a pytest assertion diff, a
+    debugger, a log line added later. The one object holding all four needles
+    was the one object that knew how to print them."""
+    built = target()
+
+    for rendering in (repr(built), str(built), f"{built}", "{}".format(built)):  # noqa: UP032
+        assert rendering == "<Target redacted>"
+        for needle in DISTINCTIVE + (ITEM_ID, STORE_ID, OFFER_ID):
+            assert needle not in rendering
+
+
+def test_a_target_inside_a_container_still_prints_nothing():
+    assert ITEM_ID not in repr([target()])
+    assert ITEM_ID not in repr({"target": target()})
+
+
+def test_a_failed_target_construction_prints_nothing_either():
+    with pytest.raises(walk.Refused) as refusal:
+        walk.Target(item_id=ITEM_ID, offer_id=OFFER_ID, quantity=0, store_id=STORE_ID)
+
+    assert_no_needle_in_traceback(refusal.value)
+    assert str(refusal.value) == obs.Refusal.NO_CART.value
+
+
+def test_every_sensitive_field_is_marked_unprintable():
+    """The fixed repr is one edit from being deleted; the flags are what a new
+    field inherits by being forgotten. Both, because they fail differently."""
+    import dataclasses
+
+    for field in dataclasses.fields(walk.Target):
+        assert field.repr is False, field.name
+
+
+# --- an id is not normalised on its way to a comparison --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("pinned", "live"),
+    [
+        (" 499 ", "499"),
+        ("499", " 499 "),
+        (" 499 ", " 499 "),
+        ("499\n", "499"),
+        ("\t499", "499"),
+    ],
+)
+def test_whitespace_is_not_trimmed_into_agreement(pinned, live):
+    """Stripping made " 499 " and "499" the same store.
+
+    That is a normalisation rule nobody wrote down, applied to the single
+    comparison that decides whether we are looking at the right store's cart.
+    An id with a space in it is not a tidier spelling of the same id; it is a
+    value we cannot account for, and the answer is to stop.
+    """
+    result = walk.observe(FakePage(tree()), cart(store_id=live), {"store_id": pinned})
+
+    assert type(result) is obs.RefusedResult
+    assert result.refusal in (obs.Refusal.NO_PINNED_STORE, obs.Refusal.STORE_DISAGREEMENT)
+
+
+@pytest.mark.parametrize("value", ["\u0664\u0669\u0669", "\u00b2", "4\u03559", "٤٩٩"])
+def test_digits_means_ascii_digits(value):
+    """`isdigit()` is true of superscripts and of Arabic-Indic digits, so a
+    value that is not an id in any sense passes a check named for digits."""
+    assert walk._digits(value) == ""
+
+
+def test_an_item_id_with_whitespace_is_refused_rather_than_trimmed():
+    result = walk.observe(FakePage(tree()), cart(line={"item_id": f" {ITEM_ID} "}), PINNED)
+
+    assert result.refusal is obs.Refusal.ITEM_ID_SHAPE
+
+
+# --- the reader's own arguments are arguments too --------------------------------------------------
+
+
+@pytest.mark.parametrize("budget", ["600", 600.0, True, -1, None, [600]])
+def test_a_budget_that_is_not_a_count_fails_the_fixed_way(budget):
+    """`Reader("600")` used to raise a raw TypeError on its first charge --
+    the uncontrolled exception this layer says it does not have. It is the
+    same defect just fixed in Cardinality, in the file that calls it."""
+    with pytest.raises(walk.Unreadable) as stopped:
+        walk.Reader(budget=budget)
+
+    assert stopped.value.reason is obs.Inconclusive.BAD_BUDGET
+
+
+@pytest.mark.parametrize("cost", ["1", 1.0, True, -1, None])
+def test_a_charge_that_is_not_a_count_fails_the_fixed_way(cost):
+    with pytest.raises(walk.Unreadable) as stopped:
+        walk.Reader().charge(cost)
+
+    assert stopped.value.reason is obs.Inconclusive.BAD_BUDGET
+
+
+def test_a_budget_of_zero_is_allowed_and_refuses_on_the_first_read():
+    reader = walk.Reader(budget=0)
+
+    with pytest.raises(walk.Unreadable) as stopped:
+        reader.read(FakeLocator(FakePage(tree()), None, []), "count")
+
+    assert stopped.value.reason is obs.Inconclusive.BOUND_HIT
+
+
+class Colliding:
+    """A page object whose call takes arguments named like the wrapper's own.
+
+    `get_by_role(..., name=...)` already collides with the obvious spelling of
+    this boundary, which is why the parameter is `method` and not `name`. That
+    is a rename away from being wrong again, and the usual repair when a
+    wrapper's parameter collides with a wrapped call's argument is to reach
+    around the wrapper -- which is the one thing this boundary cannot survive.
+    """
+
+    def probe(self, *, obj=None, method=None, charge=None):
+        return (obj, method, charge)
+
+
+@pytest.mark.parametrize("entrance", ["read", "build"])
+@pytest.mark.parametrize("kwargs", [{"obj": 1}, {"method": "x"}, {"charge": True}])
+def test_the_wrapped_call_may_use_the_boundarys_own_parameter_names(entrance, kwargs):
+    """Both entrances. A guard on one constructor of two is a guard on
+    neither, and the first version of this test only exercised `build` -- so
+    the mutant that reopened `read` survived it."""
+    reader = walk.Reader()
+
+    answered = getattr(reader, entrance)(Colliding(), "probe", **kwargs)
+
+    assert answered == (kwargs.get("obj"), kwargs.get("method"), kwargs.get("charge"))

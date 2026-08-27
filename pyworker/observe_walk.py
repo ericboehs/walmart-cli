@@ -114,15 +114,30 @@ class Refused(Exception):
 _CLEARED = object()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Target:
-    """What we knew before looking. Never written, never put in a query."""
+    """What we knew before looking. Never written, never put in a query.
 
-    item_id: str
-    offer_id: str
-    quantity: int
-    store_id: str
+    "Never written" was false while this had a generated repr. A dataclass
+    prints every field, and a repr runs wherever an object is formatted:
+    an unhandled traceback showing local variables, a pytest assertion diff, a
+    debugger, a log line someone adds later. The one object holding all four
+    needles at once was the one object that knew how to print them.
+
+    So the fields are `repr=False` *and* the repr is fixed. Either alone would
+    do today; both, because the field flags are what a future field inherits by
+    forgetting, and the fixed repr is what survives someone re-adding
+    `repr=True` to a field they thought was harmless.
+    """
+
+    item_id: str = field(repr=False)
+    offer_id: str = field(repr=False)
+    quantity: int = field(repr=False)
+    store_id: str = field(repr=False)
     clearance: object = field(default=None, repr=False)
+
+    def __repr__(self) -> str:
+        return "<Target redacted>"
 
     def __post_init__(self):
         # A backstop, not the diagnosis. Everything here is also checked
@@ -140,14 +155,31 @@ class Target:
             raise Refused(obs.Refusal.NO_CART)
 
 
+def _count(value) -> None:
+    """A budget or a cost is a real non-negative int, or this stops now."""
+    if type(value) is not int or type(value) is bool or value < 0:
+        raise Unreadable(obs.Inconclusive.BAD_BUDGET)
+
+
 def _digits(value) -> str:
-    """A store or item id as the producer writes it: a string of digits.
+    """A store or item id exactly as the producer writes it.
 
     `str()` on both sides made 499 and "499" the same value, and turned any
-    object at all into a plausible id by way of its `__str__`. Leading zeros
-    survive here because they are part of the identifier, not decoration.
+    object at all into a plausible id by way of its `__str__`.
+
+    Nothing is normalised. Leading zeros are part of the identifier, and so is
+    whitespace -- stripping made " 499 " and "499" agree, which is a
+    normalisation rule nobody wrote down, applied to the one comparison that
+    decides whether we are looking at the right store. An id with a space in
+    it is not a tidier version of the same id, it is a value we cannot
+    account for.
+
+    `isdigit()` alone is not ASCII: it is true of superscripts and of
+    Arabic-Indic digits, so "\u00b2" would pass and "499" would not equal it.
     """
-    return value.strip() if type(value) is str and value.strip().isdigit() else ""
+    if type(value) is not str or not value.isascii() or not value.isdigit():
+        return ""
+    return value
 
 
 # --- preconditions -------------------------------------------------------------------------
@@ -193,10 +225,19 @@ def preconditions(cart, pinned_store) -> Target:
     if type(quantity) is not int or type(quantity) is bool or quantity < 1:
         raise Refused(obs.Refusal.QUANTITY_SHAPE)
 
+    # Raised after the except block, for the reason Unreadable documents:
+    # `from None` clears __cause__ and leaves __context__ holding the original.
+    # CartMutationRefused quotes item names and store ids, so a traceback
+    # printed by a caller of preconditions() -- or by a test, or a log -- would
+    # bring them back out. `observe` happens to discard it; that is a property
+    # of one caller, not of this function.
+    addressable = True
     try:
         cart_mutate.assert_line_is_addressable(line)
     except cart_mutate.CartMutationRefused:
-        raise Refused(obs.Refusal.OFFER_ID_MISSING) from None
+        addressable = False
+    if not addressable:
+        raise Refused(obs.Refusal.OFFER_ID_MISSING)
 
     if not cart_mutate.is_first_party_line(line):
         raise Refused(obs.Refusal.NOT_FIRST_PARTY)
@@ -240,10 +281,13 @@ def _agreed_store(cart, pinned_store, cart_mutate) -> str:
     # The shared predicate has the last word, so the two cannot drift apart
     # without this refusing. It is asked after the specific questions so that
     # the token is chosen by what we checked, not by parsing what it said.
+    agreed = True
     try:
         cart_mutate.assert_deliverable_from_the_pinned_store(cart, pinned_store)
     except cart_mutate.CartMutationRefused:
-        raise Refused(obs.Refusal.STORE_DISAGREEMENT) from None
+        agreed = False
+    if not agreed:
+        raise Refused(obs.Refusal.STORE_DISAGREEMENT)
 
     return live
 
@@ -261,11 +305,18 @@ class Reader:
     """
 
     def __init__(self, budget: int = READ_BUDGET):
+        # An internal argument, checked like an external one. A budget of
+        # "600" produced a raw TypeError on the first charge, which is the
+        # uncontrolled exception this layer says it does not have; a closed
+        # failure set means all of it, and "internal" is exactly the word that
+        # leaves a thing unchecked.
+        _count(budget)
         self.remaining = budget
         self.reads = 0
         self.interactions = 0
 
     def charge(self, cost: int = 1, limit: obs.Limit = obs.Limit.PROBES) -> None:
+        _count(cost)
         if self.remaining < cost:
             raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)
         self.remaining -= cost
@@ -278,21 +329,25 @@ class Reader:
         capacity means a Reader that has already been used passes the check and
         runs out in the middle, which is the failure the check exists for.
         """
+        _count(cost)
         if self.remaining < cost:
             raise Unreadable(obs.Inconclusive.BOUND_HIT, limit)
 
-    def read(self, call, *args, **kwargs):
-        self.charge()
-        return self.build(call, *args, **kwargs)
+    def _call(self, obj, method: str, args: tuple, kwargs: dict, charge: bool):
+        """Look the method up and call it, both inside the same try.
 
-    def build(self, call, *args, **kwargs):
-        """A call that is not itself a read: narrowing, scoping, intersecting.
-
-        Not charged, because it does not query the page, but wrapped, because
-        it can still raise with a selector in the message.
+        The object comes in; a bound method never crosses this boundary. An
+        earlier version took callables, so a probe was looked up on the node in
+        the caller's frame and handed over already bound -- the lookup happened
+        before the wrapper was entered. A Locator is a proxy over a protocol
+        connection, and `__getattribute__` on a proxy can raise with the same
+        selectors and page text in it as any other failure. Passing a bound
+        method across a boundary means the boundary starts one step too late.
         """
+        if charge:
+            self.charge()
         try:
-            return call(*args, **kwargs)
+            return getattr(obj, method)(*args, **kwargs)
         except Unreadable:
             raise
         except Exception:
@@ -308,13 +363,28 @@ class Reader:
             raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)
         return None
 
+    # Positional-only, and no keyword flags. A single `invoke(obj, name, ...,
+    # charge=...)` reads well until the call it wraps is `get_by_role(...,
+    # name=...)`, which is exactly the call this file makes: the wrapper's
+    # parameter and the wrapped call's argument collide, and the way out is
+    # usually to reach around the wrapper. Two names for the two cases, and
+    # nothing after `/` that the boundary can mistake for its own.
+
+    def read(self, obj, method: str, /, *args, **kwargs):
+        """A call that queries the page. Charged."""
+        return self._call(obj, method, args, kwargs, True)
+
+    def build(self, obj, method: str, /, *args, **kwargs):
+        """A call that narrows, scopes or intersects. Not charged, but wrapped."""
+        return self._call(obj, method, args, kwargs, False)
+
     def count(self, locator) -> int:
-        value = self.read(locator.count)
+        value = self.read(locator, "count")
         if type(value) is not int or type(value) is bool or value < 0:
             raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)
         return value
 
-    def boolean(self, call) -> bool:
+    def boolean(self, obj, method: str, /) -> bool:
         """A bool, and nothing that merely behaves like one.
 
         `bool(value)` runs `__bool__`, which is code the page's library wrote,
@@ -322,7 +392,7 @@ class Reader:
         non-empty string into True, which would report a disabled state nobody
         observed.
         """
-        value = self.read(call)
+        value = self.read(obj, method)
         if type(value) is not bool:
             raise Unreadable(obs.Inconclusive.DOM_UNREADABLE)
         return value
@@ -343,16 +413,16 @@ def classify_tag(reader: Reader, page, node) -> obs.Tag:
         # evaluates the inner construction as an argument, outside the
         # boundary, which is how a locator failure escaped with its text while
         # looking wrapped.
-        other = reader.build(page.locator, tag.value)
-        if reader.count(reader.build(node.and_, other)) == 1:
+        other = reader.build(page, "locator", tag.value)
+        if reader.count(reader.build(node, "and_", other)) == 1:
             return tag
     raise Unreadable(obs.Inconclusive.UNKNOWN_TAG)
 
 
 def classify_role(reader: Reader, page, node) -> obs.Role:
     for role in ROLES:
-        other = reader.build(page.get_by_role, role.value)
-        if reader.count(reader.build(node.and_, other)) == 1:
+        other = reader.build(page, "get_by_role", role.value)
+        if reader.count(reader.build(node, "and_", other)) == 1:
             return role
     raise Unreadable(obs.Inconclusive.UNKNOWN_ROLE)
 
@@ -373,7 +443,7 @@ def _match(reader: Reader, node, item_id: str):
     """
     best = None
     for attribute in ATTRIBUTES:
-        value = reader.read(node.get_attribute, attribute.value)
+        value = reader.read(node, "get_attribute", attribute.value)
         if type(value) is not str:
             continue
         if value == item_id:
@@ -385,7 +455,7 @@ def _match(reader: Reader, node, item_id: str):
 
 def find_line(reader: Reader, page, target: Target):
     """The one element carrying the item id, or a reason there is not one."""
-    candidates = reader.build(page.locator, CANDIDATES)
+    candidates = reader.build(page, "locator", CANDIDATES)
     found = reader.count(candidates)
     matches = obs.Cardinality.of(found, NODE_BUDGET)
     if matches is obs.Cardinality.OVER_BUDGET:
@@ -401,7 +471,7 @@ def find_line(reader: Reader, page, target: Target):
 
     hits = []
     for index in range(found):
-        node = reader.build(candidates.nth, index)
+        node = reader.build(candidates, "nth", index)
         how = _match(reader, node, target.item_id)
         if how is not None:
             hits.append((node, *how))
@@ -425,7 +495,7 @@ def control_in(reader: Reader, scope):
     does not unread it.
     """
     for name in CONTROL_NAMES:
-        control = reader.build(scope.get_by_role, obs.Role.BUTTON.value, name=name.value, exact=True)
+        control = reader.build(scope, "get_by_role", obs.Role.BUTTON.value, name=name.value, exact=True)
         if reader.count(control) == 1:
             return name, control
     return None
@@ -450,20 +520,24 @@ def resolve_line(reader: Reader, page, node):
         found = control_in(reader, scope)
         if found is not None:
             name, control = found
-            disabled = reader.boolean(control.is_disabled)
+            disabled = reader.boolean(control, "is_disabled")
             return (
                 scope,
                 tuple(chain),
                 obs.ControlFinding(
                     role=obs.Role.BUTTON,
                     name=name,
-                    inside_line=depth == 0,
+                    location=(
+                        obs.ControlLocation.ID_ELEMENT
+                        if depth == 0
+                        else obs.ControlLocation.ANCESTOR_CONTAINER
+                    ),
                     disabled=disabled,
                 ),
             )
         if depth == obs.MAX_ANCESTORS:
             break
-        scope = reader.build(scope.locator, "xpath=..")
+        scope = reader.build(scope, "locator", "xpath=..")
         if reader.count(scope) != 1:
             break
         chain.append(
@@ -485,7 +559,7 @@ def find_quantity(reader: Reader, line, quantity: int) -> obs.QuantityFinding:
     """
     wanted = str(quantity)
     for index, selector in enumerate(QUANTITY_SELECTORS):
-        nodes = reader.build(line.locator, selector)
+        nodes = reader.build(line, "locator", selector)
         found = reader.count(nodes)
         if found > QUANTITY_NODE_BUDGET:
             # Not min(). Truncating turns "there were more than we agreed to
@@ -494,7 +568,7 @@ def find_quantity(reader: Reader, line, quantity: int) -> obs.QuantityFinding:
             # to stop.
             raise Unreadable(obs.Inconclusive.BOUND_HIT, obs.Limit.NODES)
         for position in range(found):
-            text = reader.read(reader.build(nodes.nth, position).text_content)
+            text = reader.read(reader.build(nodes, "nth", position), "text_content")
             if type(text) is str and text.strip() == wanted:
                 depth = index // len(QUANTITY_TAGS) + 1
                 return obs.QuantityFinding(

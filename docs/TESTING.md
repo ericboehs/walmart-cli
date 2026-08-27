@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 120 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 130 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,16 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| a boundary entered after the attribute lookup | a bound method was built in the caller's frame; `__getattribute__` on a proxy can raise with the selector in it |
+| a wrapper parameter colliding with the wrapped call's argument | `get_by_role(name=...)` against `invoke(..., name=...)`; the usual repair is to reach around the wrapper |
+| `raise ... from None` inside preconditions | the shared predicates quote item names and store ids, and `observe` discarding it is one caller's property |
+| a dataclass holding four needles and a generated repr | reprs run in tracebacks, assertion diffs, debuggers and log lines nobody wrote yet |
+| an id comparison that strips whitespace | an unwritten normalisation rule on the one comparison deciding whose cart it is |
+| `isdigit()` read as "ASCII digits" | it is true of superscripts and Arabic-Indic digits |
+| a relaxed invariant leaving invalid states representable | the old required-true bool could not contradict anything; the relaxed one could |
+| a boolean field whose false case had grown a second meaning | "inside line: false" for a control that is inside the resolved line |
+| an unvalidated internal budget | `Reader("600")` raised a bare TypeError, in the layer that had just fixed this in `Cardinality` |
+| a worst-case test that spent 90 of a 357 budget | it asserted `90 <= 357`, which is a test of arithmetic |
 | a boundary that wrapped reads but not locator construction | building a locator can fail, and the message quotes the selector |
 | a wrapped call evaluated as an argument to the wrapper | `build(node.and_, page.locator(t))` runs the inner construction outside the boundary |
 | `raise ... from None` mistaken for erasure | `__context__` still holds the original, and a formatted traceback prints it |
@@ -171,7 +181,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-120 defects in the table below. 255 mutants in `script/mutants.json`.
+130 defects in the table below. 268 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -365,7 +375,16 @@ more than another assertion on behaviour.
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
 - **A boundary with a hole in it is the shape of the thing it was drawn
-  around.** Wrap construction, not only reads.
+  around.** Wrap construction, not only reads, and do not accept a bound
+  method -- the lookup is the first thing that can raise.
+- **A bound is only tested by the run that comes closest to it.** Build the
+  page that costs the most, and assert the exact figure; `<=` against a cheap
+  case is a test of arithmetic.
+- **Name the slack.** An unnamed margin is spent silently.
+- **Loosening a guarantee is not free.** The states it used to exclude have to
+  be excluded by something.
+- **A field whose false case has two meanings needs two words**, not a better
+  comment.
 - **Poison must be unswallowable or it is seasoning.** Put a fake's refusal
   outside `Exception` when production catches `Exception`.
 - **Two guards sharing a token hide each other.** Give the backstop its own.

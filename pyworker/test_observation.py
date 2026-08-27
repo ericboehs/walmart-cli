@@ -54,7 +54,7 @@ def control(**over):
     fields = {
         "role": obs.Role.BUTTON,
         "name": obs.ControlName.DECREASE_QUANTITY,
-        "inside_line": True,
+        "location": obs.ControlLocation.ANCESTOR_CONTAINER,
         "disabled": False,
     }
     return obs.ControlFinding(**{**fields, **over})
@@ -87,7 +87,7 @@ def scalars(node):
 KEYS = frozenset(
     {"outcome", "refusal", "reason", "limit", "line", "control", "quantity"}
     | {"tag", "role", "attribute", "relation", "matches", "ancestors", "depth"}
-    | {"name", "inside_line", "disabled"}
+    | {"name", "location", "disabled"}
 )
 
 
@@ -146,7 +146,7 @@ def test_a_finding_field_will_not_hold_a_string(needle):
         lambda: line(tag=needle),
         lambda: line(attribute=needle),
         lambda: control(name=needle),
-        lambda: control(inside_line=needle),
+        lambda: control(location=needle),
         lambda: quantity(depth=needle),
         lambda: obs.AncestorFinding(needle, obs.Role.LIST, obs.Depth.D1),
         lambda: obs.RefusedResult(needle),
@@ -475,6 +475,37 @@ def test_a_control_outside_the_id_bearing_element_is_still_an_observation():
     element would have made every such page inconclusive, and a field that can
     only ever be True is a finding in name only.
     """
-    result = observed(control=control(inside_line=False))
+    result = observed(control=control(location=obs.ControlLocation.ANCESTOR_CONTAINER))
 
-    assert json.loads(obs.render(result))["control"]["inside_line"] is False
+    assert json.loads(obs.render(result))["control"]["location"] == "ancestor_container"
+
+
+def test_the_location_and_the_path_must_tell_the_same_story():
+    """Relaxing the old bool made two invalid states representable.
+
+    A required-true field carries no information, but it also cannot
+    contradict anything. Once it became "reported, not required", nothing
+    stopped a control at the id element from arriving with a four-step path,
+    or one in an ancestor container with no path at all -- and the path is
+    supposed to *be* the walk that reached the container.
+    """
+    with pytest.raises(obs.Unserialisable) as climbed:
+        observed(
+            line=line(ancestors=()),
+            control=control(location=obs.ControlLocation.ANCESTOR_CONTAINER),
+        )
+
+    with pytest.raises(obs.Unserialisable) as still:
+        observed(control=control(location=obs.ControlLocation.ID_ELEMENT))
+
+    for refusal in (climbed, still):
+        assert refusal.value.code is obs.SerialiseError.INCOHERENT_LOCATION
+
+
+def test_a_control_at_the_id_element_is_reported_with_an_empty_path():
+    result = observed(line=line(ancestors=()), control=control(location=obs.ControlLocation.ID_ELEMENT))
+
+    document = json.loads(obs.render(result))
+
+    assert document["control"]["location"] == "id_element"
+    assert document["line"]["ancestors"] == []

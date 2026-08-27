@@ -100,6 +100,21 @@ class ControlName(enum.Enum):
     REMOVE_ONE = "Remove one"
 
 
+class ControlLocation(enum.Enum):
+    """Where the control was found, relative to the element carrying the id.
+
+    This was a bool called `inside_line`, and the name was wrong the moment the
+    invariant behind it was relaxed. After resolution the control is *always*
+    inside the resolved line container -- that is what resolution means -- so
+    "inside line: false" invited a later reader to conclude the control was not
+    associated with the line at all. The distinction being drawn is narrower
+    and it deserves its own words.
+    """
+
+    ID_ELEMENT = "id_element"
+    ANCESTOR_CONTAINER = "ancestor_container"
+
+
 class Relation(enum.Enum):
     """How a value on the page stood to a value we already knew.
 
@@ -217,6 +232,7 @@ class Limit(enum.Enum):
 
 
 class Inconclusive(enum.Enum):
+    BAD_BUDGET = "budget_is_not_a_count"
     NO_MATCH = "nothing_matched"
     AMBIGUOUS = "more_than_one_match"
     UNKNOWN_TAG = "tag_outside_vocabulary"
@@ -241,6 +257,7 @@ class SerialiseError(enum.Enum):
     OVER_BYTE_BUDGET = "over_byte_budget"
     INCOHERENT_OBSERVATION = "observed_result_is_not_fully_established"
     INCOHERENT_INCONCLUSIVE = "inconclusive_result_disagrees_with_its_limit"
+    INCOHERENT_LOCATION = "control_location_disagrees_with_the_ancestor_path"
     BAD_CARDINALITY = "cardinality_not_a_count"
     BAD_BUDGET = "budget_not_a_positive_int"
     BROKEN_CHAIN = "ancestors_are_not_a_contiguous_path"
@@ -310,9 +327,11 @@ class LineFinding:
 class ControlFinding:
     """A quantity control, and whether it could be used right now.
 
-    `inside_line` says whether the control descends from the element that
-    carried the item id, rather than from the line container resolved around
-    it. Both are ordinary shapes and neither disqualifies an observation.
+    `location` says which element the control descends from: the one carrying
+    the item id, or the container resolved around it. Both are ordinary shapes
+    and neither disqualifies an observation. The two are not free of each
+    other -- see `ObservedResult`, where the location and the ancestor path
+    have to tell the same story.
 
     `disabled` is reported, not required to be false, and the choice is
     deliberate rather than left over. `observed` here means *identified*: this
@@ -325,13 +344,13 @@ class ControlFinding:
 
     role: Role | Sentinel
     name: ControlName | Sentinel
-    inside_line: bool
+    location: ControlLocation
     disabled: bool
 
     def __post_init__(self):
         _typed(self.role, Role, Sentinel)
         _typed(self.name, ControlName, Sentinel)
-        _typed(self.inside_line, bool)
+        _typed(self.location, ControlLocation)
         _typed(self.disabled, bool)
 
 
@@ -365,18 +384,11 @@ class ObservedResult:
         _typed(self.control, ControlFinding)
         _typed(self.quantity, QuantityFinding)
         self._require_a_path()
+        self._require_agreement()
         established = (
             self.line.matches is Cardinality.ONE
             and self.line.relation in (Relation.EQUALS_ITEM_ID, Relation.CONTAINS_ITEM_ID)
             and self.quantity.relation is Relation.EQUALS_QUANTITY
-            # `inside_line` is reported, not required. It used to be required,
-            # which quietly ruled out the likely real shape: the item id on an
-            # anchor with the quantity buttons as siblings in the surrounding
-            # line. The control still has to have been found within the
-            # resolved container, and the ancestors record the contiguous walk
-            # that reached it -- that is the structural guarantee. A field that
-            # can only ever be True would be a finding in name only.
-            and type(self.control.inside_line) is bool
             # The name is probed on a button, so a button is what may be
             # reported. A link or an image bearing the text "Decrease quantity"
             # is not a quantity control, and being inside the vocabulary is not
@@ -390,6 +402,24 @@ class ObservedResult:
         )
         if not established:
             raise Unserialisable(SerialiseError.INCOHERENT_OBSERVATION)
+
+    def _require_agreement(self):
+        """The location and the ancestor path must say the same thing.
+
+        The old bool was required to be true, so it carried no information but
+        it also could not contradict anything. Relaxing it to "reported, not
+        required" made two invalid states representable in the same stroke: a
+        control at the id element with a non-empty path, and one in an ancestor
+        container with no path at all. Loosening a guarantee is not free -- the
+        states it used to exclude have to be excluded by something.
+
+        The path *is* the walk to the container, so an empty path means the
+        control was found without climbing.
+        """
+        climbed = bool(self.line.ancestors)
+        elsewhere = self.control.location is ControlLocation.ANCESTOR_CONTAINER
+        if climbed != elsewhere:
+            raise Unserialisable(SerialiseError.INCOHERENT_LOCATION)
 
     def _require_a_path(self):
         """The ancestors must be a path, not a bag of elements.
@@ -441,6 +471,7 @@ LEAVES = (
     Role,
     Attribute,
     ControlName,
+    ControlLocation,
     Relation,
     Sentinel,
     Cardinality,
