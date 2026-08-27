@@ -1,20 +1,26 @@
 """A closed vocabulary for describing a page without quoting it.
 
-Everything an observation can say is in this module. That is the point: the
-writer takes values of these types and nothing else, so page content cannot
-reach the output by being forgotten about. There is no filter here and no
-redaction, because a filter is a denylist wearing a hat -- an unknown type is
-rejected rather than cleaned.
+Everything an observation of the cart DOM may say is in this module, and it is
+said in words chosen before anyone looked. See docs/DOM-OBSERVATION.md.
 
-See docs/DOM-OBSERVATION.md. The short version: a cart DOM is a rendering of
-someone's groceries, and the only safe way to describe it is in words chosen in
-advance.
+Two properties do the work.
+
+The result types are exact. There is no generic document, no arbitrary mapping
+and no list at the writer boundary, so a wrong field cannot be smuggled in
+beside a right one and an `observed` result cannot be constructed in a state
+that would make it a lie.
+
+The leaves are categorical. Not numbers -- tokens. A cardinality of ONE and a
+quantity of one are different kinds of thing, and if both were the integer 1
+nothing downstream could tell them apart, least of all a test searching output
+for a needle.
 """
 
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, fields
 
 # --- the vocabularies -----------------------------------------------------------------
 
@@ -23,8 +29,8 @@ class Tag(enum.Enum):
     """HTML element names we are willing to name.
 
     A custom element name is identifier-shaped content the page chose, exactly
-    like a dynamic JSON key, so it does not get to pass through merely for
-    being in a tag position.
+    like a dynamic JSON key, so it does not pass merely for being in a tag
+    position.
     """
 
     DIV = "div"
@@ -67,9 +73,9 @@ class Role(enum.Enum):
 class Attribute(enum.Enum):
     """The attribute names version one probes, and no others.
 
-    Fixed in advance so that implementation cannot add one after seeing what
-    live output happened to contain. The observation may report which of these
-    worked; widening the list after a look is how a guess becomes a finding.
+    Fixed in advance so implementation cannot add one after seeing what live
+    output happened to contain. Widening after a look is how a guess becomes a
+    finding.
     """
 
     DATA_ITEM_ID = "data-item-id"
@@ -113,6 +119,56 @@ class Sentinel(enum.Enum):
     NOT_PROBED = "<not-probed>"
 
 
+class Cardinality(enum.Enum):
+    """How many, as a category rather than a number.
+
+    The count of matching elements is only ever used to decide unique against
+    ambiguous, so the exact number is not needed -- and emitting it would put
+    an integer into the output that could coincide with the quantity. ONE and
+    a quantity of one must not be the same token.
+    """
+
+    ZERO = "zero"
+    ONE = "one"
+    MANY = "many"
+    OVER_BUDGET = "over_budget"
+
+    @classmethod
+    def of(cls, count: int, budget: int) -> Cardinality:
+        """Constructed by the walker from a real locator count, never by hand."""
+        if type(count) is not int or count < 0:
+            raise Unserialisable(SerialiseError.BAD_CARDINALITY)
+        if count > budget:
+            return cls.OVER_BUDGET
+        return {0: cls.ZERO, 1: cls.ONE}.get(count, cls.MANY)
+
+
+class Depth(enum.Enum):
+    """Ancestor distance as a bounded token, not an integer.
+
+    The ladder stops at four because the tool has no business walking further
+    up someone's cart page than that, and because a bound expressed as a type
+    cannot be exceeded by a loop that forgot to check.
+    """
+
+    D0 = "d0"
+    D1 = "d1"
+    D2 = "d2"
+    D3 = "d3"
+    D4 = "d4"
+    OVER_BUDGET = "over_budget"
+
+    @classmethod
+    def of(cls, depth: int) -> Depth:
+        if type(depth) is not int or depth < 0:
+            raise Unserialisable(SerialiseError.BAD_DEPTH)
+        return cls.OVER_BUDGET if depth > 4 else cls(f"d{depth}")
+
+
+MAX_ANCESTORS = 5
+MAX_OUTPUT_BYTES = 4096
+
+
 class Outcome(enum.Enum):
     """Three, because zero evidence is not success."""
 
@@ -122,12 +178,7 @@ class Outcome(enum.Enum):
 
 
 class Refusal(enum.Enum):
-    """Fixed codes. A refusal never quotes what it refused.
-
-    A message that says what was wrong with the value is an egress with an
-    excuse, and it is the one that fires exactly when something arrives that
-    nobody wrote a canary for.
-    """
+    """Fixed codes. A refusal never quotes what it refused."""
 
     NO_CART = "cart_unreadable"
     NOT_EXACTLY_ONE_LINE = "not_exactly_one_eligible_line"
@@ -146,149 +197,296 @@ class Refusal(enum.Enum):
 class Limit(enum.Enum):
     """Which budget stopped the run. A bound hit is a result, not a truncation."""
 
+    NONE = "none"
     NODES = "node_budget"
     DEPTH = "depth_budget"
     PROBES = "probe_budget"
     BYTES = "output_byte_budget"
 
 
-# --- bounded numbers ------------------------------------------------------------------
+class Inconclusive(enum.Enum):
+    NO_MATCH = "nothing_matched"
+    AMBIGUOUS = "more_than_one_match"
+    UNKNOWN_TAG = "tag_outside_vocabulary"
+    UNKNOWN_ROLE = "role_outside_vocabulary"
+    UNKNOWN_NAME = "control_name_outside_vocabulary"
+    BOUND_HIT = "budget_exhausted"
+    DOM_UNREADABLE = "dom_unreadable"
 
 
-@dataclass(frozen=True)
-class Count:
-    """A cardinality, constructed only by the walker.
+class SerialiseError(enum.Enum):
+    """Why the writer refused. A closed set, so the exception cannot carry text.
 
-    Wrapped rather than passed as a bare int, and this is not fussiness: the
-    quantity is an int needle, so a serialiser that accepts plain integers
-    cannot tell a cardinality from Eric's quantity. Making the wrapper the only
-    way in removes the question.
+    The constructor takes one of these and nothing else. An exception whose
+    message is a free string is an egress with a public arbitrary-string
+    constructor, and this one is raised exactly when something unanticipated
+    has arrived -- which is to say when nobody has written a canary for it.
     """
 
-    value: int
+    UNKNOWN_TYPE = "unknown_type"
+    WRONG_FIELD_TYPE = "wrong_field_type"
+    TOO_MANY_ANCESTORS = "too_many_ancestors"
+    OVER_BYTE_BUDGET = "over_byte_budget"
+    INCOHERENT_OBSERVATION = "observed_result_is_not_fully_established"
+    INCOHERENT_INCONCLUSIVE = "inconclusive_result_disagrees_with_its_limit"
+    BAD_CARDINALITY = "cardinality_not_a_count"
+    BAD_DEPTH = "depth_not_a_count"
 
-    def __post_init__(self):
-        if type(self.value) is not int or self.value < 0:
-            raise TypeError("a count is a non-negative int")
+
+class Unserialisable(Exception):
+    """Refused by the writer. Carries a code, never the offending value."""
+
+    def __init__(self, code: SerialiseError):
+        if type(code) is not SerialiseError:
+            raise TypeError("a serialisation error is a SerialiseError")
+        super().__init__(code.value)
+        self.code = code
+
+
+# --- the findings ---------------------------------------------------------------------
+#
+# Each is frozen, and each checks its own field types on construction. The
+# check is `type(x) is T`, not isinstance: a subclass of str is a str, and the
+# whole point is that no str gets in.
+
+
+def _typed(value, *allowed):
+    if type(value) not in allowed:
+        raise Unserialisable(SerialiseError.WRONG_FIELD_TYPE)
+    return value
 
 
 @dataclass(frozen=True)
-class Depth:
-    """Ancestor distance. Same argument as Count."""
-
-    value: int
+class AncestorFinding:
+    tag: Tag | Sentinel
+    role: Role | Sentinel
+    depth: Depth
 
     def __post_init__(self):
-        if type(self.value) is not int or self.value < 0:
-            raise TypeError("a depth is a non-negative int")
+        _typed(self.tag, Tag, Sentinel)
+        _typed(self.role, Role, Sentinel)
+        _typed(self.depth, Depth)
 
 
-Leaf = (
-    Tag
-    | Role
-    | Attribute
-    | ControlName
-    | Relation
-    | Sentinel
-    | Outcome
-    | Refusal
-    | Limit
-    | Count
-    | Depth
-    | bool
+@dataclass(frozen=True)
+class LineFinding:
+    """The element that carried the item id, and how it carried it."""
+
+    tag: Tag | Sentinel
+    role: Role | Sentinel
+    attribute: Attribute | Sentinel
+    relation: Relation
+    matches: Cardinality
+    ancestors: tuple[AncestorFinding, ...]
+
+    def __post_init__(self):
+        _typed(self.tag, Tag, Sentinel)
+        _typed(self.role, Role, Sentinel)
+        _typed(self.attribute, Attribute, Sentinel)
+        _typed(self.relation, Relation)
+        _typed(self.matches, Cardinality)
+        _typed(self.ancestors, tuple)
+        if len(self.ancestors) > MAX_ANCESTORS:
+            raise Unserialisable(SerialiseError.TOO_MANY_ANCESTORS)
+        for ancestor in self.ancestors:
+            _typed(ancestor, AncestorFinding)
+
+
+@dataclass(frozen=True)
+class ControlFinding:
+    role: Role | Sentinel
+    name: ControlName | Sentinel
+    inside_line: bool
+    disabled: bool
+
+    def __post_init__(self):
+        _typed(self.role, Role, Sentinel)
+        _typed(self.name, ControlName, Sentinel)
+        _typed(self.inside_line, bool)
+        _typed(self.disabled, bool)
+
+
+@dataclass(frozen=True)
+class QuantityFinding:
+    relation: Relation
+    depth: Depth
+
+    def __post_init__(self):
+        _typed(self.relation, Relation)
+        _typed(self.depth, Depth)
+
+
+# --- the results ----------------------------------------------------------------------
+#
+# Three variants, and no way to be two of them at once. A refusal cannot carry
+# findings, an observation cannot carry a refusal code, and an observation
+# cannot be constructed at all unless every relation it claims was established.
+
+
+@dataclass(frozen=True)
+class ObservedResult:
+    line: LineFinding
+    control: ControlFinding
+    quantity: QuantityFinding
+
+    outcome = Outcome.OBSERVED
+
+    def __post_init__(self):
+        _typed(self.line, LineFinding)
+        _typed(self.control, ControlFinding)
+        _typed(self.quantity, QuantityFinding)
+        established = (
+            self.line.matches is Cardinality.ONE
+            and self.line.relation in (Relation.EQUALS_ITEM_ID, Relation.CONTAINS_ITEM_ID)
+            and self.quantity.relation is Relation.EQUALS_QUANTITY
+            and self.control.inside_line
+            and type(self.line.tag) is Tag
+            and type(self.line.role) is Role
+            and type(self.line.attribute) is Attribute
+            and type(self.control.role) is Role
+            and type(self.control.name) is ControlName
+            and self.quantity.depth is not Depth.OVER_BUDGET
+            and all(a.depth is not Depth.OVER_BUDGET for a in self.line.ancestors)
+        )
+        if not established:
+            raise Unserialisable(SerialiseError.INCOHERENT_OBSERVATION)
+
+
+@dataclass(frozen=True)
+class RefusedResult:
+    refusal: Refusal
+
+    outcome = Outcome.REFUSED
+
+    def __post_init__(self):
+        _typed(self.refusal, Refusal)
+
+
+@dataclass(frozen=True)
+class InconclusiveResult:
+    reason: Inconclusive
+    limit: Limit = Limit.NONE
+
+    outcome = Outcome.INCONCLUSIVE
+
+    def __post_init__(self):
+        _typed(self.reason, Inconclusive)
+        _typed(self.limit, Limit)
+        hit = self.reason is Inconclusive.BOUND_HIT
+        named = self.limit is not Limit.NONE
+        if hit != named:
+            raise Unserialisable(SerialiseError.INCOHERENT_INCONCLUSIVE)
+
+
+RESULTS = (ObservedResult, RefusedResult, InconclusiveResult)
+FINDINGS = (LineFinding, ControlFinding, QuantityFinding, AncestorFinding)
+LEAVES = (
+    Tag,
+    Role,
+    Attribute,
+    ControlName,
+    Relation,
+    Sentinel,
+    Cardinality,
+    Depth,
+    Outcome,
+    Refusal,
+    Limit,
+    Inconclusive,
 )
 
 
 # --- the writer -----------------------------------------------------------------------
 
-# Keys are fixed here, in code. A key taken from the page is page content: see
-# "keys are values" in docs/TESTING.md, learned when a scrubber allowed a
-# dynamic JSON key through because it was in a key position.
-KEYS = frozenset(
-    {
-        "outcome",
-        "refusal",
-        "limit",
-        "line",
-        "control",
-        "quantity",
-        "tag",
-        "role",
-        "attribute",
-        "relation",
-        "matches",
-        "depth",
-        "ancestors",
-        "name",
-        "inside_line",
-        "disabled",
-        "found",
-        "probed",
-    }
-)
+
+def _leaf(value):
+    if type(value) is bool:
+        return value
+    if type(value) in LEAVES:
+        return value.value
+    raise Unserialisable(SerialiseError.UNKNOWN_TYPE)
 
 
-class Unserialisable(Exception):
-    """Refused by the writer. Carries a code, never the offending value.
+def _finding(value):
+    if type(value) not in FINDINGS:
+        raise Unserialisable(SerialiseError.UNKNOWN_TYPE)
+    out = {}
+    for field in fields(value):
+        actual = getattr(value, field.name)
+        if type(actual) is tuple:
+            out[field.name] = [_finding(item) for item in actual]
+        elif type(actual) in FINDINGS:
+            out[field.name] = _finding(actual)
+        else:
+            out[field.name] = _leaf(actual)
+    return out
 
-    The exception text is an egress like any other, and this one is raised
-    exactly when something unexpected has arrived -- which is to say, when
-    nobody has written a canary for whatever it is. Saying `got {value!r}`
-    here would be the single most likely leak in the tool.
+
+def serialise(result):
+    """Turn one of exactly three result types into JSON-ready primitives.
+
+    Takes no mapping and no list. There is nowhere to put a key nobody
+    declared, because the keys are the field names of frozen dataclasses --
+    derived, not remembered.
+
+    Recursion is bounded by the types themselves: a LineFinding holds at most
+    MAX_ANCESTORS AncestorFindings, and an AncestorFinding holds only leaves.
+    A cycle cannot be built out of frozen values that must already exist when
+    their parent is constructed.
     """
+    if type(result) not in RESULTS:
+        raise Unserialisable(SerialiseError.UNKNOWN_TYPE)
+    document = {"outcome": result.outcome.value}
+    for field in fields(result):
+        value = getattr(result, field.name)
+        document[field.name] = _finding(value) if type(value) in FINDINGS else _leaf(value)
+    return document
 
-    def __init__(self, code: str):
-        super().__init__(code)
-        self.code = code
 
+def render(result) -> str:
+    """Serialise to text, and refuse output that is too large to be a summary.
 
-def serialise(node):
-    """Turn a closed structure into JSON-ready primitives, or refuse.
-
-    Accepts: dicts whose keys are in KEYS, lists, and the Leaf types. Anything
-    else -- a str, a bare int, a float, an object, a key nobody declared -- is
-    rejected. There is no cleaning step, because cleaning is filtering and a
-    filter cannot be the guarantee.
-
-    `bool` is checked before `Count`, and both before anything numeric, since
-    bool is an int in Python and a stray True would otherwise serialise as 1.
+    The byte cap is checked here, in memory, before anything is written -- a
+    cap applied after a write is a cap on the next run.
     """
-    if isinstance(node, dict):
-        out = {}
-        for key, value in node.items():
-            if key not in KEYS:
-                raise Unserialisable("unknown_key")
-            out[key] = serialise(value)
-        return out
-    if isinstance(node, list):
-        return [serialise(item) for item in node]
-    if isinstance(node, bool):
-        return node
-    if isinstance(node, (Count, Depth)):
-        return node.value
-    if isinstance(node, enum.Enum) and type(node) in _ALLOWED_ENUMS:
-        return node.value
-    raise Unserialisable("unknown_type")
+    text = json.dumps(serialise(result), separators=(",", ":"), sort_keys=True)
+    if len(text.encode()) > MAX_OUTPUT_BYTES:
+        raise Unserialisable(SerialiseError.OVER_BYTE_BUDGET)
+    return text
 
 
-_ALLOWED_ENUMS = frozenset({Tag, Role, Attribute, ControlName, Relation, Sentinel, Outcome, Refusal, Limit})
+# --- mapping page words into the vocabulary -------------------------------------------
 
 
 def tag_or_redacted(name):
     """A tag name from the page, mapped into the vocabulary or redacted.
 
-    Never returns the page's string. An unknown tag makes the observation
-    inconclusive; the caller is expected to notice the sentinel rather than
-    press on.
+    Exact `str` only. Anything else is redacted without being touched: calling
+    `str()` on a hostile object runs its `__str__`, which is code the page's
+    library wrote, and the return value of that is not evidence.
     """
+    if type(name) is not str:
+        return Sentinel.REDACTED
     try:
-        return Tag(str(name).lower())
-    except (ValueError, AttributeError):
+        return Tag(name.lower())
+    except ValueError:
         return Sentinel.REDACTED
 
 
 def role_or_redacted(name):
+    if type(name) is not str:
+        return Sentinel.REDACTED
     try:
-        return Role(str(name).lower())
-    except (ValueError, AttributeError):
+        return Role(name.lower())
+    except ValueError:
+        return Sentinel.REDACTED
+
+
+def control_name_or_redacted(name):
+    """Exact match only -- no lowering, because these are probed verbatim."""
+    if type(name) is not str:
+        return Sentinel.REDACTED
+    try:
+        return ControlName(name)
+    except ValueError:
         return Sentinel.REDACTED

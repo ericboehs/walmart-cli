@@ -2,7 +2,7 @@
 
 `rake` runs everything: rubocop, ruff, minitest, pytest, and `script/smoke`.
 
-The layout of the suite is not arbitrary. It is the residue of 95 recorded defects
+The layout of the suite is not arbitrary. It is the residue of 98 recorded defects
 found in two days, over half of which were sitting inside checks that were
 passing at the time — including one found while writing the fix for another, in this
 file's own audit. This file records what those had in common, because the mistakes
@@ -33,6 +33,9 @@ Each of these was written deliberately, read fine, and passed:
 | a red commit that landed | the gates ran, a test failed, the commit was chained after them and the non-zero exit scrolled past; the repository had no hooks at all |
 | stale bytecode | an edit landing in the same second as an import left a .pyc Python thought was current, and a test kept failing against a fix that was already on disk |
 | "a read cannot be evidence about a write" | the claim was wrong as well as overstated: read-only evidence can prove a write's precondition, and the true statement was the narrower one about what this observer collects |
+| a canary that passed by coincidence | the sample quantity was 3 while the sample emitted 1 and 2; at quantity 2 the substring search could not have told a leak from a legitimate depth |
+| numeric leaves in a "fixed vocabulary" | a count and a quantity are different kinds of thing, and as integers nothing downstream could tell them apart |
+| an exception type with a public free-text constructor | the closed writer refused strings while its own error accepted them |
 | a design that specified an unimplementable read | it promised to count the attribute names it did not recognise, which needs page HTML, `evaluate`, or a CDP DOM dump -- each forbidden by the same document |
 | the serialiser treated as the privacy boundary | a needle also leaves through a selector string, an exception, a traceback, a progress line, a filename or a test diagnostic |
 | a denylist described as a guarantee | the class comment said "a recon script observes, it does not act" while the code checked two literal method names; press, fill, dispatch_event and side effects inside evaluate were all outside the net the prose stood on |
@@ -146,7 +149,7 @@ things the user meets.
 
 ### Two numbers, counted rather than remembered
 
-95 defects in the table below. 199 mutants in `script/mutants.json`.
+98 defects in the table below. 206 mutants in `script/mutants.json`.
 
 Both are written as numerals and both are checked by
 `test/walmart/documentation_parity_test.rb`, because both were wrong. Every
@@ -339,6 +342,11 @@ more than another assertion on behaviour.
 - **A test can be reporting on code that no longer exists.** Bytecode caching
   is resolved at one-second granularity and a mutation harness edits faster
   than that.
+- **A substring canary cannot distinguish semantics.** Assert containment in
+  the vocabulary, which is decidable, not absence of a value, which is luck.
+- **Categories, not numbers,** wherever a number could coincide with a secret.
+- **Make invalid states unrepresentable rather than noticed.** "The caller is
+  expected to notice the sentinel" is what the deleted driver said.
 - **A rejection that reports what it rejected is an egress with an excuse,**
   and it fires exactly when something nobody wrote a canary for arrives.
 - **A claim that can only be honoured by breaking the contract is not a

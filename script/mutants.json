@@ -1946,10 +1946,8 @@
     "to": "      /nobody writes this sentence/ => \"a read-only observation can prove a write's precondition\""
   },
   {
-    "label": "the writer accepts a string",
+    "label": "the writer accepts a raw document again",
     "file": "pyworker/observation.py",
-    "from": "    raise Unserialisable(\"unknown_type\")",
-    "to": "    return str(node)",
     "command": [
       "uv",
       "run",
@@ -1957,13 +1955,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "    if type(result) not in RESULTS:\n        raise Unserialisable(SerialiseError.UNKNOWN_TYPE)",
+    "to": "    if isinstance(result, dict):\n        return result"
   },
   {
-    "label": "an unknown key is dropped instead of rejected",
+    "label": "an observation need not be fully established",
     "file": "pyworker/observation.py",
-    "from": "            if key not in KEYS:\n                raise Unserialisable(\"unknown_key\")",
-    "to": "            if key not in KEYS:\n                continue",
     "command": [
       "uv",
       "run",
@@ -1971,13 +1969,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "        if not established:\n            raise Unserialisable(SerialiseError.INCOHERENT_OBSERVATION)",
+    "to": "        _ = established"
   },
   {
-    "label": "the rejection quotes what it rejected",
+    "label": "an ambiguous match still counts as observed",
     "file": "pyworker/observation.py",
-    "from": "            if key not in KEYS:\n                raise Unserialisable(\"unknown_key\")",
-    "to": "            if key not in KEYS:\n                raise Unserialisable(f\"unknown_key: {key!r}\")",
     "command": [
       "uv",
       "run",
@@ -1985,13 +1983,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "            self.line.matches is Cardinality.ONE",
+    "to": "            self.line.matches is not Cardinality.ZERO"
   },
   {
-    "label": "a bare int is serialised as a count",
+    "label": "a redacted control name still counts as observed",
     "file": "pyworker/observation.py",
-    "from": "    if isinstance(node, (Count, Depth)):\n        return node.value",
-    "to": "    if isinstance(node, (Count, Depth)):\n        return node.value\n    if isinstance(node, int):\n        return node",
     "command": [
       "uv",
       "run",
@@ -1999,13 +1997,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "            and type(self.control.name) is ControlName",
+    "to": "            and self.control.name is not None"
   },
   {
-    "label": "a bool is serialised as a number",
+    "label": "a budget may be named without a bound being hit",
     "file": "pyworker/observation.py",
-    "from": "    if isinstance(node, bool):\n        return node\n",
-    "to": "",
     "command": [
       "uv",
       "run",
@@ -2013,13 +2011,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "        if hit != named:",
+    "to": "        if hit and not named:"
   },
   {
-    "label": "a count accepts a bool",
+    "label": "the ancestor chain is unbounded",
     "file": "pyworker/observation.py",
-    "from": "        if type(self.value) is not int or self.value < 0:\n            raise TypeError(\"a count is a non-negative int\")",
-    "to": "        if not isinstance(self.value, int) or self.value < 0:\n            raise TypeError(\"a count is a non-negative int\")",
     "command": [
       "uv",
       "run",
@@ -2027,13 +2025,13 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "        if len(self.ancestors) > MAX_ANCESTORS:\n            raise Unserialisable(SerialiseError.TOO_MANY_ANCESTORS)",
+    "to": "        pass"
   },
   {
-    "label": "an unknown tag is echoed",
+    "label": "the byte cap is not enforced",
     "file": "pyworker/observation.py",
-    "from": "    try:\n        return Tag(str(name).lower())\n    except (ValueError, AttributeError):\n        return Sentinel.REDACTED",
-    "to": "    try:\n        return Tag(str(name).lower())\n    except (ValueError, AttributeError):\n        return str(name)",
     "command": [
       "uv",
       "run",
@@ -2041,13 +2039,111 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "    if len(text.encode()) > MAX_OUTPUT_BYTES:\n        raise Unserialisable(SerialiseError.OVER_BYTE_BUDGET)",
+    "to": "    pass"
+  },
+  {
+    "label": "the error accepts free text again",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if type(code) is not SerialiseError:\n            raise TypeError(\"a serialisation error is a SerialiseError\")\n        super().__init__(code.value)\n        self.code = code",
+    "to": "        super().__init__(getattr(code, \"value\", code))\n        self.code = code"
+  },
+  {
+    "label": "the tag mapper asks a hostile object what it is",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "def tag_or_redacted(name):",
+    "to": "def tag_or_redacted(name):\n    name = str(name)"
+  },
+  {
+    "label": "a cardinality is emitted as its number",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        return {0: cls.ZERO, 1: cls.ONE}.get(count, cls.MANY)",
+    "to": "        return {0: cls.ZERO, 1: cls.ONE}.get(count, cls.OVER_BUDGET)"
+  },
+  {
+    "label": "a huge count is not over budget",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        if count > budget:\n            return cls.OVER_BUDGET",
+    "to": "        if count > budget and count < 1000:\n            return cls.OVER_BUDGET"
+  },
+  {
+    "label": "depth runs past the end of the ladder",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "        return cls.OVER_BUDGET if depth > 4 else cls(f\"d{depth}\")",
+    "to": "        return cls(f\"d{min(depth, 4)}\")"
+  },
+  {
+    "label": "a field type is not checked",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "def _typed(value, *allowed):\n    if type(value) not in allowed:\n        raise Unserialisable(SerialiseError.WRONG_FIELD_TYPE)",
+    "to": "def _typed(value, *allowed):\n    if False:\n        raise Unserialisable(SerialiseError.WRONG_FIELD_TYPE)"
+  },
+  {
+    "label": "a subclass of str passes as a token",
+    "file": "pyworker/observation.py",
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "pyworker",
+      "pytest",
+      "pyworker/test_observation.py"
+    ],
+    "from": "    if type(value) in LEAVES:\n        return value.value",
+    "to": "    if isinstance(value, (*LEAVES, str)):\n        return getattr(value, \"value\", value)"
   },
   {
     "label": "the probe list grows by one",
     "file": "pyworker/observation.py",
-    "from": "    HREF = \"href\"",
-    "to": "    HREF = \"href\"\n    CLASS = \"class\"",
     "command": [
       "uv",
       "run",
@@ -2055,6 +2151,8 @@
       "pyworker",
       "pytest",
       "pyworker/test_observation.py"
-    ]
+    ],
+    "from": "    HREF = \"href\"",
+    "to": "    HREF = \"href\"\n    CLASS = \"class\""
   }
 ]
