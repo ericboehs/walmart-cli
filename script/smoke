@@ -137,15 +137,18 @@ class Smoke
   def initialize
     @failures = []
     @checked = 0
+    @skipped = []
   end
 
   attr_reader :failures, :checked
 
   def run
+    plan = Plan.new
+    @skipped = plan.skipped
     Dir.mktmpdir("walmart-smoke") do |dir|
       @dir = dir
       write_stub
-      cases.each { |kase| check(kase) }
+      plan.cases.each { |kase| check(kase) }
     end
     report
   end
@@ -199,8 +202,6 @@ class Smoke
       "SMOKE_LEAK_PROBE" => ""
     }.merge(extra)
   end
-
-  def cases = Plan.new.cases
 
   # A case's expectation doubles as its stub configuration: what the worker is
   # told to do and what we then demand of the output are one description, so
@@ -294,6 +295,7 @@ class Smoke
   def report
     if failures.empty?
       puts "smoke: #{checked} checks passed"
+      @skipped.each { |reason| puts "  skipped: #{reason}" }
       return 0
     end
 
@@ -309,8 +311,25 @@ end
 class Plan
   Case = Smoke::Case
 
+  def initialize(platform: RUBY_PLATFORM)
+    @keychain = platform.include?("darwin")
+  end
+
   def cases
-    read_cases + stop_cases + json_cases + failure_cases + credential_cases + [leak_probe_case]
+    base = read_cases + stop_cases + json_cases + failure_cases
+    @keychain ? base + credential_cases + [leak_probe_case] : base
+  end
+
+  # Off macOS there is no credential provider (Linux login is manual), so no
+  # credential ever reaches the worker. The leak probe would fail for want of
+  # a leak, and the credential cases would pass for the same reason -- which
+  # is the decoration the probe exists to rule out. Said out loud rather than
+  # counted as passed.
+  def skipped
+    return [] if @keychain
+
+    n = credential_cases.length + 1
+    ["#{n} credential checks: no Keychain on this platform, so no credential to leak"]
   end
 
   # The negative control, and the reason the canary check is worth anything.
