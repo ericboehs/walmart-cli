@@ -63,7 +63,7 @@ module Walmart
           fmt.hint("unlock the keychain and try again to have credentials filled in")
         else
           fmt.status("no stored credentials found; opening a visible browser for manual sign-in")
-          fmt.hint("optional: security add-generic-password -s walmart-cli -a email -w")
+          fmt.hint("optional: run walmart credentials")
         end
       end
 
@@ -87,8 +87,7 @@ module Walmart
         accounts = secrets.empty_accounts.sort
         fmt.warn("the keychain #{accounts.join(" and ")} entry is empty; " \
                  "falling back to manual sign-in")
-        fmt.hint("set it with: security add-generic-password -U -s walmart-cli " \
-                 "-a #{accounts.first} -w")
+        fmt.hint("set the #{accounts.join(" and ")} entry with: walmart credentials")
       end
 
       def report(data)

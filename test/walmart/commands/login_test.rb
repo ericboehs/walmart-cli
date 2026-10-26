@@ -62,7 +62,8 @@ module Walmart
         combined = out.string + err.string
 
         assert_includes combined, "password entry is empty"
-        assert_includes combined, "-U -s walmart-cli"
+        assert_includes combined, "walmart credentials"
+        refute_includes combined, "add-generic-password"
         refute_includes combined, "no stored credentials found"
       end
 

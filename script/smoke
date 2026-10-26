@@ -464,6 +464,7 @@ class Plan
   # here, because its exit really is a fact about the machine it runs on.
   JSON_CASES = [
     [%w[version], nil, 0], [%w[help], nil, 0], [%w[doctor], nil, nil],
+    [%w[credentials], nil, 0],
     [%w[search milk], nil, 0], [%w[item 10450114], nil, 0], [%w[cart show], nil, 0],
     [%w[order sync], nil, 0], [%w[order list], nil, 0], [%w[order search milk], nil, 0],
     [%w[order show 200012345678901], nil, 0], [[], nil, 0],

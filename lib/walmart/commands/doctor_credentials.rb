@@ -30,7 +30,7 @@ module Walmart
           row(status: :warn,
               detail: "#{secrets.describe}: incomplete " \
                       "(email #{status["email"]}, password #{status["password"]})",
-              hint: "walmart login works manually; or run: walmart credentials")
+              hint: missing_hint(status))
         else
           row(status: :warn, detail: secrets.describe,
               hint: "manual login only on this platform")
@@ -56,11 +56,21 @@ module Walmart
         else
           row(status: :warn,
               detail: "secret-tool installed; #{presence} (values not read)",
-              hint: "run: walmart credentials")
+              hint: missing_hint(status))
         end
       end
 
       private
+
+      # The detail already lists every state. The hint is what someone acts on,
+      # so it has to name the item that is actually missing, not the command alone.
+      def missing_hint(status)
+        missing = %w[email password].select { |name| status[name] == "absent" }
+        return "run: walmart credentials" if missing.empty?
+
+        noun = missing.length == 1 ? "item is" : "items are"
+        "the #{missing.join(" and ")} #{noun} missing; run: walmart credentials"
+      end
 
       def row(status:, detail:, hint: nil)
         Doctor::Check.new(name: "credentials", status: status, detail: detail, hint: hint)

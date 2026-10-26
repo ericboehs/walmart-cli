@@ -86,24 +86,16 @@ module Walmart
       end
 
       def test_linux_doctor_says_secret_tool_is_installed_and_which_items_exist
-        bin = File.join(tmp, "bin")
-        FileUtils.mkdir_p(bin)
-        File.write(File.join(bin, "secret-tool"), "#!/bin/sh\nexit 0\n")
-        File.chmod(0o755, File.join(bin, "secret-tool"))
-        runner = lambda do |args|
-          args.include?("email") ? [0, "attrs", ""] : [1, "", "No such item"]
-        end
-        provider = Secrets::SecretServiceProvider.new(
-          runner: runner, platform: "x86_64-linux", env: { "PATH" => bin }
-        )
         run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
-                   secrets: Secrets.new(provider: provider))
+                   secrets: Secrets.new(provider: installed_secret_tool))
 
         assert_includes out.string, "secret-tool installed"
         assert_includes out.string, "email present"
         assert_includes out.string, "password absent"
         assert_includes out.string, "values not read"
+        assert_includes err.string, "the password item is missing"
         assert_includes err.string, "walmart credentials"
+        refute_includes err.string, "email item"
       end
 
       def test_missing_credentials_only_warn
@@ -270,6 +262,19 @@ module Walmart
       # served, because doctor must not need a live browser to report on one --
       # and a test that opens a socket is a test that fails on someone's laptop
       # for reasons unrelated to the code.
+      # email is present, password is not. The binary has to exist or the
+      # provider reports itself unavailable and never asks the runner.
+      def installed_secret_tool
+        bin = File.join(tmp, "bin")
+        FileUtils.mkdir_p(bin)
+        File.write(File.join(bin, "secret-tool"), "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, File.join(bin, "secret-tool"))
+        runner = ->(args) { args.include?("email") ? [0, "attrs", ""] : [1, "", "No such item"] }
+        Secrets::SecretServiceProvider.new(
+          runner: runner, platform: "x86_64-linux", env: { "PATH" => bin }
+        )
+      end
+
       def run_doctor(worker:, secrets: nil, json: false, config: nil, version: :none)
         context = build_context(worker: worker, secrets: secrets, json: json)
         context.define_singleton_method(:config) { config } if config
