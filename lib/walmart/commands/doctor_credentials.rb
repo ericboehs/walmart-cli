@@ -12,11 +12,9 @@ module Walmart
 
         status = secrets.status
         if status["email"] == "error" || status["password"] == "error"
-          # "absent" means add a record; "error" means the store refused us and
-          # adding another record will not help. Do not conflate them.
-          row(status: :warn,
-              detail: "#{secrets.describe}: unreadable (#{secrets.last_error})",
-              hint: "the keychain refused the lookup; walmart login still works manually")
+          # "absent" means add a record; "error" means the probe was refused and
+          # adding another record will not help. "Unreadable" hid that.
+          refused_probe
         elsif status["email_present"] && status["password_present"]
           # "present", not "set". doctor deliberately never reads a credential
           # value -- that can prompt for biometrics -- so all it can honestly
@@ -64,6 +62,18 @@ module Walmart
 
       # The detail already lists every state. The hint is what someone acts on,
       # so it has to name the item that is actually missing, not the command alone.
+      def refused_probe
+        if secrets.provider_name == "keychain"
+          row(status: :warn,
+              detail: "#{secrets.describe}: probe refused (#{secrets.last_error})",
+              hint: "the Keychain probe was refused; walmart login still works manually")
+        else
+          row(status: :warn,
+              detail: "#{secrets.describe}: unreadable (#{secrets.last_error})",
+              hint: "the keychain refused the lookup; walmart login still works manually")
+        end
+      end
+
       def missing_hint(status)
         missing = %w[email password].select { |name| status[name] == "absent" }
         return "run: walmart credentials" if missing.empty?

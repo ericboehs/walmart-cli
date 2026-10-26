@@ -765,7 +765,13 @@ Store them with:
 ```sh
 security add-generic-password -s walmart-cli -a email -w
 security add-generic-password -s walmart-cli -a password -w
+```
 
+An item that already exists cannot be added again. `walmart credentials`
+prints that command with `-U` when it can see the item, and both forms when
+the Keychain will not say.
+
+```sh
 secret-tool store --label='walmart-cli email' service walmart-cli account email
 secret-tool store --label='walmart-cli password' service walmart-cli account password
 ```

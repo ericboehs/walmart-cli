@@ -33,20 +33,27 @@ module Walmart
         calls = []
         run_credentials(secrets: keychain_secrets({}, calls: calls, errors: %w[email]))
 
-        assert_includes out.string, "security add-generic-password -s walmart-cli -a email -w"
-        assert_includes out.string, "security add-generic-password -U -s walmart-cli -a email -w"
+        create = "email, create (probe refused)\nsecurity add-generic-password -s walmart-cli -a email -w"
+        update = "email, update (probe refused)\nsecurity add-generic-password -U -s walmart-cli -a email -w"
+        assert_includes out.string, create
+        assert_includes out.string, update
+        refute_includes out.string, "email -w\nsecurity add-generic-password -U"
         assert_includes out.string, "security add-generic-password -s walmart-cli -a password -w"
+        refute_includes out.string, "password, create"
         refute_includes out.string, "-U -s walmart-cli -a password"
         refute calls.flatten.include?("-w"), "printing the command read a credential"
       end
 
       def test_an_unreadable_keychain_item_is_both_forms_in_json
         run_credentials(secrets: keychain_secrets({}, errors: %w[email]), json: true)
-        commands = JSON.parse(out.string)["commands"]
+        document = JSON.parse(out.string)
+        commands = document["commands"]
 
         assert_includes commands, "security add-generic-password -s walmart-cli -a email -w"
         assert_includes commands, "security add-generic-password -U -s walmart-cli -a email -w"
         refute_includes commands, "security add-generic-password -U -s walmart-cli -a password -w"
+        assert_equal ["email, create (probe refused)", "email, update (probe refused)"], document["labels"]
+        refute(commands.any? { |command| command.include?("probe refused") })
       end
 
       def test_linux_prints_the_secret_tool_store_commands

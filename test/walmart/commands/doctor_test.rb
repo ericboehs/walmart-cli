@@ -100,6 +100,16 @@ module Walmart
 
       # Singular and plural are different sentences. A hint that always said
       # "item is" would still pass a test that only checked one missing record.
+      def test_a_refused_keychain_probe_is_not_called_unreadable
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
+                   secrets: Secrets.new(provider: refused_keychain))
+
+        assert_includes out.string, "probe refused"
+        assert_includes err.string, "the Keychain probe was refused"
+        refute_includes out.string, "unreadable"
+        refute_includes err.string, "unreadable"
+      end
+
       def test_both_missing_items_are_named_in_the_plural
         run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
                    secrets: Secrets.new(provider: FakeProvider.new({})))
@@ -274,6 +284,17 @@ module Walmart
       # for reasons unrelated to the code.
       # email is present, password is not. The binary has to exist or the
       # provider reports itself unavailable and never asks the runner.
+      def refused_keychain
+        bin = File.join(tmp, "bin-refused")
+        FileUtils.mkdir_p(bin)
+        path = File.join(bin, "security")
+        File.write(path, "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, path)
+        Secrets::KeychainProvider.new(
+          runner: ->(_args) { [1, ""] }, platform: "arm64-darwin23", env: { "PATH" => bin }
+        )
+      end
+
       def installed_secret_tool
         bin = File.join(tmp, "bin")
         FileUtils.mkdir_p(bin)

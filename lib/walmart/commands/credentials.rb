@@ -11,15 +11,32 @@ module Walmart
     class Credentials < Base
       def run(_path, args)
         parse_flags(args)
-        commands = secrets.store_commands
+        entries = secrets.store_entries
         if json?
-          fmt.emit_json({ "provider" => secrets.provider_name, "commands" => commands })
-        elsif commands.empty?
+          fmt.emit_json(document(entries))
+        elsif entries.empty?
           fmt.say("no credential store on this platform; walmart login opens a browser")
         else
-          commands.each { |line| fmt.say(line) }
+          entries.each { |entry| print_entry(entry) }
         end
         ExitCodes::OK
+      end
+
+      private
+
+      # A refused probe prints two commands for one account. Without a label
+      # they sit next to each other and look like a duplicate.
+      def print_entry(entry)
+        fmt.say(entry[:label]) if entry[:label]
+        fmt.say(entry[:command])
+      end
+
+      def document(entries)
+        body = { "provider" => secrets.provider_name,
+                 "commands" => entries.map { |entry| entry[:command] } }
+        labels = entries.filter_map { |entry| entry[:label] }
+        body["labels"] = labels unless labels.empty?
+        body
       end
     end
   end
