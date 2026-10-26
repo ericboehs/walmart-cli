@@ -262,13 +262,17 @@ module Walmart
     # What a person types to create the two records. Printed by
     # `walmart credentials` and nowhere else, so the advice cannot drift
     # from the attributes the provider actually looks up.
+    #
+    # A Keychain item that already exists cannot be added again: omitting -U
+    # makes `security` refuse. Presence is a probe, never a read, so printing
+    # the command does not unlock the value.
     def store_commands
       case provider_name
       when "keychain"
-        [
-          "security add-generic-password -s #{SERVICE} -a email -w",
-          "security add-generic-password -s #{SERVICE} -a password -w"
-        ]
+        [EMAIL_ACCOUNT, PASSWORD_ACCOUNT].map do |account|
+          update = probe(account) == :present ? "-U " : ""
+          "security add-generic-password #{update}-s #{SERVICE} -a #{account} -w"
+        end
       when "secret-service"
         [
           "secret-tool store --label='walmart-cli email' service #{SERVICE} account email",

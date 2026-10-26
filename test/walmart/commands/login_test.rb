@@ -78,7 +78,22 @@ module Walmart
 
         assert_includes combined, "credential store unreadable"
         assert_includes combined, "fake refusal"
+        assert_includes combined, "unlock the keychain"
         refute_includes combined, "no stored credentials found"
+      end
+
+      def test_an_unreadable_secret_service_is_not_called_a_keychain
+        worker = FakeWorker.new(results: { "login" => SIGNED_IN })
+        denied = Secrets.new(provider: Secrets::SecretServiceProvider.new(
+          runner: ->(_args) { [1, "", "prompt dismissed"] },
+          platform: "x86_64-linux", env: env_with_secret_tool
+        ))
+        run_login(worker: worker, secrets: denied)
+
+        combined = out.string + err.string
+
+        assert_includes combined, "unlock Secret Service"
+        refute_includes combined, "keychain"
       end
 
       def test_an_unreadable_keychain_still_opens_a_manual_login
@@ -255,6 +270,15 @@ module Walmart
       def full_secrets
         Secrets.new(provider: FakeProvider.new({ "email" => "eric@example.com",
                                                  "password" => "hunter2" }))
+      end
+
+      def env_with_secret_tool
+        bin = File.join(tmp, "secret-tool-bin")
+        FileUtils.mkdir_p(bin)
+        path = File.join(bin, "secret-tool")
+        File.write(path, "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, path)
+        { "PATH" => bin }
       end
 
       def run_login(worker:, secrets: nil, args: [], json: false)

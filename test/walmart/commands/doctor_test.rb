@@ -98,6 +98,16 @@ module Walmart
         refute_includes err.string, "email item"
       end
 
+      # Singular and plural are different sentences. A hint that always said
+      # "item is" would still pass a test that only checked one missing record.
+      def test_both_missing_items_are_named_in_the_plural
+        run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
+                   secrets: Secrets.new(provider: FakeProvider.new({})))
+
+        assert_includes err.string, "the email and password items are missing"
+        refute_includes err.string, "item is missing"
+      end
+
       def test_missing_credentials_only_warn
         code = run_doctor(worker: FakeWorker.new(results: { "probe" => PROBE }),
                           secrets: Secrets.new(provider: FakeProvider.new({})))

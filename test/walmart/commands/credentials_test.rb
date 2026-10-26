@@ -5,12 +5,26 @@ require_relative "../../test_helper"
 module Walmart
   module Commands
     class CredentialsTest < TestCase
-      def test_macos_prints_the_keychain_store_commands
-        run_credentials(secrets: Secrets.default(platform: "arm64-darwin23"))
+      def test_macos_prints_the_create_form_when_nothing_is_stored
+        run_credentials(secrets: keychain_secrets({}))
 
         assert_includes out.string, "security add-generic-password -s walmart-cli -a email -w"
         assert_includes out.string, "security add-generic-password -s walmart-cli -a password -w"
+        refute_includes out.string, "-U"
         refute_includes out.string, "secret-tool"
+      end
+
+      # Without -U, `security` refuses to add an item that is already there,
+      # which is the empty-password case: the record exists and holds nothing.
+      # The probe that decides this must not ask for the value.
+      def test_an_existing_keychain_item_is_printed_as_an_update
+        calls = []
+        run_credentials(secrets: keychain_secrets({ "email" => "" }, calls: calls))
+
+        assert_includes out.string, "security add-generic-password -U -s walmart-cli -a email -w"
+        assert_includes out.string, "security add-generic-password -s walmart-cli -a password -w"
+        refute_includes out.string, "-U -s walmart-cli -a password"
+        refute calls.flatten.include?("-w"), "printing the command read a credential"
       end
 
       def test_linux_prints_the_secret_tool_store_commands
@@ -47,6 +61,25 @@ module Walmart
       def run_credentials(secrets: Secrets.default(platform: "arm64-darwin23"), json: false, args: [])
         context = build_context(secrets: secrets, json: json)
         Credentials.new(context).run(%w[credentials], args)
+      end
+
+      # A keychain provider that never calls the real `security`. +present+
+      # maps account name to a stored value; the value is not what we print.
+      def keychain_secrets(present, calls: [])
+        bin = File.join(tmp, "bin-security")
+        FileUtils.mkdir_p(bin)
+        path = File.join(bin, "security")
+        File.write(path, "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, path)
+        runner = lambda do |args|
+          calls << args
+          account = args[args.index("-a") + 1]
+          present.key?(account) ? [0, "attributes"] : [44, ""]
+        end
+        provider = Secrets::KeychainProvider.new(
+          runner: runner, platform: "arm64-darwin23", env: { "PATH" => bin }
+        )
+        Secrets.new(provider: provider)
       end
     end
   end
