@@ -21,6 +21,7 @@ module Walmart
     # of that times out; the number only decides how long the test waits to
     # watch it happen.
     FAST_TIMEOUT = 0.3
+    TREE_TIMEOUT = 3
 
     def test_timeout_is_reported_as_unverified_rather_than_hanging
       worker = build_worker(<<~RUBY)
@@ -73,13 +74,18 @@ module Walmart
           File.write(#{child_marker.inspect}, Process.pid.to_s)
           sleep 120
         CHILD
-        File.write(#{parent_marker.inspect}, Process.pid.to_s)
         Process.detach(child)
+        sleep 0.01 until File.exist?(#{child_marker.inspect})
+        File.write(#{parent_marker.inspect}, Process.pid.to_s)
         sleep 120
       RUBY
 
-      assert_raises(WorkerError) { worker.run("probe", timeout: FAST_TIMEOUT) }
-      wait_for_file(child_marker)
+      # Not FAST_TIMEOUT: booting two Rubies can take longer than that, and a
+      # group killed before the grandchild has written its pid proves nothing.
+      # The parent writes its marker only once the child's exists, so both
+      # markers present means the whole tree was alive when the timeout fired.
+      assert_raises(WorkerError) { worker.run("probe", timeout: TREE_TIMEOUT) }
+      assert_path_exists parent_marker, "the timeout fired before the process tree was built"
 
       assert_dead(File.read(parent_marker).to_i)
       assert_dead(File.read(child_marker).to_i)
@@ -224,12 +230,6 @@ module Walmart
       worker.define_singleton_method(:kill_grace_seconds) { FAST_GRACE }
       worker.define_singleton_method(:exit_grace_seconds) { FAST_GRACE }
       worker
-    end
-
-    def wait_for_file(path, timeout: 10)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-      sleep 0.05 while !File.exist?(path) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
-      path
     end
 
     # Polls rather than asserting instantly: TERM, and the KILL that may follow,
