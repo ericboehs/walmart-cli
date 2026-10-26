@@ -172,6 +172,12 @@
     "to": "        Secret.new(value)"
   },
   {
+    "label": "an empty secret-service item reads as a usable credential",
+    "file": "lib/walmart/secrets.rb",
+    "from": "        return Secret.new(value) unless value.empty?\n\n        @empty_accounts |= [account.to_s]\n        nil",
+    "to": "        Secret.new(value)"
+  },
+  {
     "label": "an attached session closes the user's whole browser context",
     "file": "pyworker/browser.py",
     "from": "        if not self._owns_context:\n            if self._page is not None:\n                self._page.close()\n            return\n\n        self._context.close()",

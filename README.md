@@ -132,9 +132,17 @@ security add-generic-password -s walmart-cli -a password -w
 ```
 
 Both records are optional. Without them, `walmart login` simply opens a visible
-browser and you sign in by hand. On Linux, manual login is the only supported
-path today; the `Secrets` boundary is shaped so a libsecret provider can be
-added without touching any command.
+browser and you sign in by hand.
+
+Linux uses Secret Service through `secret-tool` (package `libsecret-tools`),
+with the same record names:
+
+```sh
+secret-tool store --label='walmart-cli email' service walmart-cli account email
+secret-tool store --label='walmart-cli password' service walmart-cli account password
+```
+
+If `secret-tool` is not installed, Linux falls back to manual login.
 
 Sign-in is gated by human-verification challenges. Observed live: a
 press-and-hold challenge on the first page load and another on pressing Sign In,

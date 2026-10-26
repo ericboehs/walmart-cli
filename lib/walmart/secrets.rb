@@ -13,8 +13,9 @@ module Walmart
   #   * a missing credential is not an error when manual login is possible,
   #   * there is no plaintext-config fallback, ever.
   #
-  # Adding a Linux Secret Service provider means adding a class here and a
-  # branch in .default. No command and no worker code changes.
+  # The Linux provider is Secret Service, reached through `secret-tool` with
+  # argv-array calls, the same shape as the keychain provider. No command and
+  # no worker code changes.
   class Secrets
     SERVICE = "walmart-cli"
     EMAIL_ACCOUNT = "email"
@@ -153,17 +154,89 @@ module Walmart
       end
     end
 
-    # Placeholder so the shape of a future Linux provider is already decided.
-    # Deliberately unavailable rather than half-implemented.
+    # Linux Secret Service, reached through `secret-tool`. Same rules as the
+    # keychain provider: argv arrays, no shell, and a presence check that never
+    # asks for the secret itself. `search` prints attributes only; `lookup`
+    # prints the value and may prompt to unlock the item.
+    #
+    # Platform and PATH are injected so this is testable on macOS.
     class SecretServiceProvider
+      # `secret-tool` has no documented per-cause exit codes, only zero and
+      # not-zero. What distinguishes "no such item" from "the daemon refused us"
+      # is the error text on stderr, and only that text -- never the value,
+      # which only ever arrives on stdout.
+      NOT_FOUND = /no such item|item not found|no matching/i
+
+      def initialize(service: SERVICE, runner: nil, platform: RUBY_PLATFORM, env: ENV)
+        @service = service
+        @platform = platform
+        @env = env
+        @runner = runner || method(:run_secret_tool)
+        @last_error = nil
+        @empty_accounts = []
+      end
+
+      attr_reader :last_error, :empty_accounts
+
       def name = "secret-service"
-      def available? = false
-      def probe(_account) = :absent
-      def present?(_account) = false
-      def read(_account) = nil
-      def empty_accounts = []
-      def describe = "libsecret provider not implemented yet (manual login on Linux)"
-      def last_error = nil
+
+      def available?
+        return @available unless @available.nil?
+
+        @available = @platform.include?("linux") && !Which.find("secret-tool", env: @env).nil?
+      end
+
+      def probe(account)
+        return :absent unless available?
+
+        status, _out, err = @runner.call(["search", "--all", *attributes(account)])
+        return :present if status.zero?
+
+        record_failure(account, err)
+      end
+
+      def present?(account) = probe(account) == :present
+
+      def read(account)
+        return nil unless available?
+
+        status, out, err = @runner.call(["lookup", *attributes(account)])
+        unless status.zero?
+          record_failure(account, err)
+          return nil
+        end
+
+        value = out.to_s.sub(/\n\z/, "")
+        return Secret.new(value) unless value.empty?
+
+        @empty_accounts |= [account.to_s]
+        nil
+      end
+
+      def describe = "Secret Service via secret-tool (service #{@service})"
+
+      private
+
+      # The attributes that identify one of our items. `service` matches the
+      # keychain's service name so the same record names work on both, and
+      # `account` is the record name (email or password).
+      def attributes(account)
+        ["service", @service, "account", account.to_s]
+      end
+
+      def record_failure(account, err)
+        return :absent if err.to_s.match?(NOT_FOUND)
+
+        @last_error = "secret-tool failed for account #{account}"
+        :error
+      end
+
+      def run_secret_tool(args)
+        out, err, status = Open3.capture3("secret-tool", *args)
+        [status.exitstatus, out, err]
+      rescue Errno::ENOENT
+        [127, "", "secret-tool: command not found"]
+      end
     end
 
     def self.default(platform: RUBY_PLATFORM)

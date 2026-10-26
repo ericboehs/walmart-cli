@@ -162,21 +162,16 @@ class Smoke
     write_fake_security
   end
 
-  # Stands in for macOS `security`, so the credential path is exercised with a
-  # value we can then hunt for. -w means "print the password"; without it the
-  # provider is only probing for presence and must not get a value.
+  # Stands in for the platform's credential tool, so the credential path is
+  # exercised with a value we can then hunt for. The value is only printed for
+  # the flag that asks for it; a presence probe must not get one.
   def write_fake_security
     @bin = File.join(@dir, "bin")
     FileUtils.mkdir_p(@bin)
-    path = File.join(@bin, "security")
-    File.write(path, <<~SH)
-      #!/bin/sh
-      case " $* " in
-        *" -w "*) echo "#{CANARY}" ;;
-        *) echo "password has been deleted" ;;
-      esac
-      exit 0
-    SH
+    return unless (provider = Plan.new.provider)
+
+    path = File.join(@bin, provider[:binary])
+    File.write(path, "#!/bin/sh\n#{format(Plan::REPLY, canary: CANARY, ask: provider[:ask])}")
     File.chmod(0o755, path)
   end
 
@@ -311,25 +306,45 @@ end
 class Plan
   Case = Smoke::Case
 
+  # The credential path is exercised wherever a provider exists: Keychain on
+  # macOS, Secret Service on Linux. The fake binary only has to answer the way
+  # the real tool does, which differs per provider.
+  # The reply script prints the planted credential only for the invocation
+  # that asks for the value. A presence probe must come back without one, or
+  # the check that says probes never see the secret would be unfalsifiable.
+  REPLY = <<~SH
+    case " $* " in
+      *" %<ask>s "*) echo "%<canary>s" ;;
+      *) echo ok ;;
+    esac
+    exit 0
+  SH
+
+  PROVIDERS = {
+    "darwin" => { binary: "security", ask: "-w" },
+    "linux" => { binary: "secret-tool", ask: "lookup" }
+  }.freeze
+
   def initialize(platform: RUBY_PLATFORM)
-    @keychain = platform.include?("darwin")
+    @provider = PROVIDERS.find { |name, _| platform.include?(name) }&.last
   end
+
+  attr_reader :provider
 
   def cases
     base = read_cases + stop_cases + json_cases + failure_cases
-    @keychain ? base + credential_cases + [leak_probe_case] : base
+    provider ? base + credential_cases + [leak_probe_case] : base
   end
 
-  # Off macOS there is no credential provider (Linux login is manual), so no
-  # credential ever reaches the worker. The leak probe would fail for want of
-  # a leak, and the credential cases would pass for the same reason -- which
-  # is the decoration the probe exists to rule out. Said out loud rather than
-  # counted as passed.
+  # On a platform with no credential provider, no credential can reach the
+  # worker. The leak probe would fail for want of a leak, and the credential
+  # cases would pass for the same reason -- which is the decoration the probe
+  # exists to rule out. Said out loud rather than counted as passed.
   def skipped
-    return [] if @keychain
+    return [] if provider
 
     n = credential_cases.length + 1
-    ["#{n} credential checks: no Keychain on this platform, so no credential to leak"]
+    ["#{n} credential checks: no credential provider on this platform, so no credential to leak"]
   end
 
   # The negative control, and the reason the canary check is worth anything.

@@ -221,13 +221,89 @@ module Walmart
       refute_predicate provider, :available?
     end
 
-    def test_linux_defaults_to_a_provider_that_is_honest_about_being_unimplemented
+    def test_secret_service_uses_argv_arrays_and_attributes_instead_of_the_value
+      calls = []
+      runner = lambda do |args|
+        calls << args
+        args.include?("lookup") ? [0, "sekret\n", ""] : [0, "attributes", ""]
+      end
+      provider = secret_service(runner: runner)
+
+      assert_predicate provider, :available?
+      assert provider.present?("email")
+      assert_equal %w[search --all service walmart-cli account email], calls.first
+      assert_equal "sekret", provider.read("password").value
+      assert_equal %w[lookup service walmart-cli account password], calls.last
+    end
+
+    # `search` prints attributes only. `lookup` prints the value and may prompt
+    # to unlock the item, so a presence check must never use it.
+    def test_secret_service_presence_check_does_not_request_the_value
+      calls = []
+      provider = secret_service(runner: lambda { |args|
+        calls << args
+        [0, "", ""]
+      })
+
+      provider.present?("password")
+
+      refute_includes calls.flatten, "lookup"
+    end
+
+    def test_secret_service_reports_a_missing_item_as_absent
+      provider = secret_service(runner: ->(_args) { [1, "", "No such item at path"] })
+
+      assert_equal :absent, provider.probe("email")
+      assert_nil provider.read("email")
+      assert_nil provider.last_error
+    end
+
+    # A refusal is only told apart from a missing item by the error text, and
+    # that text must not be copied into last_error: secret-tool's messages are
+    # not a contract, and an error string is exactly where a leaked value would
+    # be printed.
+    def test_secret_service_reports_a_refused_lookup_as_an_error_without_its_text
+      provider = secret_service(runner: ->(_args) { [1, "", "prompt dismissed, value was sekret"] })
+
+      assert_equal :error, provider.probe("email")
+      assert_match(/failed for account email/, provider.last_error)
+      refute_includes provider.last_error, "sekret"
+    end
+
+    def test_secret_service_treats_an_empty_item_as_not_a_credential
+      provider = secret_service(runner: lambda { |args|
+        args.include?("lookup") ? [0, "\n", ""] : [0, "attrs", ""]
+      })
+
+      assert_equal :present, provider.probe("password")
+      assert_nil provider.read("password")
+      assert_includes provider.empty_accounts, "password"
+    end
+
+    def test_secret_service_is_unavailable_off_linux
+      provider = Secrets::SecretServiceProvider.new(
+        runner: ->(_args) { [0, "x", ""] }, platform: "arm64-darwin23", env: env
+      )
+
+      refute_predicate provider, :available?
+      assert_equal :absent, provider.probe("email")
+      assert_nil provider.read("email")
+    end
+
+    def test_secret_service_is_unavailable_without_the_binary
+      provider = Secrets::SecretServiceProvider.new(
+        runner: ->(_args) { [0, "x", ""] }, platform: "x86_64-linux",
+        env: { "PATH" => File.join(tmp, "empty") }
+      )
+
+      refute_predicate provider, :available?
+    end
+
+    def test_linux_defaults_to_secret_service
       secrets = Secrets.default(platform: "x86_64-linux")
 
       assert_equal "secret-service", secrets.provider_name
-      refute_predicate secrets, :available?
-      assert_nil secrets.credentials_payload
-      assert_match(/manual login/, secrets.describe)
+      assert_match(/secret-tool/, secrets.describe)
     end
 
     def test_macos_defaults_to_keychain
@@ -243,15 +319,30 @@ module Walmart
     # A keychain provider that believes it is on macOS and can find `security`,
     # with the subprocess itself injected. Runs anywhere.
     def keychain(runner:)
-      bin = File.join(tmp, "bin")
-      FileUtils.mkdir_p(bin)
-      security = File.join(bin, "security")
-      File.write(security, "#!/bin/sh\nexit 0\n")
-      File.chmod(0o755, security)
+      with_binary("security") do |bin|
+        Secrets::KeychainProvider.new(
+          runner: runner, platform: "arm64-darwin23", env: { "PATH" => bin }
+        )
+      end
+    end
 
-      Secrets::KeychainProvider.new(
-        runner: runner, platform: "arm64-darwin23", env: { "PATH" => bin }
-      )
+    def secret_service(runner:)
+      with_binary("secret-tool") do |bin|
+        Secrets::SecretServiceProvider.new(
+          runner: runner, platform: "x86_64-linux", env: { "PATH" => bin }
+        )
+      end
+    end
+
+    # The binary only has to exist and be executable: availability is decided
+    # by finding it on PATH, and the subprocess itself is the injected runner.
+    def with_binary(name)
+      bin = File.join(tmp, "bin-#{name}")
+      FileUtils.mkdir_p(bin)
+      path = File.join(bin, name)
+      File.write(path, "#!/bin/sh\nexit 0\n")
+      File.chmod(0o755, path)
+      yield bin
     end
   end
 end

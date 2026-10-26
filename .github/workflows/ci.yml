@@ -10,19 +10,26 @@ permissions:
 
 jobs:
   ruby:
-    name: ruby (${{ matrix.os }})
+    name: ruby ${{ matrix.ruby }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        ruby: ["3.3", "4.0"]
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.3"
+          ruby-version: ${{ matrix.ruby }}
       - name: Install RuboCop
         run: gem install rubocop --no-document
+      # The smoke run plants a credential through the real provider, which on
+      # Linux is secret-tool. Without the binary the checks are skipped, and a
+      # skipped leak probe proves nothing.
+      - name: Install secret-tool
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools
       - name: Lint
         run: rubocop
       - name: Test

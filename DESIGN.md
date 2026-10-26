@@ -768,8 +768,8 @@ security find-generic-password -s walmart-cli -a password -w
 ```
 
 Missing credentials are not an error when a visible/manual login is possible.
-Linux initially uses manual login; the `Secrets` boundary must permit a future
-Secret Service/libsecret provider without changing commands or worker code.
+Linux reads credentials from Secret Service through `secret-tool`. A missing
+binary falls back to manual login. No command and no worker code changes.
 Never fall back to plaintext config.
 
 ### XDG storage
