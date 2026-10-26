@@ -1,12 +1,17 @@
 #!/bin/sh
 # Run the default CI task before a commit is made, not after it is pushed.
 #
-# That is RuboCop, Ruff, the Ruby suite, the Python suite and the smoke run.
-# It is NOT everything: `rake gitleaks` and `rake mutants` are separate and
-# stay separate. Mutants edit files on disk and take minutes, which is not
-# something to attach to every commit, and gitleaks is worth running before a
-# push rather than before each change. Do not read a green commit as "all
-# gates passed" -- it means the CI set passed.
+# First, gitleaks over the staged changes only. That takes milliseconds, and
+# it is the last point at which a secret has not yet entered history: once
+# committed, removing it means rewriting history, and once pushed to this
+# public repository it has to be treated as leaked. A missing gitleaks fails
+# the commit rather than skipping the scan silently.
+#
+# Then the default CI task: RuboCop, Ruff, the Ruby suite, the Python suite
+# and the smoke run. It is NOT everything: `rake mutants` stays separate, since
+# it edits files on disk and takes minutes, and the full-history
+# `rake gitleaks` is left to CI. Do not read a green commit as "all gates
+# passed" -- it means the CI set passed.
 #
 # This exists because a commit went in with a failing test. The gates were run
 # -- the failure was in the output -- and the commit command was chained after
@@ -19,4 +24,11 @@
 set -e
 
 cd "$(git rev-parse --show-toplevel)"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed; install it (mise use -g gitleaks)" >&2
+  exit 1
+fi
+gitleaks git --staged --no-banner --redact
+
 exec rake

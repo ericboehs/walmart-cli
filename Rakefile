@@ -43,9 +43,7 @@ end
 
 desc "Scan the repository for committed secrets"
 task :gitleaks do
-  sh "gitleaks detect --no-banner --redact" do |ok, _res|
-    warn("gitleaks not installed or found findings; see output above") unless ok
-  end
+  sh "gitleaks git --no-banner --redact"
 end
 
 desc "Run the CLI end to end against a stub worker and check the bytes"
@@ -76,6 +74,6 @@ task :hooks do
   target = File.join(hooks, "pre-commit")
   FileUtils.cp(source, target)
   FileUtils.chmod(0o755, target)
-  puts "installed #{target} (runs `rake`: rubocop, ruff, test, pytest, smoke)"
-  puts "gitleaks and mutants stay separate; run them yourself"
+  puts "installed #{target} (gitleaks on staged changes, then `rake`: rubocop, ruff, test, pytest, smoke)"
+  puts "mutants and the full-history gitleaks stay separate; run them yourself"
 end
