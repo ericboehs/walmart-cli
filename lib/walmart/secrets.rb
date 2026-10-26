@@ -265,14 +265,13 @@ module Walmart
     #
     # A Keychain item that already exists cannot be added again: omitting -U
     # makes `security` refuse. Presence is a probe, never a read, so printing
-    # the command does not unlock the value.
+    # the command does not unlock the value. A refused probe is not "absent":
+    # guessing the create form is how that refusal gets someone a command that
+    # will not run, so both forms are printed and the person chooses.
     def store_commands
       case provider_name
       when "keychain"
-        [EMAIL_ACCOUNT, PASSWORD_ACCOUNT].map do |account|
-          update = probe(account) == :present ? "-U " : ""
-          "security add-generic-password #{update}-s #{SERVICE} -a #{account} -w"
-        end
+        [EMAIL_ACCOUNT, PASSWORD_ACCOUNT].flat_map { |account| keychain_forms(account) }
       when "secret-service"
         [
           "secret-tool store --label='walmart-cli email' service #{SERVICE} account email",
@@ -280,6 +279,16 @@ module Walmart
         ]
       else
         []
+      end
+    end
+
+    def keychain_forms(account)
+      create = "security add-generic-password -s #{SERVICE} -a #{account} -w"
+      update = "security add-generic-password -U -s #{SERVICE} -a #{account} -w"
+      case probe(account)
+      when :present then [update]
+      when :error then [create, update]
+      else [create]
       end
     end
 

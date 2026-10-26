@@ -27,6 +27,28 @@ module Walmart
         refute calls.flatten.include?("-w"), "printing the command read a credential"
       end
 
+      # A refused probe is not "absent". Guessing the create form hands back a
+      # command `security` will refuse if the item is in fact there.
+      def test_an_unreadable_keychain_item_prints_both_forms
+        calls = []
+        run_credentials(secrets: keychain_secrets({}, calls: calls, errors: %w[email]))
+
+        assert_includes out.string, "security add-generic-password -s walmart-cli -a email -w"
+        assert_includes out.string, "security add-generic-password -U -s walmart-cli -a email -w"
+        assert_includes out.string, "security add-generic-password -s walmart-cli -a password -w"
+        refute_includes out.string, "-U -s walmart-cli -a password"
+        refute calls.flatten.include?("-w"), "printing the command read a credential"
+      end
+
+      def test_an_unreadable_keychain_item_is_both_forms_in_json
+        run_credentials(secrets: keychain_secrets({}, errors: %w[email]), json: true)
+        commands = JSON.parse(out.string)["commands"]
+
+        assert_includes commands, "security add-generic-password -s walmart-cli -a email -w"
+        assert_includes commands, "security add-generic-password -U -s walmart-cli -a email -w"
+        refute_includes commands, "security add-generic-password -U -s walmart-cli -a password -w"
+      end
+
       def test_linux_prints_the_secret_tool_store_commands
         run_credentials(secrets: Secrets.default(platform: "x86_64-linux"))
 
@@ -65,7 +87,7 @@ module Walmart
 
       # A keychain provider that never calls the real `security`. +present+
       # maps account name to a stored value; the value is not what we print.
-      def keychain_secrets(present, calls: [])
+      def keychain_secrets(present, calls: [], errors: [])
         bin = File.join(tmp, "bin-security")
         FileUtils.mkdir_p(bin)
         path = File.join(bin, "security")
@@ -74,6 +96,8 @@ module Walmart
         runner = lambda do |args|
           calls << args
           account = args[args.index("-a") + 1]
+          next [1, ""] if errors.include?(account)
+
           present.key?(account) ? [0, "attributes"] : [44, ""]
         end
         provider = Secrets::KeychainProvider.new(

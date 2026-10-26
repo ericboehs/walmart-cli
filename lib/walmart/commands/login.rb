@@ -60,7 +60,7 @@ module Walmart
         elsif secrets.unreadable?
           fmt.warn("credential store unreadable (#{secrets.last_error}); " \
                    "falling back to manual sign-in")
-          fmt.hint("unlock #{credential_store_name} and try again to have credentials filled in")
+          fmt.hint("unlock the #{credential_store_name} and try again to have credentials filled in")
         else
           fmt.status("no stored credentials found; opening a visible browser for manual sign-in")
           fmt.hint("optional: run walmart credentials")
@@ -84,12 +84,12 @@ module Walmart
       # already have -- which is how it was reported before, and the advice
       # quietly did not work.
       def credential_store_name
-        secrets.provider_name == "secret-service" ? "Secret Service" : "the keychain"
+        secrets.provider_name == "secret-service" ? "Secret Service" : "keychain"
       end
 
       def announce_empty_entries
         accounts = secrets.empty_accounts.sort
-        fmt.warn("the keychain #{accounts.join(" and ")} entry is empty; " \
+        fmt.warn("the #{credential_store_name} #{accounts.join(" and ")} entry is empty; " \
                  "falling back to manual sign-in")
         fmt.hint("set the #{accounts.join(" and ")} entry with: walmart credentials")
       end

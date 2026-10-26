@@ -61,7 +61,7 @@ module Walmart
         run_login(worker: worker, secrets: empty)
         combined = out.string + err.string
 
-        assert_includes combined, "password entry is empty"
+        assert_includes combined, "the keychain password entry is empty"
         assert_includes combined, "walmart credentials"
         refute_includes combined, "add-generic-password"
         refute_includes combined, "no stored credentials found"
@@ -92,8 +92,23 @@ module Walmart
 
         combined = out.string + err.string
 
-        assert_includes combined, "unlock Secret Service"
+        assert_includes combined, "unlock the Secret Service"
         refute_includes combined, "keychain"
+      end
+
+      def test_an_empty_secret_service_entry_is_not_called_a_keychain
+        worker = FakeWorker.new(results: { "login" => { "signed_in" => true } })
+        runner = ->(args) { args.include?("password") ? [0, "\n", ""] : [0, "a@b.c\n", ""] }
+        empty = Secrets.new(provider: Secrets::SecretServiceProvider.new(
+          runner: runner, platform: "x86_64-linux", env: env_with_secret_tool
+        ))
+        run_login(worker: worker, secrets: empty)
+
+        combined = out.string + err.string
+
+        assert_includes combined, "the Secret Service password entry is empty"
+        refute_includes combined, "keychain"
+        refute_includes combined, "no stored credentials found"
       end
 
       def test_an_unreadable_keychain_still_opens_a_manual_login

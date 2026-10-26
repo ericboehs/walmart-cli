@@ -132,6 +132,10 @@ security add-generic-password -s walmart-cli -a email -w
 security add-generic-password -s walmart-cli -a password -w
 ```
 
+An item that already exists cannot be added again. `walmart credentials`
+prints that command with `-U` when it can see the item, and both forms when
+the Keychain will not say.
+
 Both records are optional. Without them, `walmart login` simply opens a visible
 browser and you sign in by hand.
 
