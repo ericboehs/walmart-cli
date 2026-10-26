@@ -125,6 +125,23 @@ module Walmart
       assert_empty Redact.tail(nil)
       assert_empty Redact.tail([])
     end
+
+    def test_head_keeps_only_the_first_lines
+      lines = (1..10).map { |n| "line #{n}" }
+
+      assert_equal ["line 1", "line 2", "line 3"], Redact.head(lines, limit: 3)
+    end
+
+    def test_head_redacts_each_line_it_keeps
+      head = Redact.head(["user eric@example.com failed", "noise"], limit: 2)
+
+      refute_includes head.join, "eric@example.com"
+    end
+
+    def test_head_handles_nil_and_empty
+      assert_empty Redact.head(nil)
+      assert_empty Redact.head([])
+    end
   end
 
   class WhichTest < TestCase

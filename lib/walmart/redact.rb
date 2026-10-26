@@ -30,7 +30,14 @@ module Walmart
       PATTERNS.reduce(value.to_s) { |acc, (pattern, replacement)| acc.gsub(pattern, replacement) }
     end
 
+    # Redacts each line and keeps at most +limit+ of them, from the start.
+    # For backtraces, which put the raising frame first.
+    def self.head(lines, limit: 3)
+      Array(lines).first(limit).map { |line| text(line) }
+    end
+
     # Redacts each line and keeps at most +limit+ of them, from the end.
+    # For output streams, where the last lines are the ones that explain.
     def self.tail(lines, limit: 3)
       Array(lines).last(limit).map { |line| text(line) }
     end

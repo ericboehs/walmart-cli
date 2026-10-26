@@ -273,7 +273,7 @@ module Walmart
       emit_json_error("internal_error", "#{error.class}: #{error.message}")
       @stderr.puts("internal error: #{error.class}: #{Redact.text(error.message)}")
       if verbose
-        Redact.tail(error.backtrace, limit: 20).each { |line| @stderr.puts("  #{line}") }
+        Redact.head(error.backtrace, limit: 20).each { |line| @stderr.puts("  #{line}") }
       else
         @stderr.puts("run again with --verbose for a backtrace")
       end

@@ -246,6 +246,22 @@ module Walmart
       refute_includes err.string, "run again with --verbose"
     end
 
+    # The frame that raised comes first in a Ruby backtrace. Keeping the last
+    # twenty instead printed only the test runner's frames once the stack was
+    # deep enough, which it was on Ruby 3.3 and was not on 4.0. Thirty frames
+    # of our own make the depth explicit instead of depending on the runner.
+    def test_verbose_backtrace_starts_at_the_frame_that_raised
+      context = build_context(options: { verbose: true })
+      deep = ->(n) { n.zero? ? raise(TypeError, "boom") : deep.call(n - 1) }
+      context.define_singleton_method(:config) { deep.call(30) }
+      CLI.new(%w[config show --verbose], stdout: out, stderr: err, env: env,
+                                         context: context).run
+
+      first_frame = err.string.lines.find { |line| line.start_with?("  ") }
+
+      assert_includes first_frame, "cli_test.rb"
+    end
+
     # Ctrl-C is not a bug; it must not be swallowed by the internal-error path.
     def test_an_interrupt_is_reported_as_aborted
       context = build_context
