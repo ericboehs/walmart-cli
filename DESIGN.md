@@ -752,25 +752,40 @@ contention and report it rather than corrupting session state.
 
 ### Credentials
 
-V1 supports macOS Keychain plus manual browser login. The fixed generic
-password records are:
+V1 supports macOS Keychain, Linux Secret Service, and manual browser login.
+The fixed records are the same on both:
 
 | Service | Account | Value |
 |---|---|---|
 | `walmart-cli` | `email` | Walmart login email |
 | `walmart-cli` | `password` | Walmart password |
 
+Store them with:
+
+```sh
+security add-generic-password -s walmart-cli -a email -w
+security add-generic-password -s walmart-cli -a password -w
+
+secret-tool store --label='walmart-cli email' service walmart-cli account email
+secret-tool store --label='walmart-cli password' service walmart-cli account password
+```
+
 The code reads them with argv-array subprocess calls equivalent to:
 
 ```sh
 security find-generic-password -s walmart-cli -a email -w
 security find-generic-password -s walmart-cli -a password -w
+
+secret-tool lookup service walmart-cli account email
+secret-tool lookup service walmart-cli account password
 ```
 
-Missing credentials are not an error when a visible/manual login is possible.
-Linux reads credentials from Secret Service through `secret-tool`. A missing
-binary falls back to manual login. No command and no worker code changes.
-Never fall back to plaintext config.
+A presence check never uses `-w` or `lookup`. It uses `find-generic-password`
+without `-w`, or `secret-tool search --all`, so probing does not unlock the
+value. Missing credentials are not an error when a visible/manual login is
+possible. A missing `security` or `secret-tool` binary falls back to manual
+login. No command and no worker code changes. Never fall back to plaintext
+config.
 
 ### XDG storage
 

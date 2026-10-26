@@ -16,7 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        ruby: ["3.3", "4.0"]
+        # Pinned. A floating 3.3 or 4.0 would pick up a patch release and
+        # change the suite without a commit.
+        ruby: ["3.3.13", "4.0.9"]
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
