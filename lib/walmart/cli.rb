@@ -4,6 +4,7 @@ require_relative "context"
 require_relative "errors"
 require_relative "redact"
 require_relative "version"
+require_relative "commands/credentials"
 require_relative "commands/doctor"
 require_relative "commands/config_cmd"
 require_relative "commands/browser"
@@ -40,6 +41,7 @@ module Walmart
     COMMANDS = {
       %w[version] => [nil, "print the walmart-cli version"],
       %w[doctor] => [Commands::Doctor, "check the local environment and session"],
+      %w[credentials] => [Commands::Credentials, "print the commands that store a login"],
       %w[login] => [Commands::Login, "sign in with a visible browser"],
       %w[logout] => [Commands::Login, "forget the stored browser session"],
       %w[config show] => [Commands::ConfigCmd, "print current settings"],

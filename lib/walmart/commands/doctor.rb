@@ -3,6 +3,7 @@
 require "json"
 require_relative "base"
 require_relative "attachment_check"
+require_relative "doctor_credentials"
 require_relative "../version"
 require_relative "../which"
 
@@ -13,6 +14,7 @@ module Walmart
     # environment and browser binaries, and never contacts Walmart.
     class Doctor < Base
       include AttachmentCheck
+      include DoctorCredentials
 
       # Chromium writes these into a persistent profile and removes them on a
       # clean exit. Named here rather than probed with ps, because the process
@@ -131,36 +133,6 @@ module Walmart
       rescue ConfigError => e
         Check.new(name: "config", status: :fail, detail: e.message,
                   hint: "fix or delete #{paths.config_file}")
-      end
-
-      # Booleans and states only. This never reads, prints, or logs a value.
-      def credentials_check
-        status = secrets.status
-        if status["email"] == "error" || status["password"] == "error"
-          # "absent" means add a record; "error" means the store refused us and
-          # adding another record will not help. Do not conflate them.
-          Check.new(name: "credentials", status: :warn,
-                    detail: "#{secrets.describe}: unreadable (#{secrets.last_error})",
-                    hint: "the keychain refused the lookup; walmart login still works manually")
-        elsif status["email_present"] && status["password_present"]
-          # "present", not "set". doctor deliberately never reads a credential
-          # value -- that can prompt for biometrics -- so all it can honestly
-          # report is that the items exist. An item can exist and hold nothing,
-          # which is what "set" claimed and login then contradicted with "no
-          # stored credentials found". Presence is not usability, and the word
-          # has to stop short of what the check actually looked at.
-          Check.new(name: "credentials", status: :ok,
-                    detail: "#{secrets.describe}: email + password present (values not read)")
-        elsif status["available"]
-          Check.new(name: "credentials", status: :warn,
-                    detail: "#{secrets.describe}: incomplete " \
-                            "(email #{status["email"]}, password #{status["password"]})",
-                    hint: "walmart login works manually; " \
-                          "or add: security add-generic-password -s walmart-cli -a email -w")
-        else
-          Check.new(name: "credentials", status: :warn, detail: secrets.describe,
-                    hint: "manual login only on this platform")
-        end
       end
 
       def store_check

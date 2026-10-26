@@ -49,6 +49,7 @@ module Walmart
     # reach the rendering path -- the place the bug lived.
     INVOCATIONS = {
       %w[doctor] => [],
+      %w[credentials] => [],
       %w[login] => [],
       %w[search] => ["milk"],
       %w[item] => ["10450114"],

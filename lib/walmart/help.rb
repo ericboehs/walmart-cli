@@ -69,7 +69,8 @@ module Walmart
       %w[cart remove] => [["<item-id>", "take the whole line out of the cart"]],
       %w[store show] => [],
       %w[store pin] => [],
-      %w[doctor] => []
+      %w[doctor] => [],
+      %w[credentials] => []
     }.freeze
 
     private

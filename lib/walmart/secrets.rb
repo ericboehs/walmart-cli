@@ -259,6 +259,26 @@ module Walmart
     def describe = @provider.describe
     def available? = @provider.available?
 
+    # What a person types to create the two records. Printed by
+    # `walmart credentials` and nowhere else, so the advice cannot drift
+    # from the attributes the provider actually looks up.
+    def store_commands
+      case provider_name
+      when "keychain"
+        [
+          "security add-generic-password -s #{SERVICE} -a email -w",
+          "security add-generic-password -s #{SERVICE} -a password -w"
+        ]
+      when "secret-service"
+        [
+          "secret-tool store --label='walmart-cli email' service #{SERVICE} account email",
+          "secret-tool store --label='walmart-cli password' service #{SERVICE} account password"
+        ]
+      else
+        []
+      end
+    end
+
     def email_present? = probe(EMAIL_ACCOUNT) == :present
     def password_present? = probe(PASSWORD_ACCOUNT) == :present
 

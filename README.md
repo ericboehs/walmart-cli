@@ -18,6 +18,7 @@ happen in Walmart's app, where they belong.
 ```text
 walmart version
 walmart doctor            check the local environment, never the network
+walmart credentials       print the commands that store a login
 walmart config show|path|init
 walmart login             sign in with a visible browser
 walmart logout

@@ -25,7 +25,7 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
       - name: Install RuboCop
-        run: gem install rubocop --no-document
+        run: gem install rubocop -v 1.92.1 --no-document
       # The smoke run plants a credential through the real provider, which on
       # Linux is secret-tool. Without the binary the checks are skipped, and a
       # skipped leak probe proves nothing.
